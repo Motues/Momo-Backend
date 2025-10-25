@@ -1,0 +1,33 @@
+{
+  "name": "Momo-comment",
+  "version": "0.1.0",
+  "description": "",
+  "main": "app.js",
+  "scripts": {
+    "dev": "ts-node src/app.ts",
+    "build": "tsc -p tsconfig.json",
+    "deploy": "bash deploy.sh",
+    "prod": "node dist/app.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.15.1",
+  "dependencies": {
+    "@koa/bodyparser": "^6.0.0",
+    "@koa/cors": "^5.0.0",
+    "@koa/router": "^14.0.0",
+    "@prisma/client": "^6.18.0",
+    "dotenv": "^17.2.3",
+    "koa": "^3.0.3",
+    "prisma": "^6.18.0"
+  },
+  "devDependencies": {
+    "@types/koa": "^3.0.1",
+    "@types/koa__cors": "^5.0.1",
+    "@types/koa__router": "^12.0.5",
+    "@types/node": "^24.9.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}

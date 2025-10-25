@@ -1,0 +1,32 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+  // url      = "file:./dev.db"
+}
+
+model Comment {
+  id           Int      @id @default(autoincrement())
+  pub_date     DateTime @default(now())
+  post_slug      String
+  author       String
+  email        String
+  url          String?
+  ip_address   String?
+  device       String?
+  browser      String?
+  content_text String
+  content_html String
+  parent_id    Int?
+  status       String   @default("pending")
+  
+  parent       Comment?  @relation("CommentReplies", fields: [parent_id], references: [id])
+  replies      Comment[] @relation("CommentReplies")
+}
