@@ -7,7 +7,7 @@ const CheckAllowOrigins = (requestOrigin: string) : string => {
     // console.log(`Development, allow origin: ${requestOrigin}`);
     return "*";
   }
-  if (origin === "*" || allowedOrigins.includes(requestOrigin)) {
+  if (process.env.ALLOW_ORIGIN === "*" || allowedOrigins.includes(requestOrigin)) {
     console.log(`Allow origin: ${requestOrigin}`);
     return requestOrigin;
   }
