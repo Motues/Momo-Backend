@@ -3,317 +3,388 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>评论系统测试界面</title>
+    <title>评论管理系统</title>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-            background-color: #f5f5f5;
+        :root {
+            --primary-color: #409eff;
+            --success-color: #67c23a;
+            --warning-color: #e6a23c;
+            --danger-color: #f56c6c;
+            --info-color: #909399;
+            --border-color: #dcdfe6;
+            --background-color: #f5f7fa;
         }
-        .container {
-            background-color: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            margin-bottom: 20px;
-        }
-        h1, h2 {
-            color: #333;
-        }
-        input, textarea, button {
-            width: 100%;
-            padding: 10px;
-            margin: 10px 0;
-            border: 1px solid #ddd;
-            border-radius: 4px;
+        
+        * {
+            margin: 0;
+            padding: 0;
             box-sizing: border-box;
         }
-        textarea {
-            height: 100px;
-            resize: vertical;
+        
+        body {
+            font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB', Arial, sans-serif;
+            background-color: #f5f7fa;
+            color: #333;
         }
-        button {
-            background-color: #007bff;
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 0;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 20px;
+        }
+        
+        h1 {
+            color: #333;
+        }
+        
+        .logout-btn {
+            background-color: var(--danger-color);
             color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
             cursor: pointer;
+        }
+        
+        .comments-container {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        
+        .post-section {
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .post-header {
+            padding: 16px 20px;
+            background-color: var(--background-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .post-title {
             font-weight: bold;
+            font-size: 16px;
         }
-        button:hover {
-            background-color: #0056b3;
+        
+        .comment-count {
+            background-color: var(--info-color);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 12px;
         }
-        .comment {
-            border-bottom: 1px solid #eee;
-            padding: 15px 0;
+        
+        .comments-list {
+            padding: 0 20px;
         }
-        .comment:last-child {
+        
+        .comment-item {
+            padding: 16px 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .comment-item:last-child {
             border-bottom: none;
         }
+        
         .comment-header {
             display: flex;
             justify-content: space-between;
-            margin-bottom: 5px;
-            font-size: 0.9em;
-            color: #666;
+            margin-bottom: 8px;
         }
+        
         .comment-author {
             font-weight: bold;
         }
+        
+        .comment-date {
+            color: #999;
+            font-size: 14px;
+        }
+        
         .comment-content {
-            margin: 10px 0;
+            margin-bottom: 12px;
+            line-height: 1.6;
         }
-        .comment-form {
-            background-color: #f9f9f9;
-            padding: 15px;
+        
+        .comment-actions {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .action-btn {
+            padding: 4px 10px;
             border-radius: 4px;
+            border: none;
+            cursor: pointer;
+            font-size: 12px;
         }
-        #comments-container {
-            max-height: 500px;
-            overflow-y: auto;
+        
+        .approve-btn {
+            background-color: var(--success-color);
+            color: white;
         }
+        
+        .delete-btn {
+            background-color: var(--danger-color);
+            color: white;
+        }
+        
+        .reply-item {
+            margin-left: 30px;
+            padding: 12px 0;
+            border-top: 1px dashed var(--border-color);
+        }
+        
+        .no-comments {
+            text-align: center;
+            padding: 40px 20px;
+            color: #999;
+        }
+        
         .loading {
             text-align: center;
-            color: #666;
-            font-style: italic;
+            padding: 40px 20px;
         }
-        .error {
-            color: #d32f2f;
-            background-color: #ffebee;
-            padding: 10px;
-            border-radius: 4px;
-            margin: 10px 0;
+        
+        .status-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 12px;
+            margin-left: 8px;
         }
-        .success {
-            color: #388e3c;
-            background-color: #e8f5e9;
-            padding: 10px;
-            border-radius: 4px;
-            margin: 10px 0;
+        
+        .status-pending {
+            background-color: var(--warning-color);
+            color: white;
+        }
+        
+        .status-approved {
+            background-color: var(--success-color);
+            color: white;
+        }
+        
+        .status-rejected {
+            background-color: var(--danger-color);
+            color: white;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            .reply-item {
+                margin-left: 15px;
+            }
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>评论系统测试界面</h1>
+        <header>
+            <h1>评论管理系统</h1>
+            <button class="logout-btn" id="logoutBtn">退出登录</button>
+        </header>
         
-        <div class="container">
-            <h2>获取评论</h2>
-            <div>
-                <label for="post_slug">文章标识 (post_slug):</label>
-                <input type="text" id="post_slug" value="test-post" placeholder="请输入文章标识">
-            </div>
-            <div>
-                <label for="page">页码 (page):</label>
-                <input type="number" id="page" value="1" min="1">
-            </div>
-            <div>
-                <label for="limit">每页数量 (limit):</label>
-                <input type="number" id="limit" value="20" min="1" max="100">
-            </div>
-            <div>
-                <label>
-                    <input type="checkbox" id="nested" checked> 嵌套显示评论
-                </label>
-            </div>
-            <button id="fetch-comments">获取评论</button>
-        </div>
-
-        <div class="container">
-            <h2>提交新评论</h2>
-            <div class="comment-form">
-                <div>
-                    <label for="new_post_slug">文章标识 (post_slug):</label>
-                    <input type="text" id="new_post_slug" value="test-post" placeholder="请输入文章标识">
-                </div>
-                <div>
-                    <label for="author">姓名:</label>
-                    <input type="text" id="author" placeholder="请输入您的姓名">
-                </div>
-                <div>
-                    <label for="email">邮箱:</label>
-                    <input type="email" id="email" placeholder="请输入您的邮箱">
-                </div>
-                <div>
-                    <label for="url">网站 (可选):</label>
-                    <input type="url" id="url" placeholder="https://example.com">
-                </div>
-                <div>
-                    <label for="content">评论内容:</label>
-                    <textarea id="content" placeholder="请输入您的评论"></textarea>
-                </div>
-                <div>
-                    <label for="parent_id">回复评论ID (可选):</label>
-                    <input type="number" id="parent_id" placeholder="要回复的评论ID">
-                </div>
-                <button id="submit-comment">提交评论</button>
-            </div>
-        </div>
-
-        <div class="container">
-            <h2>评论列表</h2>
-            <div id="message"></div>
-            <div id="comments-container">
-                <div class="loading">请输入文章标识并点击"获取评论"按钮加载评论</div>
+        <div class="comments-container">
+            <div id="commentsList">
+                <!-- 评论列表将通过JavaScript动态加载 -->
+                <div class="loading">加载中...</div>
             </div>
         </div>
     </div>
 
     <script>
-        // API基础URL - 根据实际部署情况调整
-        const API_BASE = 'http://localhost:17171/api/comments';
+        // 配置部分 - 请根据实际情况修改
+        const CONFIG = {
+            API_BASE_URL: 'http://localhost:17171/admin/comments/list',
+            DELETE_API_URL: 'http://localhost:17171/admin/comments/delete',
+            ADMIN_TOKEN: '111'
+        };
 
-        // 获取评论
-        document.getElementById('fetch-comments').addEventListener('click', async () => {
-            const postSlug = document.getElementById('post_slug').value;
-            const page = document.getElementById('page').value;
-            const limit = document.getElementById('limit').value;
-            const nested = document.getElementById('nested').checked;
-
-            if (!postSlug) {
-                showMessage('请输入文章标识', 'error');
-                return;
-            }
-
-            try {
-                showLoading();
-                const response = await fetch(`${API_BASE}?post_slug=${encodeURIComponent(postSlug)}&page=${page}&limit=${limit}&nested=${nested}`);
-                const data = await response.json();
-                
-                if (response.ok) {
-                    console.log(data);
-                    renderComments(data);
-                } else {
-                    showMessage(`获取评论失败: ${data.error || '未知错误'}`, 'error');
-                }
-            } catch (error) {
-                showMessage(`网络错误: ${error.message}`, 'error');
-            }
-        });
-
-        // 提交评论
-        document.getElementById('submit-comment').addEventListener('click', async () => {
-            const parentIdValue = document.getElementById('parent_id').value;
-            const postData = {
-                post_slug: document.getElementById('new_post_slug').value,
-                author: document.getElementById('author').value,
-                email: document.getElementById('email').value,
-                url: document.getElementById('url').value || undefined,
-                content: document.getElementById('content').value,
-                parent_id: parentIdValue ? parseInt(parentIdValue, 10) : null
-            };
-
-            // 验证必填字段
-            if (!postData.post_slug || !postData.author || !postData.email || !postData.content) {
-                showMessage('请填写所有必填字段', 'error');
+        // 页面加载完成后获取评论数据
+        document.addEventListener('DOMContentLoaded', function() {
+            if (!CONFIG.ADMIN_TOKEN) {
+                alert('请先登录');
+                window.location.href = '/login.html';
                 return;
             }
             
-            // 验证 parent_id 是否为有效数字（如果填写了的话）
-            if (parentIdValue && (isNaN(postData.parent_id) || postData.parent_id <= 0)) {
-                showMessage('回复评论ID必须是有效的正整数', 'error');
-                return;
-            }
+            fetchComments();
+            
+            // 绑定退出登录事件
+            document.getElementById('logoutBtn').addEventListener('click', logout);
+        });
 
+        // 获取所有评论
+        async function fetchComments() {
             try {
-                const response = await fetch(API_BASE, {
-                    method: 'POST',
+                const response = await fetch(CONFIG.API_BASE_URL, {
                     headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(postData)
+                        'Authorization': `Bearer ${CONFIG.ADMIN_TOKEN}`
+                    }
                 });
-
-                const data = await response.json();
                 
-                if (response.ok) {
-                    showMessage('评论提交成功！', 'success');
-                    // 清空表单（保留post_slug）
-                    document.getElementById('author').value = '';
-                    document.getElementById('email').value = '';
-                    document.getElementById('url').value = '';
-                    document.getElementById('content').value = '';
-                    document.getElementById('parent_id').value = '';
-                } else {
-                    showMessage(`提交失败: ${data.error || '未知错误'}`, 'error');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
                 }
+                
+                const data = await response.json();
+                renderComments(data.data);
             } catch (error) {
-                showMessage(`网络错误: ${error.message}`, 'error');
+                console.error('获取评论失败:', error);
+                document.getElementById('commentsList').innerHTML = 
+                    '<div class="no-comments">加载评论失败，请刷新重试</div>';
             }
-        });
-
-        // 显示消息
-        function showMessage(text, type) {
-            const messageEl = document.getElementById('message');
-            messageEl.innerHTML = `<div class="${type}">${text}</div>`;
-            
-            // 3秒后自动清除消息
-            setTimeout(() => {
-                messageEl.innerHTML = '';
-            }, 3000);
         }
 
-        // 显示加载状态
-        function showLoading() {
-            document.getElementById('comments-container').innerHTML = '<div class="loading">正在加载评论...</div>';
-        }
-
-        // 渲染评论
-        function renderComments(data) {
-            const container = document.getElementById('comments-container');
+        // 渲染评论列表
+        function renderComments(posts) {
+            const container = document.getElementById('commentsList');
             
-            // 根据实际数据结构调整判断条件
-            if (!data.data || data.data.length === 0) {
-                container.innerHTML = '<div>暂无评论</div>';
+            if (!posts || posts.length === 0) {
+                container.innerHTML = '<div class="no-comments">暂无评论</div>';
                 return;
             }
-
+            
             let html = '';
             
-            // 递归渲染评论和回复
-            function renderComment(comment, isReply = false) {
-                const repliesHtml = comment.replies && comment.replies.length > 0 
-                    ? `
-                        <div class="replies" style="margin-left: 20px; border-left: 2px solid #eee; padding-left: 10px;">
-                            ${comment.replies.map(reply => renderComment(reply, true)).join('')}
+            posts.forEach(post => {
+                html += `
+                    <div class="post-section">
+                        <div class="post-header">
+                            <div class="post-title">${post.post_slug}</div>
+                            <div class="comment-count">${post.comments.length} 条评论</div>
                         </div>
-                    ` 
-                    : '';
-                
-                return `
-                    <div class="comment" style="${isReply ? 'margin-top: 10px;' : ''}">
-                        <div class="comment-header">
-                            <span class="comment-author">${escapeHtml(comment.author)}</span>
-                            <span>${formatDate(comment.pubDate)}</span>
+                        <div class="comments-list">
+                            ${renderCommentList(post.comments)}
                         </div>
-                        <div class="comment-content">${escapeHtml(comment.contentText)}</div>
-                        ${repliesHtml}
                     </div>
                 `;
-            }
-
-            // 渲染所有顶层评论
-            html = data.data.map(comment => renderComment(comment)).join('');
-
+            });
+            
             container.innerHTML = html;
+            
+            // 绑定删除按钮事件
+            document.querySelectorAll('.delete-btn').forEach(button => {
+                button.addEventListener('click', function() {
+                    const commentId = this.dataset.id;
+                    deleteComment(commentId);
+                });
+            });
         }
 
-        // 简单的HTML转义函数
-        function escapeHtml(text) {
-            const map = {
-                '&': '&amp;',
-                '<': '&lt;',
-                '>': '&gt;',
-                '"': '&quot;',
-                "'": '&#039;'
-            };
-            return text.replace(/[&<>"']/g, m => map[m]);
+        // 渲染评论列表
+        function renderCommentList(comments) {
+            if (!comments || comments.length === 0) {
+                return '<div class="no-comments">暂无评论</div>';
+            }
+            
+            return comments.map(comment => `
+                <div class="comment-item" data-id="${comment.id}">
+                    <div class="comment-header">
+                        <div>
+                            <span class="comment-author">${comment.author}</span>
+                            <span class="status-badge status-${comment.status || 'pending'}">
+                                ${getStatusText(comment.status)}
+                            </span>
+                        </div>
+                        <div class="comment-date">${formatDate(comment.pubDate)}</div>
+                    </div>
+                    <div class="comment-content">${comment.contentHtml || comment.contentText}</div>
+                    <div class="comment-actions">
+                        <button class="action-btn delete-btn" data-id="${comment.id}">删除</button>
+                    </div>
+                    ${renderReplies(comment.replies || [])}
+                </div>
+            `).join('');
+        }
+
+        // 渲染回复列表
+        function renderReplies(replies) {
+            if (!replies || replies.length === 0) return '';
+            
+            return replies.map(reply => `
+                <div class="reply-item" data-id="${reply.id}">
+                    <div class="comment-header">
+                        <div>
+                            <span class="comment-author">${reply.author}</span>
+                            <span class="status-badge status-${reply.status || 'pending'}">
+                                ${getStatusText(reply.status)}
+                            </span>
+                        </div>
+                        <div class="comment-date">${formatDate(reply.pubDate)}</div>
+                    </div>
+                    <div class="comment-content">${reply.contentHtml || reply.contentText}</div>
+                    <div class="comment-actions">
+                        <button class="action-btn delete-btn" data-id="${reply.id}">删除</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // 获取状态文本
+        function getStatusText(status) {
+            switch(status) {
+                case 'approved': return '已批准';
+                case 'rejected': return '已拒绝';
+                case 'pending': return '待审核';
+                default: return '未知';
+            }
         }
 
         // 格式化日期
         function formatDate(dateString) {
             const date = new Date(dateString);
             return date.toLocaleString('zh-CN');
+        }
+
+        // 删除评论
+        async function deleteComment(commentId) {
+            if (!confirm('确定要删除这条评论吗？')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${CONFIG.DELETE_API_URL}?id=${commentId}`, {
+                    method: 'DELETE',
+                    headers: {
+                        'Authorization': `Bearer ${CONFIG.ADMIN_TOKEN}`
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                // 重新加载评论列表
+                fetchComments();
+                alert('删除成功');
+            } catch (error) {
+                console.error('删除评论失败:', error);
+                alert('删除失败，请重试');
+            }
+        }
+
+        // 退出登录
+        function logout() {
+            localStorage.removeItem('admin_token');
+            window.location.href = '/login.html';
         }
     </script>
 </body>

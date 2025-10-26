@@ -85,11 +85,42 @@
 
 ### 管理接口（需 Authorization: Bearer <ADMIN_TOKEN>）
 
-- `GET /admin/comments?status=pending`  
-  获取待审核评论
-
-- `PATCH /admin/comments/:id/approve`  
-  审核通过
-
-- `DELETE /admin/comments/:id`  
+- `DELETE /admin/comments/delete?id=...`  
   删除评论
+  响应：
+  `{ message: "Comment deleted, id: 1." }`
+
+- `GET /admin/comments/list`  
+  获取所有评论，格式如下
+```json
+{
+  "data": [
+    {
+      "post_slug": "/posts/my-article",
+      "comments": [
+        {
+          "id": 123,
+          "author": "张三",
+          "contentText": "写得真好！",
+          "contentHtml": "<p>写得真好！</p>",
+          "pubDate": "2025-10-23T10:00:00Z",
+          "replies": [
+            {
+              "id": 124,
+              "author": "李四",
+              "contentText": "同意",
+              "contentHtml": "<p>同意</p>",
+              "pubDate": "2025-10-23T11:00:00Z",
+              "replies": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "post_slug": "/posts/my-article-2",
+      "comments": []
+    }
+  ]
+}
+```

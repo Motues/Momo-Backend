@@ -10,6 +10,7 @@ dist/
 /src/generated/prisma
 /prisma/migrations
 .env
+*.db
 
 # dependencies
 node_modules/
