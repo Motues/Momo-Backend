@@ -11,6 +11,7 @@ dist/
 /prisma/migrations
 .env
 *.db
+*.db.bak
 
 # dependencies
 node_modules/
