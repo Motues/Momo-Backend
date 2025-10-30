@@ -6,10 +6,8 @@ echo "开始部署准备..."
 
 # 1. 检查是否已安装依赖
 echo "1. 检查依赖..."
-if [ ! -d "node_modules" ]; then
-  echo "安装依赖..."
-  pnpm install
-fi
+echo "安装依赖..."
+pnpm install
 
 # 32. 准备数据库
 echo "2. 准备数据库..."
