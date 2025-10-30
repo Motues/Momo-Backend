@@ -18,6 +18,16 @@ class CommentService {
             }
         });
     }
+    async getCommentById(id: number): Promise<Comment | null> {
+        return await CommentsModel.findUnique({
+            where: {
+                id
+            }
+        });
+    }
+    /*
+    * 根据文章 slug 获取所有评论
+    */
     async getCommentBySlug(postSlug: string): Promise<Comment[] | null> {
         return await CommentsModel.findMany({
             where: {
@@ -26,7 +36,10 @@ class CommentService {
             }
         });
     }
-    // 这里需要递归删除，将父级下的所有子级都删除
+    /*
+    * 删除评论
+    * 这里需要递归删除，将父级下的所有子级都删除
+    */
     async deleteComment(id: number) {
         // 先查询所有需要删除的评论ID（包括子孙节点）
         const deleteQueue: number[] = [];
