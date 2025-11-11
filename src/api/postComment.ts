@@ -1,7 +1,7 @@
 import type koa from "koa";
 import CommentService  from "../orm/commentService";
 import { Comment, CreateCommentInput } from "../type/prisma"
-import { sendCommentReplyNotification } from "../utils/email";
+import { sendCommentReplyNotification, sendCommentNotification } from "../utils/email";
 
 export default async (ctx: koa.Context, next: koa.Next): Promise<void> => {
   const data = ctx.request.body;
@@ -36,6 +36,13 @@ export default async (ctx: koa.Context, next: koa.Next): Promise<void> => {
         replyId: comment.id
       });
     }
+  } else {
+    await sendCommentNotification({
+      postTitle: data.post_slug,
+      postUrl: data.post_url,
+      commentAuthor: data.author,
+      commentContent: data.content
+    });
   }
   ctx.body = {
     message: "Comment submitted. Awaiting moderation."
