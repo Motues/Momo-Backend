@@ -1,6 +1,8 @@
 # API 接口定义
 
-## 提交评论（POST `/api/comments`）
+## 用户接口
+
+### 提交评论（POST `/api/comments`）
 
 **请求体**：
 ```json
@@ -84,15 +86,27 @@
 
 ---
 
-### 管理接口（需 Authorization: Bearer <ADMIN_TOKEN>）
+## 管理员接口（需 Authorization: Bearer <ADMIN_TOKEN>）
 
-- `DELETE /admin/comments/delete?id=...`  
-  删除评论
-  响应：
-  `{ message: "Comment deleted, id: 1." }`
+### 删除评论 (DELETE `/admin/comments/delete`)
 
-- `GET /admin/comments/list`  
-  获取所有评论，格式如下
+**请求参数**：
+
+- `id`（必需）
+
+**响应**：
+`DELETE /admin/comments/delete?id=...`  
+
+```json
+{
+  "message": "Comment deleted, id: 1." ,
+}
+```
+### 获取所有评论 (GET `/admin/comments/list`)
+
+**响应**：
+`GET /admin/comments/list`
+
 ```json
 {
   "data": [
@@ -123,5 +137,19 @@
       "comments": []
     }
   ]
+}
+```
+### 修改评论状态 (PUT `/admin/comments/status`)
+
+**请求参数**：
+- `id`（必需）
+- `status`（必需）
+
+**响应**：
+`PUT/admin/comments/status?id=...&status=...`
+
+```json
+{
+  "message": "Comment status updated, id: 1, status: approved."
 }
 ```

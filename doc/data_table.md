@@ -17,4 +17,4 @@
 | `content_text` | TEXT | NOT NULL | 评论内容（纯文本） |
 | `content_html` | TEXT | NOT NULL | 评论内容（HTML） |
 | `parent_id` | INTEGER | REFERENCES `comments`(`id`) | 回复的父评论 ID（NULL 表示顶级评论） |
-| `status` | TEXT | DEFAULT 'pending' | `pending` / `approved` / `rejected` |
+| `status` | TEXT | DEFAULT 'pending' | `pending` / `approved` / `rejected` / `deleted` |

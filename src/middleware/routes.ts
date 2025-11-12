@@ -1,8 +1,6 @@
 import Router from"@koa/router";
-import getCommentBySlug from "../api/getCommentBySlug";
-import postComment from "../api/postComment";
-import deleteComment from "../api/deleteComment";
-import getAllComments from "../api/getAllComments";
+import { getCommentBySlug, postComment } from "../api/index" // public
+import { deleteComment, getAllComments } from "../api/index" // admin
 
 
 const router = new Router();

@@ -1,12 +1,13 @@
 import type koa from "koa";
-import CommentService  from "../orm/commentService";
-import { Comment, CreateCommentInput } from "../type/prisma"
-import { sendCommentReplyNotification, sendCommentNotification } from "../utils/email";
+import CommentService  from "../../orm/commentService";
+import { Comment, CreateCommentInput } from "../../type/prisma"
+import { sendCommentReplyNotification, sendCommentNotification } from "../../utils/email";
 
 export default async (ctx: koa.Context, next: koa.Next): Promise<void> => {
   const data = ctx.request.body;
 //   console.log(data);
 //   console.log("有新的评论");
+  // 创建评论
   const commentData: CreateCommentInput = {
     pub_date: (new Date()).toISOString(),
     post_slug: data.post_slug,
@@ -22,6 +23,7 @@ export default async (ctx: koa.Context, next: koa.Next): Promise<void> => {
     status: "approved"
   }
   const comment = await CommentService.createComment(commentData);
+  // 发送邮件通知
   if(data.parent_id) {
     const parentComment = await CommentService.getCommentById(data.parent_id);
     if(parentComment && parentComment.email !== data.email) {

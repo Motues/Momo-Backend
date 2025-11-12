@@ -3,14 +3,17 @@ import { Comment, CreateCommentInput } from "../type/prisma"
 
 
 class CommentService {
+    /*
+    * 创建评论
+    */
     async createComment(data: CreateCommentInput): Promise<Comment> {
         return await CommentsModel.create({
             data
         });
     }
-    async getComments(): Promise<Comment[]> {
-        return await CommentsModel.findMany();
-    }
+    /*
+    * 获取所有评论，按照最新发布时间排序
+    */
     async getAllComments(): Promise<Comment[]> {
         return await CommentsModel.findMany({
             orderBy: {
@@ -18,6 +21,9 @@ class CommentService {
             }
         });
     }
+    /*
+    * 根据 id 获取评论
+    */
     async getCommentById(id: number): Promise<Comment | null> {
         return await CommentsModel.findUnique({
             where: {
@@ -59,11 +65,35 @@ class CommentService {
             });
         }
         // 执行批量删除
-        return await CommentsModel.deleteMany({
+        // return await CommentsModel.deleteMany({
+        //     where: {
+        //         id: {
+        //             in: deleteQueue
+        //         }
+        //     }
+        // });
+        /* 并不真实删除，而是改变状态 */
+        return await CommentsModel.updateMany({
             where: {
                 id: {
                     in: deleteQueue
                 }
+            },
+            data: {
+                status: "deleted"
+            }
+        });
+    }
+    /*
+    * 修改评论状态
+    */
+    async updateCommentStatus(id: number, status: string): Promise<Comment> {
+        return await CommentsModel.update({
+            where: {
+                id
+            },
+            data: {
+                status
             }
         });
     }

@@ -5,6 +5,8 @@ declare global {
       PORT: string;
       DATABASE_URL: string;
       ALLOW_ORIGIN: string;
+      RESEND_API_KEY: string;
+      EMAIL_ADDRESS: string;
     }
   }
 }

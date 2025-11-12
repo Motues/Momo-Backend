@@ -2,6 +2,9 @@ import { Comment } from "../type/prisma";
 import { CommentsResponse, NestedCommentsResponse, NestedComment } from "../type/api";
 import { getAvatar } from "../utils/getAvatar";
 
+/*
+* 将数据库获取的评论数据，按照指定的格式处理后返回给前端
+*/
 const getResponseComment = 
 async (comments: Comment[] | null, page: number, limit: number, nested: boolean): Promise<CommentsResponse | NestedCommentsResponse> => {
   if(comments === null) {

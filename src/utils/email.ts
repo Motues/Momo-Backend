@@ -68,7 +68,7 @@ export async function sendCommentNotification({
 }) { 
   const { data, error } = await resend.emails.send({
     from: '评论通知 <notify@notifications.motues.top>', // 替换为你验证过的域名邮箱
-    to: '2901987286@qq.com',
+    to: process.env.EMAIL_ADDRESS as string,
     subject: `你在 blog.motues.top 上有新的评论`,
     html: `
       <p>${commentAuthor} 评论了你的文章 ${postTitle}：</p>

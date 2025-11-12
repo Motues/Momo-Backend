@@ -1,7 +1,7 @@
 import type koa from "koa";
-import CommentService  from "../orm/commentService";
-import { getQueryNumber, getQueryBoolean, getQueryString } from "../utils/url";
-import { Comment, CreateCommentInput } from "../type/prisma"
+import CommentService  from "../../orm/commentService";
+import { getQueryNumber, getQueryBoolean, getQueryString } from "../../utils/url";
+import { Comment, CreateCommentInput } from "../../type/prisma"
 
 export default async (ctx: koa.Context, next: koa.Next): Promise<void> => {
   const deleteId =  getQueryNumber(ctx.query.id as string, 0);

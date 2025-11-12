@@ -1,7 +1,7 @@
 import type koa from "koa";
-import CommentService from "../orm/commentService";
-import { Comment } from "../type/prisma";
-import { groupCommentsByPost } from "../utils/content";
+import CommentService from "../../orm/commentService";
+import { Comment } from "../../type/prisma";
+import { groupCommentsByPost } from "../../utils/content";
 
 export default async (ctx: koa.Context, next: koa.Next): Promise<void> => {
   // 获取所有评论
