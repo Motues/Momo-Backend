@@ -1,8 +1,9 @@
+import * as crypto from 'crypto';
+
 const getAvatar = async (author: string, email: string): Promise<string | undefined> => {
   /*
-  1. 首先查看名称对应的github是否存在头像
-  2. 分析邮箱类型，如果是QQ邮箱，则使用对应的QQ头像
-  3. 否则使用默认头像
+  1. 分析邮箱类型，如果是QQ邮箱，则使用对应的QQ头像
+  2. 否则使用默认生成的头像
   */
 
   const qqAvatar = getQQAvatar(email);
@@ -10,13 +11,13 @@ const getAvatar = async (author: string, email: string): Promise<string | undefi
     return qqAvatar;
   }
 
-  const githubAvatar = await getGithubAvatar(author);
-  if (githubAvatar) {
-    return githubAvatar;
-  }
+  // const githubAvatar = await getGithubAvatar(author);
+  // if (githubAvatar) {
+  //   return githubAvatar;
+  // }
 
 
-  return undefined;
+  return getAvatarSeed(email);
 };
 
 // 获取 GitHub 头像的辅助函数
@@ -32,7 +33,7 @@ const getGithubAvatar = async (author: string): Promise<string | undefined> => {
         }
       }
     }
-    return `https://api.dicebear.com/7.x/identicon/svg?seed=${author}`;
+    return undefined;
   } catch (error) {
     return undefined;
   }
@@ -41,12 +42,20 @@ const getGithubAvatar = async (author: string): Promise<string | undefined> => {
 // 获取 QQ 头像的辅助函数
 const getQQAvatar = (email: string): string | undefined => {
   const qqEmailMatch = email.match(/^(\d+)@qq\.com$/);
-  if (qqEmailMatch) {
-    const qqNumber = qqEmailMatch[1];
-    // QQ 头像 API
-    return `https://q1.qlogo.cn/g?b=qq&nk=${qqNumber}&s=100`;
+  // 判断是不是纯数字
+  if (!qqEmailMatch || !qqEmailMatch[1].match(/^\d+$/)) {
+    return undefined;
   }
-  return undefined;
+  const qqNumber = qqEmailMatch[1];
+  // QQ 头像 API
+  const hash = crypto.createHash('sha256').update(email).digest('hex');
+  return `https://weavatar.com/avatar/${hash}`;
+  // return `https://q1.qlogo.cn/g?b=qq&nk=${qqNumber}&s=100`;
 };
+
+const getAvatarSeed = (email: string): string => {
+  const hash = crypto.createHash('sha256').update(email).digest('hex');
+  return `https://api.dicebear.com/7.x/identicon/svg?seed=${hash}`;
+}
 
 export { getAvatar };
