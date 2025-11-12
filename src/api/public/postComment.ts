@@ -14,7 +14,7 @@ export default async (ctx: koa.Context, next: koa.Next): Promise<void> => {
     author: data.author,
     email: data.email,
     url: data.url,
-    ip_address: ctx.request.headers['x-real-ip'] as string || 
+    ip_address: ctx.request.headers['cf-connecting-ip'] as string || ctx.request.headers['x-real-ip'] as string || 
             (ctx.request.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || 
             ctx.ip,
     device: ctx.request.header['user-agent'] ?? "",
