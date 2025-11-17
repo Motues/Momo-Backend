@@ -49,7 +49,7 @@ const getQQAvatar = (email: string): string | undefined => {
   const qqNumber = qqEmailMatch[1];
   // QQ 头像 API
   const hash = crypto.createHash('sha256').update(email).digest('hex');
-  return `https://weavatar.com/avatar/${hash}`;
+  return `https://weavatar.com/avatar/${hash}&s=200`;
   // return `https://q1.qlogo.cn/g?b=qq&nk=${qqNumber}&s=100`;
 };
 

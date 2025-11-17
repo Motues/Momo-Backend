@@ -43,6 +43,19 @@ class CommentService {
         });
     }
     /*
+    * 根据 IP 获取最新的评论
+    */
+    async getlastCommentByIP(ip: string): Promise<Comment[] | null> {
+        return await CommentsModel.findMany({
+            where: {
+                ip_address: ip
+            },
+            orderBy: {
+                pub_date: 'desc'
+            }
+        });
+    }
+    /*
     * 删除评论
     * 这里需要递归删除，将父级下的所有子级都删除
     */

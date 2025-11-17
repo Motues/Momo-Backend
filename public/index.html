@@ -3,389 +3,466 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>评论管理系统</title>
+    <title>Momo 后台管理系统</title>
     <style>
-        :root {
-            --primary-color: #409eff;
-            --success-color: #67c23a;
-            --warning-color: #e6a23c;
-            --danger-color: #f56c6c;
-            --info-color: #909399;
-            --border-color: #dcdfe6;
-            --background-color: #f5f7fa;
-        }
-        
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
         body {
-            font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB', Arial, sans-serif;
-            background-color: #f5f7fa;
-            color: #333;
-        }
-        
-        .container {
+            font-family: Arial, sans-serif;
             max-width: 1200px;
             margin: 0 auto;
             padding: 20px;
+            background-color: #f5f5f5;
         }
-        
-        header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 20px 0;
-            border-bottom: 1px solid var(--border-color);
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
             margin-bottom: 20px;
         }
-        
-        h1 {
+        h1, h2 {
             color: #333;
         }
-        
-        .logout-btn {
-            background-color: var(--danger-color);
-            color: white;
-            border: none;
-            padding: 8px 16px;
+        input, button, textarea, select {
+            padding: 10px;
+            margin: 5px 0;
             border-radius: 4px;
-            cursor: pointer;
+            border: 1px solid #ddd;
+            width: 100%;
+            box-sizing: border-box;
         }
-        
-        .comments-container {
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
-            overflow: hidden;
-        }
-        
-        .post-section {
-            border-bottom: 1px solid var(--border-color);
-        }
-        
-        .post-header {
-            padding: 16px 20px;
-            background-color: var(--background-color);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        
-        .post-title {
-            font-weight: bold;
-            font-size: 16px;
-        }
-        
-        .comment-count {
-            background-color: var(--info-color);
+        button {
+            background-color: #007bff;
             color: white;
-            padding: 2px 8px;
-            border-radius: 10px;
-            font-size: 12px;
+            cursor: pointer;
+            width: auto;
+            display: inline-block;
         }
-        
-        .comments-list {
-            padding: 0 20px;
+        button:hover {
+            background-color: #0056b3;
         }
-        
-        .comment-item {
-            padding: 16px 0;
-            border-bottom: 1px solid var(--border-color);
+        button.delete {
+            background-color: #dc3545;
         }
-        
-        .comment-item:last-child {
-            border-bottom: none;
+        button.delete:hover {
+            background-color: #bd2130;
         }
-        
-        .comment-header {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 8px;
+        button.approve {
+            background-color: #28a745;
         }
-        
-        .comment-author {
-            font-weight: bold;
+        button.approve:hover {
+            background-color: #218838;
         }
-        
-        .comment-date {
-            color: #999;
-            font-size: 14px;
+        .form-group {
+            margin-bottom: 15px;
         }
-        
-        .comment-content {
-            margin-bottom: 12px;
-            line-height: 1.6;
-        }
-        
-        .comment-actions {
+        .form-row {
             display: flex;
             gap: 10px;
         }
-        
-        .action-btn {
-            padding: 4px 10px;
-            border-radius: 4px;
-            border: none;
-            cursor: pointer;
-            font-size: 12px;
+        .form-row input {
+            flex: 1;
         }
-        
-        .approve-btn {
-            background-color: var(--success-color);
-            color: white;
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
         }
-        
-        .delete-btn {
-            background-color: var(--danger-color);
-            color: white;
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
         }
-        
-        .reply-item {
-            margin-left: 30px;
-            padding: 12px 0;
-            border-top: 1px dashed var(--border-color);
+        th {
+            background-color: #f8f9fa;
         }
-        
-        .no-comments {
-            text-align: center;
-            padding: 40px 20px;
-            color: #999;
+        tr:hover {
+            background-color: #f5f5f5;
         }
-        
-        .loading {
-            text-align: center;
-            padding: 40px 20px;
+        .hidden {
+            display: none;
         }
-        
-        .status-badge {
-            display: inline-block;
-            padding: 2px 8px;
-            border-radius: 10px;
-            font-size: 12px;
-            margin-left: 8px;
+        .comment-content {
+            max-width: 300px;
+            word-wrap: break-word;
         }
-        
-        .status-pending {
-            background-color: var(--warning-color);
-            color: white;
+        .pagination {
+            display: flex;
+            justify-content: center;
+            margin-top: 20px;
+            gap: 5px;
         }
-        
+        .pagination button {
+            padding: 8px 12px;
+        }
         .status-approved {
-            background-color: var(--success-color);
-            color: white;
+            color: #28a745;
+            font-weight: bold;
         }
-        
-        .status-rejected {
-            background-color: var(--danger-color);
-            color: white;
+        .status-pending {
+            color: #ffc107;
+            font-weight: bold;
         }
-        
-        @media (max-width: 768px) {
-            .container {
-                padding: 10px;
-            }
-            
-            .reply-item {
-                margin-left: 15px;
-            }
+        .status-spam {
+            color: #dc3545;
+            font-weight: bold;
+        }
+        .message {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .message.success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .message.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>评论管理系统</h1>
-            <button class="logout-btn" id="logoutBtn">退出登录</button>
-        </header>
+    <h1>Momo 后台管理系统</h1>
+    
+    <!-- 登录表单 -->
+    <div class="container" id="login-section">
+        <h2>管理员登录</h2>
+        <div class="form-group">
+            <input type="text" id="username" placeholder="用户名">
+        </div>
+        <div class="form-group">
+            <input type="password" id="password" placeholder="密码">
+        </div>
+        <div class="form-group">
+            <button onclick="login()">登录</button>
+        </div>
+        <div id="login-message"></div>
+    </div>
+    
+    <!-- 管理面板 -->
+    <div class="container hidden" id="admin-panel">
+        <h2>评论管理</h2>
+        <div id="admin-info">
+            <p>欢迎, <span id="admin-name"></span>! <button onclick="logout()">退出登录</button></p>
+        </div>
         
-        <div class="comments-container">
-            <div id="commentsList">
-                <!-- 评论列表将通过JavaScript动态加载 -->
-                <div class="loading">加载中...</div>
+        <div id="comments-section">
+            <h3>评论列表</h3>
+            <div class="form-group">
+                <div class="form-row">
+                    <select id="page-select">
+                        <!-- 页面选项将通过JavaScript动态生成 -->
+                    </select>
+                    <button onclick="loadComments()">刷新</button>
+                </div>
+            </div>
+            
+            <table id="comments-table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>作者</th>
+                        <th>邮箱</th>
+                        <th>内容</th>
+                        <th>日期</th>
+                        <th>状态</th>
+                        <th>IP</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="comments-body">
+                    <!-- 评论数据将通过JavaScript动态生成 -->
+                </tbody>
+            </table>
+            
+            <div class="pagination" id="pagination">
+                <!-- 分页按钮将通过JavaScript动态生成 -->
             </div>
         </div>
+        
+        <div id="admin-message"></div>
     </div>
 
     <script>
-        // 配置部分 - 请根据实际情况修改
-        const CONFIG = {
-            API_BASE_URL: 'http://localhost:17171/admin/comments/list',
-            DELETE_API_URL: 'http://localhost:17171/admin/comments/delete',
-            ADMIN_TOKEN: '111'
-        };
-
-        // 页面加载完成后获取评论数据
-        document.addEventListener('DOMContentLoaded', function() {
-            if (!CONFIG.ADMIN_TOKEN) {
-                alert('请先登录');
-                window.location.href = '/login.html';
-                return;
-            }
+        // 全局变量
+        const BASE_URL = 'http://localhost:17171'; // 后端服务地址
+        let adminKey = '';
+        let currentPage = 1;
+        let totalPages = 1;
+        
+        // 登录功能
+        async function login() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const messageEl = document.getElementById('login-message');
             
-            fetchComments();
-            
-            // 绑定退出登录事件
-            document.getElementById('logoutBtn').addEventListener('click', logout);
-        });
-
-        // 获取所有评论
-        async function fetchComments() {
-            try {
-                const response = await fetch(CONFIG.API_BASE_URL, {
-                    headers: {
-                        'Authorization': `Bearer ${CONFIG.ADMIN_TOKEN}`
-                    }
-                });
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                
-                const data = await response.json();
-                renderComments(data.data);
-            } catch (error) {
-                console.error('获取评论失败:', error);
-                document.getElementById('commentsList').innerHTML = 
-                    '<div class="no-comments">加载评论失败，请刷新重试</div>';
-            }
-        }
-
-        // 渲染评论列表
-        function renderComments(posts) {
-            const container = document.getElementById('commentsList');
-            
-            if (!posts || posts.length === 0) {
-                container.innerHTML = '<div class="no-comments">暂无评论</div>';
-                return;
-            }
-            
-            let html = '';
-            
-            posts.forEach(post => {
-                html += `
-                    <div class="post-section">
-                        <div class="post-header">
-                            <div class="post-title">${post.post_slug}</div>
-                            <div class="comment-count">${post.comments.length} 条评论</div>
-                        </div>
-                        <div class="comments-list">
-                            ${renderCommentList(post.comments)}
-                        </div>
-                    </div>
-                `;
-            });
-            
-            container.innerHTML = html;
-            
-            // 绑定删除按钮事件
-            document.querySelectorAll('.delete-btn').forEach(button => {
-                button.addEventListener('click', function() {
-                    const commentId = this.dataset.id;
-                    deleteComment(commentId);
-                });
-            });
-        }
-
-        // 渲染评论列表
-        function renderCommentList(comments) {
-            if (!comments || comments.length === 0) {
-                return '<div class="no-comments">暂无评论</div>';
-            }
-            
-            return comments.map(comment => `
-                <div class="comment-item" data-id="${comment.id}">
-                    <div class="comment-header">
-                        <div>
-                            <span class="comment-author">${comment.author}</span>
-                            <span class="status-badge status-${comment.status || 'pending'}">
-                                ${getStatusText(comment.status)}
-                            </span>
-                        </div>
-                        <div class="comment-date">${formatDate(comment.pubDate)}</div>
-                    </div>
-                    <div class="comment-content">${comment.contentHtml || comment.contentText}</div>
-                    <div class="comment-actions">
-                        <button class="action-btn delete-btn" data-id="${comment.id}">删除</button>
-                    </div>
-                    ${renderReplies(comment.replies || [])}
-                </div>
-            `).join('');
-        }
-
-        // 渲染回复列表
-        function renderReplies(replies) {
-            if (!replies || replies.length === 0) return '';
-            
-            return replies.map(reply => `
-                <div class="reply-item" data-id="${reply.id}">
-                    <div class="comment-header">
-                        <div>
-                            <span class="comment-author">${reply.author}</span>
-                            <span class="status-badge status-${reply.status || 'pending'}">
-                                ${getStatusText(reply.status)}
-                            </span>
-                        </div>
-                        <div class="comment-date">${formatDate(reply.pubDate)}</div>
-                    </div>
-                    <div class="comment-content">${reply.contentHtml || reply.contentText}</div>
-                    <div class="comment-actions">
-                        <button class="action-btn delete-btn" data-id="${reply.id}">删除</button>
-                    </div>
-                </div>
-            `).join('');
-        }
-
-        // 获取状态文本
-        function getStatusText(status) {
-            switch(status) {
-                case 'approved': return '已批准';
-                case 'rejected': return '已拒绝';
-                case 'pending': return '待审核';
-                default: return '未知';
-            }
-        }
-
-        // 格式化日期
-        function formatDate(dateString) {
-            const date = new Date(dateString);
-            return date.toLocaleString('zh-CN');
-        }
-
-        // 删除评论
-        async function deleteComment(commentId) {
-            if (!confirm('确定要删除这条评论吗？')) {
+            if (!username || !password) {
+                showMessage(messageEl, '请填写用户名和密码', 'error');
                 return;
             }
             
             try {
-                const response = await fetch(`${CONFIG.DELETE_API_URL}?id=${commentId}`, {
-                    method: 'DELETE',
+                const response = await fetch(BASE_URL + '/admin/login', {
+                    method: 'POST',
                     headers: {
-                        'Authorization': `Bearer ${CONFIG.ADMIN_TOKEN}`
-                    }
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ name: username, password: password })
                 });
                 
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
+                const result = await response.json();
                 
-                // 重新加载评论列表
-                fetchComments();
-                alert('删除成功');
+                if (response.ok) {
+                    adminKey = result.data.key;
+                    document.getElementById('admin-name').textContent = username;
+                    document.getElementById('login-section').classList.add('hidden');
+                    document.getElementById('admin-panel').classList.remove('hidden');
+                    loadComments();
+                } else {
+                    showMessage(messageEl, result.message || '登录失败', 'error');
+                }
             } catch (error) {
-                console.error('删除评论失败:', error);
-                alert('删除失败，请重试');
+                showMessage(messageEl, '登录过程中发生错误: ' + error.message, 'error');
             }
         }
-
+        
         // 退出登录
         function logout() {
-            localStorage.removeItem('admin_token');
-            window.location.href = '/login.html';
+            adminKey = '';
+            document.getElementById('username').value = '';
+            document.getElementById('password').value = '';
+            document.getElementById('admin-panel').classList.add('hidden');
+            document.getElementById('login-section').classList.remove('hidden');
+            document.getElementById('comments-body').innerHTML = '';
+            document.getElementById('page-select').innerHTML = '';
+            document.getElementById('pagination').innerHTML = '';
         }
+        
+        // 加载评论
+        async function loadComments(page = 1) {
+            if (!adminKey) return;
+            
+            try {
+                const response = await fetch(BASE_URL + `/admin/comments/list?page=${page}&key=${encodeURIComponent(adminKey)}`);
+                const result = await response.json();
+                
+                if (response.ok) {
+                    renderComments(result.data);
+                } else {
+                    showMessage(document.getElementById('admin-message'), result.message || '加载评论失败', 'error');
+                }
+            } catch (error) {
+                showMessage(document.getElementById('admin-message'), '加载评论时发生错误: ' + error.message, 'error');
+            }
+        }
+        
+        // 渲染评论
+        function renderComments(commentsData) {
+            // 检查数据结构
+            if (!commentsData || !commentsData.data || !commentsData.pagination) {
+                showMessage(document.getElementById('admin-message'), '返回的数据格式不正确', 'error');
+                return;
+            }
+            
+            const comments = commentsData.data;
+            const pagination = commentsData.pagination;
+            
+            // 更新全局分页信息
+            currentPage = pagination.page || 1;
+            totalPages = pagination.total || 1;
+            
+            // 渲染评论表格
+            const tbody = document.getElementById('comments-body');
+            tbody.innerHTML = '';
+            
+            if (comments.length === 0) {
+                const row = document.createElement('tr');
+                row.innerHTML = '<td colspan="8" style="text-align: center;">暂无评论</td>';
+                tbody.appendChild(row);
+                return;
+            }
+            
+            comments.forEach(comment => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${comment.id}</td>
+                    <td>${escapeHtml(comment.author)}</td>
+                    <td>${escapeHtml(comment.email)}</td>
+                    <td class="comment-content">${escapeHtml(comment.contentText)}</td>
+                    <td>${new Date(comment.pubDate).toLocaleString()}</td>
+                    <td><span class="status-${comment.status}">${comment.status}</span></td>
+                    <td>${comment.ipAddress}</td>
+                    <td>
+                        <button class="approve" onclick="changeCommentStatus(${comment.id}, 'approved')">批准</button>
+                        <button class="delete" onclick="deleteComment(${comment.id})">删除</button>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+            
+            // 渲染页面选择器
+            renderPageSelector(pagination);
+            
+            // 渲染分页控件
+            renderPagination(pagination);
+        }
+        
+        // 渲染页面选择器
+        function renderPageSelector(pagination) {
+            // 检查 pagination 对象
+            if (!pagination) return;
+            
+            const pageSelect = document.getElementById('page-select');
+            pageSelect.innerHTML = '';
+            
+            const totalPages = pagination.total || 1;
+            const currentPage = pagination.page || 1;
+            
+            for (let i = 1; i <= totalPages; i++) {
+                const option = document.createElement('option');
+                option.value = i;
+                option.textContent = `第 ${i} 页`;
+                if (i === currentPage) {
+                    option.selected = true;
+                }
+                pageSelect.appendChild(option);
+            }
+            
+            // 添加事件监听器
+            pageSelect.onchange = () => {
+                loadComments(parseInt(pageSelect.value));
+            };
+        }
+        
+        // 渲染分页控件
+        function renderPagination(pagination) {
+            // 检查 pagination 对象
+            if (!pagination) return;
+            
+            const paginationEl = document.getElementById('pagination');
+            paginationEl.innerHTML = '';
+            
+            const totalPages = pagination.total || 1;
+            const currentPage = pagination.page || 1;
+            
+            // 上一页按钮
+            if (currentPage > 1) {
+                const prevButton = document.createElement('button');
+                prevButton.textContent = '上一页';
+                prevButton.onclick = () => loadComments(currentPage - 1);
+                paginationEl.appendChild(prevButton);
+            }
+            
+            // 页码按钮
+            const startPage = Math.max(1, currentPage - 2);
+            const endPage = Math.min(totalPages, currentPage + 2);
+            
+            for (let i = startPage; i <= endPage; i++) {
+                const pageButton = document.createElement('button');
+                pageButton.textContent = i;
+                if (i === currentPage) {
+                    pageButton.style.fontWeight = 'bold';
+                    pageButton.disabled = true;
+                } else {
+                    pageButton.onclick = () => loadComments(i);
+                }
+                paginationEl.appendChild(pageButton);
+            }
+            
+            // 下一页按钮
+            if (currentPage < totalPages) {
+                const nextButton = document.createElement('button');
+                nextButton.textContent = '下一页';
+                nextButton.onclick = () => loadComments(currentPage + 1);
+                paginationEl.appendChild(nextButton);
+            }
+        }
+        
+        // 更改评论状态
+        async function changeCommentStatus(commentId, status) {
+            if (!adminKey) return;
+            
+            if (!confirm(`确定要将评论 #${commentId} 的状态更改为 "${status}" 吗？`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(BASE_URL + `/admin/comments/status?id=${commentId}&status=${status}&key=${encodeURIComponent(adminKey)}`, {
+                    method: 'PUT'
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    showMessage(document.getElementById('admin-message'), result.message, 'success');
+                    loadComments(currentPage);
+                } else {
+                    showMessage(document.getElementById('admin-message'), result.message || '更改状态失败', 'error');
+                }
+            } catch (error) {
+                showMessage(document.getElementById('admin-message'), '更改状态时发生错误: ' + error.message, 'error');
+            }
+        }
+        
+        // 删除评论
+        async function deleteComment(commentId) {
+            if (!adminKey) return;
+            
+            if (!confirm(`确定要删除评论 #${commentId} 吗？此操作不可撤销！`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(BASE_URL + `/admin/comments/delete?id=${commentId}&key=${encodeURIComponent(adminKey)}`, {
+                    method: 'DELETE'
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    showMessage(document.getElementById('admin-message'), result.message, 'success');
+                    loadComments(currentPage);
+                } else {
+                    showMessage(document.getElementById('admin-message'), result.message || '删除评论失败', 'error');
+                }
+            } catch (error) {
+                showMessage(document.getElementById('admin-message'), '删除评论时发生错误: ' + error.message, 'error');
+            }
+        }
+        
+        // 显示消息
+        function showMessage(element, message, type) {
+            element.className = 'message ' + type;
+            element.textContent = message;
+            element.style.display = 'block';
+            
+            // 3秒后自动隐藏消息
+            setTimeout(() => {
+                element.style.display = 'none';
+            }, 3000);
+        }
+        
+        // 转义HTML以防止XSS攻击
+        function escapeHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            
+            return text.replace(/[&<>"']/g, m => map[m]);
+        }
+        
+        // 回车键登录
+        document.addEventListener('keypress', function(event) {
+            if (event.key === 'Enter' && !document.getElementById('login-section').classList.contains('hidden')) {
+                login();
+            }
+        });
     </script>
 </body>
 </html>

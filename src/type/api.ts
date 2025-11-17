@@ -35,4 +35,20 @@ interface NestedCommentsResponse {
   pagination: Pagination;
 }
 
-export type { CommentsResponse, NestedCommentsResponse, NestedComment, Comment };
+interface CommentAdmin {
+  id: number;
+  pubDate: string;
+  author: string;
+  email: string;
+  url?: string;
+  ipAddress: string;
+  contentText: string;
+  contentHtml: string;
+  status: string;
+}
+interface CommentAdminResponse {
+  data: CommentAdmin[];
+  pagination: Pagination;
+}
+
+export type { CommentsResponse, NestedCommentsResponse, NestedComment, Comment, CommentAdmin, CommentAdminResponse };

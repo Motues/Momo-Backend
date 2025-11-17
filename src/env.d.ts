@@ -7,6 +7,9 @@ declare global {
       ALLOW_ORIGIN: string;
       RESEND_API_KEY: string;
       EMAIL_ADDRESS: string;
+      ADMIN_KEY: string;
+      ADMIN_NAME: string;
+      ADMIN_PASSWORD: string;
     }
   }
 }

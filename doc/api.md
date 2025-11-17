@@ -93,6 +93,7 @@
 **请求参数**：
 
 - `id`（必需）
+- `key`（必需）
 
 **响应**：
 `DELETE /admin/comments/delete?id=...`  
@@ -102,48 +103,52 @@
   "message": "Comment deleted, id: 1." ,
 }
 ```
+
 ### 获取所有评论 (GET `/admin/comments/list`)
 
+**查询参数**：
+- `page`（默认 1）
+- `key`（必需）
+
 **响应**：
-`GET /admin/comments/list`
+`GET /admin/comments/list&page=1&key=...`
 
 ```json
 {
   "data": [
     {
-      "post_slug": "/posts/my-article",
-      "comments": [
-        {
-          "id": 123,
-          "author": "张三",
-          "contentText": "写得真好！",
-          "contentHtml": "<p>写得真好！</p>",
-          "pubDate": "2025-10-23T10:00:00Z",
-          "replies": [
-            {
-              "id": 124,
-              "author": "李四",
-              "contentText": "同意",
-              "contentHtml": "<p>同意</p>",
-              "pubDate": "2025-10-23T11:00:00Z",
-              "replies": []
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "post_slug": "/posts/my-article-2",
-      "comments": []
+      "id": 123,
+      "pubDate": "2025-10-23T10:00:00Z",
+      "author": "张三",
+      "email": "zhangsan@example.com",
+      "url": "https://example.com",
+      "ipAddress": "192.168.1.1",
+      "contentText": "写得真好！",
+      "contentHtml": "<p>写得真好！</p>",
+      "status": "approved",
     }
-  ]
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 1
+  }
 }
 ```
+
+如果key不正确，返回401
+```json
+{
+  "message": "Invalid key"
+}
+```
+
 ### 修改评论状态 (PUT `/admin/comments/status`)
 
 **请求参数**：
 - `id`（必需）
 - `status`（必需）
+- `key`（必需）
 
 **响应**：
 `PUT/admin/comments/status?id=...&status=...`
@@ -151,5 +156,31 @@
 ```json
 {
   "message": "Comment status updated, id: 1, status: approved."
+}
+```
+
+### 登录 (POST `/admin/login`)
+
+**请求体**：
+```json
+{
+  "name": "admin",
+  "password": "password"
+}
+```
+
+**响应**：
+
+如果登录成功，返回一个key
+```json
+{
+  "key": "<KEY>"
+}
+```
+
+否则返回
+```json
+{
+  "message": "Invalid username or password"
 }
 ```

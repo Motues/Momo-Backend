@@ -2,53 +2,63 @@ import type koa from "koa";
 import CommentService  from "../../orm/commentService";
 import { Comment, CreateCommentInput } from "../../type/prisma"
 import { sendCommentReplyNotification, sendCommentNotification } from "../../utils/email";
+import { canPostComment, checkContent} from "../../utils/security"
 
 export default async (ctx: koa.Context, next: koa.Next): Promise<void> => {
   const data = ctx.request.body;
-//   console.log(data);
-//   console.log("有新的评论");
-  // 创建评论
-  const commentData: CreateCommentInput = {
-    pub_date: (new Date()).toISOString(),
-    post_slug: data.post_slug,
-    author: data.author,
-    email: data.email,
-    url: data.url,
-    ip_address: ctx.request.headers['cf-connecting-ip'] as string || ctx.request.headers['x-real-ip'] as string || 
+
+  // 检查评论时间
+
+  const ip = ctx.request.headers['cf-connecting-ip'] as string || ctx.request.headers['x-real-ip'] as string || 
             (ctx.request.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || 
-            ctx.ip,
-    device: ctx.request.header['user-agent'] ?? "",
-    browser: ctx.request.header['user-agent'] ?? "",
-    content_text: data.content,
-    content_html: data.content,
-    parent_id: data.parent_id ?? null,
-    status: "approved"
-  }
-  const comment = await CommentService.createComment(commentData);
-  // 发送邮件通知
-  if(data.parent_id) {
-    const parentComment = await CommentService.getCommentById(data.parent_id);
-    if(parentComment && parentComment.email !== data.email) {
-      await sendCommentReplyNotification({
-        toEmail: parentComment.email,
-        toName: parentComment.author,
+            ctx.ip;
+  if(!await canPostComment(ip)) {
+    ctx.body = {
+      message: "Time limit exceeded. Please wait before posting again."
+    };
+  } else {
+    // 创建评论
+    const content = checkContent(data.content), author = checkContent(data.author);
+    const commentData: CreateCommentInput = {
+      pub_date: (new Date()).toISOString(),
+      post_slug: data.post_slug,
+      author: author,
+      email: data.email,
+      url: data.url,
+      ip_address: ip,
+      device: ctx.request.header['user-agent'] ?? "",
+      browser: ctx.request.header['user-agent'] ?? "",
+      content_text: content,
+      content_html: content,
+      parent_id: data.parent_id ?? null,
+      status: "approved"
+    }
+    const comment = await CommentService.createComment(commentData);
+    // 发送邮件通知
+    if(data.parent_id) {
+      const parentComment = await CommentService.getCommentById(data.parent_id);
+      if(parentComment && parentComment.email !== data.email) {
+        await sendCommentReplyNotification({
+          toEmail: parentComment.email,
+          toName: parentComment.author,
+          postTitle: data.post_slug,
+          parentComment: parentComment.content_text,
+          replyAuthor: author,
+          replyContent: content,
+          postUrl: data.post_url,
+          replyId: comment.id
+        });
+      }
+    } else {
+      await sendCommentNotification({
         postTitle: data.post_slug,
-        parentComment: parentComment.content_text,
-        replyAuthor: data.author,
-        replyContent: data.content,
         postUrl: data.post_url,
-        replyId: comment.id
+        commentAuthor: author,
+        commentContent: content
       });
     }
-  } else {
-    await sendCommentNotification({
-      postTitle: data.post_slug,
-      postUrl: data.post_url,
-      commentAuthor: data.author,
-      commentContent: data.content
-    });
+    ctx.body = {
+      message: "Comment submitted. Awaiting moderation."
+    };
   }
-  ctx.body = {
-    message: "Comment submitted. Awaiting moderation."
-  };
 }

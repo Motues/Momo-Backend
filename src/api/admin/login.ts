@@ -7,23 +7,17 @@ import { getQueryNumber, getQueryBoolean, getQueryString } from "../../utils/url
 
 export default async (ctx: koa.Context, next: koa.Next): Promise<void> => {
 
-  const page = getQueryNumber(ctx.query.page as string, 1);
-  const key = getQueryString(ctx.query.key as string, "");
+  const data = ctx.request.body;
 
-  if(!checkKey(key)) {
+//   console.log(data);
+
+  if(!checkAdmin(data.name, data.password)) {
     ctx.status = 401;
-    ctx.body = { message: "Invalid key" };
+    ctx.body = { message: "Invalid username or password" };
     return;
   }
-
-  // 获取所有评论
-  const comments: Comment[] = await CommentService.getAllComments();
-  
-  const groupedComments = await getResponseCommentAdmin(comments, page);
-
-  // console.log(groupedComments);
   
   ctx.body = {
-    data: groupedComments
+    data: { key: process.env.ADMIN_KEY }
   };
 };
