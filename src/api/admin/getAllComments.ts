@@ -23,7 +23,5 @@ export default async (ctx: koa.Context, next: koa.Next): Promise<void> => {
 
   // console.log(groupedComments);
   
-  ctx.body = {
-    data: groupedComments
-  };
+  ctx.body = groupedComments;
 };

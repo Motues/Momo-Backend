@@ -2,7 +2,7 @@ import type koa from "koa";
 import CommentService from "../../orm/commentService";
 import { Comment } from "../../type/prisma";
 import { getResponseCommentAdmin } from "../../utils/content";
-import { checkAdmin, checkKey } from "../../utils/security"
+import { checkAdmin, checkKey, generateTempKey } from "../../utils/security"
 import { getQueryNumber, getQueryBoolean, getQueryString } from "../../utils/url";
 
 export default async (ctx: koa.Context, next: koa.Next): Promise<void> => {
@@ -17,7 +17,10 @@ export default async (ctx: koa.Context, next: koa.Next): Promise<void> => {
     return;
   }
   
+  // 生成临时密钥
+  const tempKey = generateTempKey(data.name);
+  
   ctx.body = {
-    data: { key: process.env.ADMIN_KEY }
+    data: { key: tempKey }
   };
 };

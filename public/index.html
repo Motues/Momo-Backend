@@ -235,16 +235,15 @@
                         return;
                     }
 
-                    // 提取数据
-                    let rootData = result.data || {}; 
-                    let listData = Array.isArray(rootData) ? rootData : (rootData.data || []);
+                    // 提取数据 
+                    let listData = result.data;
                     
                     // 提取分页对象
-                    let pageData = rootData.pagination || result.pagination;
+                    let pageData = result.pagination;
 
                     // 兜底处理
                     if (!pageData) {
-                        pageData = { page: page, limit: 20, total: 1 }; // 默认值
+                        pageData = { page: page, limit: 10, total: 1 }; // 默认值
                     }
 
                     state.comments = listData;
