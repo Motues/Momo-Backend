@@ -3,466 +3,399 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Momo 后台管理系统</title>
+    <title>评论后台管理系统</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-            background-color: #f5f5f5;
-        }
-        .container {
-            background-color: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            margin-bottom: 20px;
-        }
-        h1, h2 {
-            color: #333;
-        }
-        input, button, textarea, select {
-            padding: 10px;
-            margin: 5px 0;
-            border-radius: 4px;
-            border: 1px solid #ddd;
-            width: 100%;
-            box-sizing: border-box;
-        }
-        button {
-            background-color: #007bff;
-            color: white;
-            cursor: pointer;
-            width: auto;
-            display: inline-block;
-        }
-        button:hover {
-            background-color: #0056b3;
-        }
-        button.delete {
-            background-color: #dc3545;
-        }
-        button.delete:hover {
-            background-color: #bd2130;
-        }
-        button.approve {
-            background-color: #28a745;
-        }
-        button.approve:hover {
-            background-color: #218838;
-        }
-        .form-group {
-            margin-bottom: 15px;
-        }
-        .form-row {
-            display: flex;
-            gap: 10px;
-        }
-        .form-row input {
-            flex: 1;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 20px;
-        }
-        th, td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #ddd;
-        }
-        th {
-            background-color: #f8f9fa;
-        }
-        tr:hover {
-            background-color: #f5f5f5;
-        }
-        .hidden {
-            display: none;
-        }
-        .comment-content {
-            max-width: 300px;
-            word-wrap: break-word;
-        }
-        .pagination {
-            display: flex;
-            justify-content: center;
-            margin-top: 20px;
-            gap: 5px;
-        }
-        .pagination button {
-            padding: 8px 12px;
-        }
-        .status-approved {
-            color: #28a745;
-            font-weight: bold;
-        }
-        .status-pending {
-            color: #ffc107;
-            font-weight: bold;
-        }
-        .status-spam {
-            color: #dc3545;
-            font-weight: bold;
-        }
-        .message {
-            padding: 10px;
-            margin: 10px 0;
-            border-radius: 4px;
-        }
-        .message.success {
-            background-color: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-        .message.error {
-            background-color: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        .fade-enter-active, .fade-leave-active { transition: opacity 0.3s; }
+        .fade-enter-from, .fade-leave-to { opacity: 0; }
+        .loader { border-top-color: #3498db; -webkit-animation: spinner 1.5s linear infinite; animation: spinner 1.5s linear infinite; }
+        @keyframes spinner { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
-<body>
-    <h1>Momo 后台管理系统</h1>
-    
-    <!-- 登录表单 -->
-    <div class="container" id="login-section">
-        <h2>管理员登录</h2>
-        <div class="form-group">
-            <input type="text" id="username" placeholder="用户名">
+<body class="bg-gray-100 text-gray-800">
+
+<div id="app" class="min-h-screen flex flex-col">
+
+    <transition name="fade">
+        <div v-if="toast.show" :class="toast.type === 'error' ? 'bg-red-500' : 'bg-green-500'" 
+             class="fixed top-4 right-4 text-white px-6 py-3 rounded shadow-lg z-50 flex items-center">
+            <i :class="toast.type === 'error' ? 'fa-circle-exclamation' : 'fa-check-circle'" class="fa-solid mr-2"></i>
+            {{ toast.message }}
         </div>
-        <div class="form-group">
-            <input type="password" id="password" placeholder="密码">
-        </div>
-        <div class="form-group">
-            <button onclick="login()">登录</button>
-        </div>
-        <div id="login-message"></div>
-    </div>
-    
-    <!-- 管理面板 -->
-    <div class="container hidden" id="admin-panel">
-        <h2>评论管理</h2>
-        <div id="admin-info">
-            <p>欢迎, <span id="admin-name"></span>! <button onclick="logout()">退出登录</button></p>
-        </div>
-        
-        <div id="comments-section">
-            <h3>评论列表</h3>
-            <div class="form-group">
-                <div class="form-row">
-                    <select id="page-select">
-                        <!-- 页面选项将通过JavaScript动态生成 -->
-                    </select>
-                    <button onclick="loadComments()">刷新</button>
+    </transition>
+
+    <div v-if="!isLoggedIn" class="flex-1 flex items-center justify-center px-4">
+        <div class="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
+            <h2 class="text-2xl font-bold mb-6 text-center text-gray-700">管理员登录</h2>
+            
+            <form @submit.prevent="handleLogin">
+                <div class="mb-4">
+                    <label class="block text-gray-700 text-sm font-bold mb-2">接口地址 (API Base URL)</label>
+                    <input v-model="config.baseUrl" type="text" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500">
                 </div>
-            </div>
-            
-            <table id="comments-table">
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>作者</th>
-                        <th>邮箱</th>
-                        <th>内容</th>
-                        <th>日期</th>
-                        <th>状态</th>
-                        <th>IP</th>
-                        <th>操作</th>
-                    </tr>
-                </thead>
-                <tbody id="comments-body">
-                    <!-- 评论数据将通过JavaScript动态生成 -->
-                </tbody>
-            </table>
-            
-            <div class="pagination" id="pagination">
-                <!-- 分页按钮将通过JavaScript动态生成 -->
-            </div>
+
+                <div class="mb-4">
+                    <label class="block text-gray-700 text-sm font-bold mb-2">用户名</label>
+                    <input v-model="loginForm.name" type="text" required class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <div class="mb-6">
+                    <label class="block text-gray-700 text-sm font-bold mb-2">密码</label>
+                    <input v-model="loginForm.password" type="password" required class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+
+                <button :disabled="loading" type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline transition duration-300 flex justify-center items-center">
+                    <span v-if="loading" class="loader ease-linear rounded-full border-2 border-t-2 border-gray-200 h-5 w-5 mr-2"></span>
+                    {{ loading ? '登录中...' : '登录' }}
+                </button>
+            </form>
         </div>
-        
-        <div id="admin-message"></div>
     </div>
 
-    <script>
-        // 全局变量
-        const BASE_URL = 'http://localhost:17171'; // 后端服务地址
-        let adminKey = '';
-        let currentPage = 1;
-        let totalPages = 1;
-        
-        // 登录功能
-        async function login() {
-            const username = document.getElementById('username').value;
-            const password = document.getElementById('password').value;
-            const messageEl = document.getElementById('login-message');
+    <div v-else class="flex-1 flex flex-col">
+        <nav class="bg-white shadow-sm">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div class="flex justify-between h-16">
+                    <div class="flex items-center">
+                        <span class="text-xl font-bold text-blue-600">评论管理系统</span>
+                        <span class="ml-4 text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded">{{ config.baseUrl }}</span>
+                    </div>
+                    <div class="flex items-center">
+                        <button @click="fetchComments(pagination.page)" class="mr-4 text-gray-600 hover:text-blue-600">
+                            <i class="fa-solid fa-rotate-right"></i> 刷新
+                        </button>
+                        <button @click="logout" class="text-red-500 hover:text-red-700 font-medium">
+                            <i class="fa-solid fa-sign-out-alt"></i> 退出
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
             
-            if (!username || !password) {
-                showMessage(messageEl, '请填写用户名和密码', 'error');
-                return;
-            }
-            
-            try {
-                const response = await fetch(BASE_URL + '/admin/login', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ name: username, password: password })
-                });
-                
-                const result = await response.json();
-                
-                if (response.ok) {
-                    adminKey = result.data.key;
-                    document.getElementById('admin-name').textContent = username;
-                    document.getElementById('login-section').classList.add('hidden');
-                    document.getElementById('admin-panel').classList.remove('hidden');
-                    loadComments();
-                } else {
-                    showMessage(messageEl, result.message || '登录失败', 'error');
+            <div v-if="loading && comments.length === 0" class="flex justify-center items-center h-64">
+                <div class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-12 w-12"></div>
+            </div>
+
+            <div v-else class="bg-white shadow overflow-hidden sm:rounded-lg">
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">信息</th>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/2">内容</th>
+                                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
+                                <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            <tr v-if="comments.length === 0">
+                                <td colspan="4" class="px-6 py-10 text-center text-gray-500">暂无评论数据</td>
+                            </tr>
+                            <tr v-for="comment in comments" :key="comment.id" class="hover:bg-gray-50 transition">
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <div class="flex items-center">
+                                        <div>
+                                            <div class="text-sm font-medium text-gray-900">{{ comment.author }}</div>
+                                            <div class="text-sm text-gray-500">{{ comment.email }}</div>
+                                            <div class="text-xs text-gray-400 mt-1">{{ comment.ipAddress }}</div>
+                                            <div class="text-xs text-gray-400">{{ formatDate(comment.pubDate) }}</div>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td class="px-6 py-4">
+                                    <div class="text-sm text-gray-900 break-words whitespace-pre-wrap max-h-32 overflow-y-auto">{{ comment.contentText }}</div>
+                                    <a v-if="comment.url" :href="comment.url" target="_blank" class="text-xs text-blue-500 hover:underline mt-1 inline-block">
+                                        <i class="fa-solid fa-link"></i> 访问作者网站
+                                    </a>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full"
+                                          :class="{
+                                              'bg-green-100 text-green-800': comment.status === 'approved',
+                                              'bg-yellow-100 text-yellow-800': comment.status === 'pending',
+                                              'bg-red-100 text-red-800': comment.status === 'spam' || comment.status === 'rejected'
+                                          }">
+                                        {{ comment.status }}
+                                    </span>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                    <button v-if="comment.status !== 'approved'" @click="updateStatus(comment.id, 'approved')" class="text-green-600 hover:text-green-900 mr-3" title="通过">
+                                        <i class="fa-solid fa-check"></i>
+                                    </button>
+                                    <button v-if="comment.status === 'approved'" @click="updateStatus(comment.id, 'pending')" class="text-yellow-600 hover:text-yellow-900 mr-3" title="设为待审">
+                                        <i class="fa-solid fa-ban"></i>
+                                    </button>
+                                    
+                                    <button @click="confirmDelete(comment.id)" class="text-red-600 hover:text-red-900" title="删除">
+                                        <i class="fa-solid fa-trash"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="bg-white px-4 py-3 flex items-center justify-between border-t border-gray-200 sm:px-6" v-if="pagination.total > 0">
+                    <div class="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+                        <div>
+                            <p class="text-sm text-gray-700">
+                                显示第 <span class="font-medium">{{ (pagination.page - 1) * pagination.limit + 1 }}</span> 到 <span class="font-medium">{{ Math.min(pagination.page * pagination.limit, pagination.total) }}</span> 条，
+                                共 <span class="font-medium">{{ pagination.total }}</span> 条
+                            </p>
+                        </div>
+                        <div>
+                            <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px">
+                                <button @click="changePage(pagination.page - 1)" :disabled="pagination.page === 1" 
+                                    class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                                    上一页
+                                </button>
+                                <span class="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700">
+                                    {{ pagination.page }}
+                                </span>
+                                <button @click="changePage(pagination.page + 1)" :disabled="pagination.page * pagination.limit >= pagination.total"
+                                    class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">
+                                    下一页
+                                </button>
+                            </nav>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+</div>
+
+<script>
+    const { createApp, reactive, toRefs, onMounted } = Vue;
+
+    createApp({
+        setup() {
+            const state = reactive({
+                isLoggedIn: false,
+                loading: false,
+                apiKey: '',
+                config: {
+                    // 这里可以修改默认后端地址
+                    baseUrl: localStorage.getItem('apiBaseUrl') || 'https://api.motues.top' 
+                },
+                loginForm: {
+                    name: '',
+                    password: ''
+                },
+                comments: [],
+                pagination: {
+                    page: 1,
+                    limit: 20,
+                    total: 0
+                },
+                toast: {
+                    show: false,
+                    message: '',
+                    type: 'success'
                 }
-            } catch (error) {
-                showMessage(messageEl, '登录过程中发生错误: ' + error.message, 'error');
-            }
-        }
-        
-        // 退出登录
-        function logout() {
-            adminKey = '';
-            document.getElementById('username').value = '';
-            document.getElementById('password').value = '';
-            document.getElementById('admin-panel').classList.add('hidden');
-            document.getElementById('login-section').classList.remove('hidden');
-            document.getElementById('comments-body').innerHTML = '';
-            document.getElementById('page-select').innerHTML = '';
-            document.getElementById('pagination').innerHTML = '';
-        }
-        
-        // 加载评论
-        async function loadComments(page = 1) {
-            if (!adminKey) return;
-            
-            try {
-                const response = await fetch(BASE_URL + `/admin/comments/list?page=${page}&key=${encodeURIComponent(adminKey)}`);
-                const result = await response.json();
-                
-                if (response.ok) {
-                    renderComments(result.data);
-                } else {
-                    showMessage(document.getElementById('admin-message'), result.message || '加载评论失败', 'error');
-                }
-            } catch (error) {
-                showMessage(document.getElementById('admin-message'), '加载评论时发生错误: ' + error.message, 'error');
-            }
-        }
-        
-        // 渲染评论
-        function renderComments(commentsData) {
-            // 检查数据结构
-            if (!commentsData || !commentsData.data || !commentsData.pagination) {
-                showMessage(document.getElementById('admin-message'), '返回的数据格式不正确', 'error');
-                return;
-            }
-            
-            const comments = commentsData.data;
-            const pagination = commentsData.pagination;
-            
-            // 更新全局分页信息
-            currentPage = pagination.page || 1;
-            totalPages = pagination.total || 1;
-            
-            // 渲染评论表格
-            const tbody = document.getElementById('comments-body');
-            tbody.innerHTML = '';
-            
-            if (comments.length === 0) {
-                const row = document.createElement('tr');
-                row.innerHTML = '<td colspan="8" style="text-align: center;">暂无评论</td>';
-                tbody.appendChild(row);
-                return;
-            }
-            
-            comments.forEach(comment => {
-                const row = document.createElement('tr');
-                row.innerHTML = `
-                    <td>${comment.id}</td>
-                    <td>${escapeHtml(comment.author)}</td>
-                    <td>${escapeHtml(comment.email)}</td>
-                    <td class="comment-content">${escapeHtml(comment.contentText)}</td>
-                    <td>${new Date(comment.pubDate).toLocaleString()}</td>
-                    <td><span class="status-${comment.status}">${comment.status}</span></td>
-                    <td>${comment.ipAddress}</td>
-                    <td>
-                        <button class="approve" onclick="changeCommentStatus(${comment.id}, 'approved')">批准</button>
-                        <button class="delete" onclick="deleteComment(${comment.id})">删除</button>
-                    </td>
-                `;
-                tbody.appendChild(row);
             });
-            
-            // 渲染页面选择器
-            renderPageSelector(pagination);
-            
-            // 渲染分页控件
-            renderPagination(pagination);
-        }
-        
-        // 渲染页面选择器
-        function renderPageSelector(pagination) {
-            // 检查 pagination 对象
-            if (!pagination) return;
-            
-            const pageSelect = document.getElementById('page-select');
-            pageSelect.innerHTML = '';
-            
-            const totalPages = pagination.total || 1;
-            const currentPage = pagination.page || 1;
-            
-            for (let i = 1; i <= totalPages; i++) {
-                const option = document.createElement('option');
-                option.value = i;
-                option.textContent = `第 ${i} 页`;
-                if (i === currentPage) {
-                    option.selected = true;
+
+            // 工具：显示提示
+            const showToast = (msg, type = 'success') => {
+                state.toast.message = msg;
+                state.toast.type = type;
+                state.toast.show = true;
+                setTimeout(() => state.toast.show = false, 3000);
+            };
+
+            // 工具：日期格式化
+            const formatDate = (dateString) => {
+                if (!dateString) return '';
+                const date = new Date(dateString);
+                return date.toLocaleString('zh-CN', { hour12: false });
+            };
+
+            // 1. 登录 (已修正逻辑)
+            const handleLogin = async () => {
+                state.loading = true;
+                // 保存用户输入的API地址以备后用
+                localStorage.setItem('apiBaseUrl', state.config.baseUrl);
+
+                try {
+                    const response = await fetch(`${state.config.baseUrl}/admin/login`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(state.loginForm)
+                    });
+                    
+                    const resData = await response.json();
+
+                    // 修正：兼容 resData.key 或 resData.data.key
+                    const key = resData.key || (resData.data && resData.data.key);
+
+                    if (key) {
+                        state.apiKey = key;
+                        state.isLoggedIn = true;
+                        localStorage.setItem('adminKey', key);
+                        showToast('登录成功');
+                        fetchComments();
+                    } else {
+                        showToast(resData.message || '登录失败', 'error');
+                    }
+                } catch (error) {
+                    showToast('网络错误: ' + error.message, 'error');
+                } finally {
+                    state.loading = false;
                 }
-                pageSelect.appendChild(option);
-            }
-            
-            // 添加事件监听器
-            pageSelect.onchange = () => {
-                loadComments(parseInt(pageSelect.value));
+            };
+
+            // 2. 获取评论列表
+            // 2. 获取评论列表 (修复版：增加数据结构容错)
+            const fetchComments = async (page = 1) => {
+                state.loading = true;
+                try {
+                    const url = `${state.config.baseUrl}/admin/comments/list?page=${page}&key=${state.apiKey}`;
+                    
+                    const response = await fetch(url);
+                    const result = await response.json();
+                    
+                    // 在控制台打印数据，方便调试查看真实结构
+                    console.log("后端返回的完整数据:", result);
+
+                    // 处理 401 Key 无效
+                    if (result.message === "Invalid key" || result.status === 401) {
+                        logout();
+                        showToast('登录已过期，请重新登录', 'error');
+                        return;
+                    }
+
+                    // --- 核心修复部分开始 ---
+                    
+                    // 1. 尝试提取评论列表
+                    // 兼容 result.data 是数组的情况，也兼容 result.data.data 是数组的情况
+                    let listData = [];
+                    if (Array.isArray(result.data)) {
+                        listData = result.data;
+                    } else if (result.data && Array.isArray(result.data.data)) {
+                        listData = result.data.data; // 应对嵌套层级
+                    } else if (result.data && Array.isArray(result.data.list)) {
+                        listData = result.data.list; // 应对另一种常见命名
+                    }
+
+                    // 2. 尝试提取分页信息
+                    // 优先取 result.pagination，没有的话取 result.data.pagination，还没有就造一个默认值
+                    let pageData = result.pagination || (result.data && result.data.pagination);
+
+                    // 如果后端完全没返回分页信息，使用默认值防止报错崩溃！
+                    if (!pageData) {
+                        console.warn("未找到分页信息，使用默认值");
+                        pageData = {
+                            page: page,
+                            limit: 20,
+                            total: listData.length // 如果没有总数，暂时用当前列表长度代替
+                        };
+                    }
+
+                    // 安全赋值
+                    state.comments = listData;
+                    state.pagination = pageData;
+                    
+                    // --- 核心修复部分结束 ---
+
+                } catch (error) {
+                    console.error(error);
+                    showToast('获取数据失败: ' + error.message, 'error');
+                } finally {
+                    state.loading = false;
+                }
+            };
+
+            // 3. 修改状态
+            const updateStatus = async (id, newStatus) => {
+                state.loading = true;
+                try {
+                    // 构造 URL: /admin/comments/status?id=...&status=...&key=...
+                    const url = `${state.config.baseUrl}/admin/comments/status?id=${id}&status=${newStatus}&key=${state.apiKey}`;
+                    
+                    const response = await fetch(url, { method: 'PUT' });
+                    const result = await response.json();
+
+                    if (response.ok || result.message) {
+                        showToast(`状态更新成功 (ID: ${id})`);
+                        // 局部更新，避免全屏刷新带来的闪烁
+                        const comment = state.comments.find(c => c.id === id);
+                        if(comment) comment.status = newStatus;
+                    } else {
+                        showToast('更新失败', 'error');
+                    }
+                } catch (error) {
+                    showToast('网络请求失败', 'error');
+                } finally {
+                    state.loading = false;
+                }
+            };
+
+            // 4. 删除评论
+            const confirmDelete = async (id) => {
+                if(!confirm('确定要删除这条评论吗？此操作不可恢复。')) return;
+
+                state.loading = true;
+                try {
+                    // 构造 URL: /admin/comments/delete?id=...&key=...
+                    const url = `${state.config.baseUrl}/admin/comments/delete?id=${id}&key=${state.apiKey}`;
+                    
+                    const response = await fetch(url, { method: 'DELETE' });
+                    const result = await response.json();
+
+                    if (response.ok || result.message) {
+                        showToast('删除成功');
+                        fetchComments(state.pagination.page); // 刷新列表
+                    } else {
+                        showToast('删除失败', 'error');
+                    }
+                } catch (error) {
+                    showToast('网络请求失败', 'error');
+                } finally {
+                    state.loading = false;
+                }
+            };
+
+            // 分页跳转
+            const changePage = (page) => {
+                if (page > 0) fetchComments(page);
+            };
+
+            // 退出登录
+            const logout = () => {
+                localStorage.removeItem('adminKey');
+                state.apiKey = '';
+                state.isLoggedIn = false;
+                state.comments = [];
+            };
+
+            // 初始化检查
+            onMounted(() => {
+                const storedKey = localStorage.getItem('adminKey');
+                if (storedKey) {
+                    state.apiKey = storedKey;
+                    state.isLoggedIn = true;
+                    fetchComments();
+                }
+            });
+
+            return {
+                ...toRefs(state),
+                handleLogin,
+                fetchComments,
+                updateStatus,
+                confirmDelete,
+                changePage,
+                logout,
+                formatDate
             };
         }
-        
-        // 渲染分页控件
-        function renderPagination(pagination) {
-            // 检查 pagination 对象
-            if (!pagination) return;
-            
-            const paginationEl = document.getElementById('pagination');
-            paginationEl.innerHTML = '';
-            
-            const totalPages = pagination.total || 1;
-            const currentPage = pagination.page || 1;
-            
-            // 上一页按钮
-            if (currentPage > 1) {
-                const prevButton = document.createElement('button');
-                prevButton.textContent = '上一页';
-                prevButton.onclick = () => loadComments(currentPage - 1);
-                paginationEl.appendChild(prevButton);
-            }
-            
-            // 页码按钮
-            const startPage = Math.max(1, currentPage - 2);
-            const endPage = Math.min(totalPages, currentPage + 2);
-            
-            for (let i = startPage; i <= endPage; i++) {
-                const pageButton = document.createElement('button');
-                pageButton.textContent = i;
-                if (i === currentPage) {
-                    pageButton.style.fontWeight = 'bold';
-                    pageButton.disabled = true;
-                } else {
-                    pageButton.onclick = () => loadComments(i);
-                }
-                paginationEl.appendChild(pageButton);
-            }
-            
-            // 下一页按钮
-            if (currentPage < totalPages) {
-                const nextButton = document.createElement('button');
-                nextButton.textContent = '下一页';
-                nextButton.onclick = () => loadComments(currentPage + 1);
-                paginationEl.appendChild(nextButton);
-            }
-        }
-        
-        // 更改评论状态
-        async function changeCommentStatus(commentId, status) {
-            if (!adminKey) return;
-            
-            if (!confirm(`确定要将评论 #${commentId} 的状态更改为 "${status}" 吗？`)) {
-                return;
-            }
-            
-            try {
-                const response = await fetch(BASE_URL + `/admin/comments/status?id=${commentId}&status=${status}&key=${encodeURIComponent(adminKey)}`, {
-                    method: 'PUT'
-                });
-                
-                const result = await response.json();
-                
-                if (response.ok) {
-                    showMessage(document.getElementById('admin-message'), result.message, 'success');
-                    loadComments(currentPage);
-                } else {
-                    showMessage(document.getElementById('admin-message'), result.message || '更改状态失败', 'error');
-                }
-            } catch (error) {
-                showMessage(document.getElementById('admin-message'), '更改状态时发生错误: ' + error.message, 'error');
-            }
-        }
-        
-        // 删除评论
-        async function deleteComment(commentId) {
-            if (!adminKey) return;
-            
-            if (!confirm(`确定要删除评论 #${commentId} 吗？此操作不可撤销！`)) {
-                return;
-            }
-            
-            try {
-                const response = await fetch(BASE_URL + `/admin/comments/delete?id=${commentId}&key=${encodeURIComponent(adminKey)}`, {
-                    method: 'DELETE'
-                });
-                
-                const result = await response.json();
-                
-                if (response.ok) {
-                    showMessage(document.getElementById('admin-message'), result.message, 'success');
-                    loadComments(currentPage);
-                } else {
-                    showMessage(document.getElementById('admin-message'), result.message || '删除评论失败', 'error');
-                }
-            } catch (error) {
-                showMessage(document.getElementById('admin-message'), '删除评论时发生错误: ' + error.message, 'error');
-            }
-        }
-        
-        // 显示消息
-        function showMessage(element, message, type) {
-            element.className = 'message ' + type;
-            element.textContent = message;
-            element.style.display = 'block';
-            
-            // 3秒后自动隐藏消息
-            setTimeout(() => {
-                element.style.display = 'none';
-            }, 3000);
-        }
-        
-        // 转义HTML以防止XSS攻击
-        function escapeHtml(text) {
-            const map = {
-                '&': '&amp;',
-                '<': '&lt;',
-                '>': '&gt;',
-                '"': '&quot;',
-                "'": '&#039;'
-            };
-            
-            return text.replace(/[&<>"']/g, m => map[m]);
-        }
-        
-        // 回车键登录
-        document.addEventListener('keypress', function(event) {
-            if (event.key === 'Enter' && !document.getElementById('login-section').classList.contains('hidden')) {
-                login();
-            }
-        });
-    </script>
+    }).mount('#app');
+</script>
 </body>
 </html>
