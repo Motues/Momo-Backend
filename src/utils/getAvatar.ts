@@ -6,18 +6,19 @@ const getAvatar = async (author: string, email: string): Promise<string | undefi
   2. 否则使用默认生成的头像
   */
 
-  const qqAvatar = getQQAvatar(email);
-  if (qqAvatar) {
-    return qqAvatar;
-  }
+  // const qqAvatar = getQQAvatar(email);
+  // if (qqAvatar) {
+  //   return qqAvatar;
+  // }
 
-  // const githubAvatar = await getGithubAvatar(author);
+  // const githubAvatar = await getGithub
+  // Avatar(author);
   // if (githubAvatar) {
   //   return githubAvatar;
   // }
 
 
-  return getAvatarSeed(email);
+  return getCravatar(email);
 };
 
 // 获取 GitHub 头像的辅助函数
@@ -37,6 +38,13 @@ const getGithubAvatar = async (author: string): Promise<string | undefined> => {
   } catch (error) {
     return undefined;
   }
+};
+
+const getCravatar = async (email: string): Promise<string | undefined> => { 
+  // 将字母变成小写
+  email = email.toLowerCase();
+  const hash = crypto.createHash('md5').update(email).digest('hex');
+  return `https://cravatar.cn/avatar/${hash}?s=200&d=retro`;
 };
 
 // 获取 QQ 头像的辅助函数
