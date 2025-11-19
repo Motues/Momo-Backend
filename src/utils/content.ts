@@ -95,7 +95,7 @@ const getResponseCommentAdmin = async (comments: Comment[] | null, page: number)
     return { data: [], pagination: { page: 1, limit: 20, total: 0 } };
   }
   
-  const limit = 20;
+  const limit = 10;
   const total = comments.length;
   const totalPages = Math.ceil(total / limit);
   
