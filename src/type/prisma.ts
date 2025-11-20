@@ -10,6 +10,8 @@ interface CreateCommentInput {
   ip_address?: string;
   device?: string;
   browser?: string;
+  os?: string;
+  user_agent?: string;
   content_text: string;
   content_html: string;
   parent_id: number | null;

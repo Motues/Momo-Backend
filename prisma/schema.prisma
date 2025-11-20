@@ -22,6 +22,8 @@ model Comment {
   ip_address   String?
   device       String?
   browser      String?
+  os           String?
+  user_agent   String?
   content_text String
   content_html String
   parent_id    Int?

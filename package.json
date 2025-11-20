@@ -21,7 +21,8 @@
     "dotenv": "^17.2.3",
     "koa": "^3.0.3",
     "prisma": "^6.18.0",
-    "resend": "^6.3.0"
+    "resend": "^6.3.0",
+    "ua-parser-js": "^2.0.6"
   },
   "devDependencies": {
     "@types/koa": "^3.0.1",

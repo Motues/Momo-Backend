@@ -1,4 +1,5 @@
 import type koa from "koa";
+import { UAParser } from "ua-parser-js";
 import CommentService  from "../../orm/commentService";
 import { Comment, CreateCommentInput } from "../../type/prisma"
 import { sendCommentReplyNotification, sendCommentNotification } from "../../utils/email";
@@ -6,19 +7,20 @@ import { canPostComment, checkContent} from "../../utils/security"
 
 export default async (ctx: koa.Context, next: koa.Next): Promise<void> => {
   const data = ctx.request.body;
-
-  // 检查评论时间
-
   const ip = ctx.request.headers['cf-connecting-ip'] as string || ctx.request.headers['x-real-ip'] as string || 
             (ctx.request.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || 
             ctx.ip;
+  // 检查评论时间
   if(!await canPostComment(ip)) {
     ctx.body = {
       message: "Time limit exceeded. Please wait before posting again."
     };
-  } else {
-    // 创建评论
+    return; 
+  }
+  // 创建评论
     const content = checkContent(data.content), author = checkContent(data.author);
+    const uaParser = new UAParser(ctx.request.header['user-agent'] ?? "");
+    const uaResult = uaParser.getResult();
     const commentData: CreateCommentInput = {
       pub_date: (new Date()).toISOString(),
       post_slug: data.post_slug,
@@ -26,8 +28,10 @@ export default async (ctx: koa.Context, next: koa.Next): Promise<void> => {
       email: data.email,
       url: data.url,
       ip_address: ip,
-      device: ctx.request.header['user-agent'] ?? "",
-      browser: ctx.request.header['user-agent'] ?? "",
+      os: (uaResult.os.name || "") + " " + (uaResult.os.version || ""),
+      browser: (uaResult.browser.name || "") + " " + (uaResult.browser.version || ""),
+      device: uaResult.device.model || uaResult.device.type || uaResult.device.vendor || "",
+      user_agent: ctx.request.header['user-agent'] || "",
       content_text: content,
       content_html: content,
       parent_id: data.parent_id ?? null,
@@ -60,5 +64,4 @@ export default async (ctx: koa.Context, next: koa.Next): Promise<void> => {
     ctx.body = {
       message: "Comment submitted. Awaiting moderation."
     };
-  }
 }

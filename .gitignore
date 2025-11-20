@@ -18,6 +18,7 @@ node_modules/
 
 # logs
 pnpm-debug.log*
+*.log
 
 # environment variables
 .env

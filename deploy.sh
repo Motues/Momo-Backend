@@ -20,15 +20,15 @@ else
   echo "数据库已存在，运行迁移..."
   # 备份数据库
   cp prisma/dev.db prisma/dev.db.bak
-  npx prisma migrate deploy
+  npx prisma migrate dev --name add_new_fields
 fi
 
 # 3. 生成 Prisma Client
-echo "3. 生成 Prisma Client..."
-npx prisma generate
+# echo "3. 生成 Prisma Client..."
+# npx prisma generate
 
 # 4. 编译 TypeScript 代码
-echo "2. 编译项目..."
+echo "3. 编译项目..."
 pnpm build
 echo "项目编译完成"
 
