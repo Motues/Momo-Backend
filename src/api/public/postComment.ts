@@ -45,17 +45,16 @@ export default async (ctx: koa.Context, next: koa.Next): Promise<void> => {
         await sendCommentReplyNotification({
           toEmail: parentComment.email,
           toName: parentComment.author,
-          postTitle: data.post_slug,
+          postTitle: data.post_title,
           parentComment: parentComment.content_text,
           replyAuthor: author,
           replyContent: content,
           postUrl: data.post_url,
-          replyId: comment.id
         });
       }
     } else {
       await sendCommentNotification({
-        postTitle: data.post_slug,
+        postTitle: data.post_title,
         postUrl: data.post_url,
         commentAuthor: author,
         commentContent: content

@@ -10,7 +10,6 @@ export async function sendCommentReplyNotification({
   replyAuthor,
   replyContent,
   postUrl,
-  replyId,
 }: {
   toEmail: string;
   toName: string;
@@ -19,7 +18,6 @@ export async function sendCommentReplyNotification({
   replyAuthor: string;
   replyContent: string;
   postUrl: string;
-  replyId: number;
 }) {
   const { data, error } = await resend.emails.send({
     from: '评论通知 <notify@notifications.motues.top>', // 替换为你验证过的域名邮箱
@@ -27,7 +25,7 @@ export async function sendCommentReplyNotification({
     subject: `你在 blog.motues.top 上的评论有了新回复`,
     html: `
       <p>Hi ${toName}，</p>
-      <p>${replyAuthor} 回复了你在${postTitle}中的评论：</p>
+      <p>${replyAuthor} 回复了你在 <b>${postTitle}</b> 中的评论：</p>
       <blockquote style="margin: 10px 0; padding-left: 10px; border-left: 3px solid #ccc;">
         ${parentComment}
       </blockquote>
@@ -71,7 +69,7 @@ export async function sendCommentNotification({
     to: process.env.EMAIL_ADDRESS as string,
     subject: `你在 blog.motues.top 上有新的评论`,
     html: `
-      <p>${commentAuthor} 评论了你的文章 ${postTitle}：</p>
+      <p>${commentAuthor} 评论了你的文章 <b>${postTitle}</b>：</p>
       <p>回复内容：</p>
       <blockquote style="margin: 10px 0; padding-left: 10px; border-left: 3px solid #ccc;">
         ${commentContent}

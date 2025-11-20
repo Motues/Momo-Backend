@@ -14,6 +14,7 @@
   "content": "写得真好！",
   "parent_id": null,
   "post_url": "https://blog.example.com/posts/my-article",
+  "post_title": "我的文章"
 }
 ```
 
