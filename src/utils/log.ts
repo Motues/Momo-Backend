@@ -44,8 +44,12 @@ class LogService {
   }
 
   private writeLog(level: LogEntry['level'], message: string, meta?: any): void {
+    const now = new Date();
+    const chinaTime = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+    const timestamp = chinaTime.toISOString().replace('Z', '+08:00');
+    
     const entry: LogEntry = {
-      timestamp: new Date().toISOString(),
+      timestamp,
       level,
       message,
       meta

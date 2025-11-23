@@ -1,4 +1,5 @@
 import { Resend } from 'resend';
+import LogService from "../utils/log";
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
@@ -45,11 +46,13 @@ export async function sendCommentReplyNotification({
   });
 
   if (error) {
-    console.error('邮件发送失败:', error);
+    // console.error('邮件发送失败:', error);
+    LogService.error('邮件发送失败:', error);
     throw new Error('Failed to send email');
   }
 
-  console.log('邮件已发送:', data.id);
+  // console.log('邮件已发送:', data.id);
+  LogService.info('邮件已发送:', data.id);
   return data;
 }
 
@@ -84,4 +87,14 @@ export async function sendCommentNotification({
       <p><small>此邮件由系统自动发送，请勿直接回复。</small></p>
     `,
   });
+
+  if (error) {
+    // console.error('邮件发送失败:', error);
+    LogService.error('邮件发送失败:', error);
+    throw new Error('Failed to send email');
+  }
+
+  // console.log('邮件已发送:', data.id);
+  LogService.info('邮件已发送:', data.id);
+  return data;
 }
