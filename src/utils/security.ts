@@ -11,7 +11,7 @@ export async function canPostComment(ip: string): Promise<boolean> {
     
     // 确保有评论后再检查时间
     const comment = lastComment[0];
-    if (!comment.pub_date) return true; // 防止 pub_date 不存在的情况
+    if (!comment || !comment.pub_date) return true; // 防止 comment 或 pub_date 不存在的情况
     
     return Date.now() - comment.pub_date.getTime() > 60 * 1000;
 }
