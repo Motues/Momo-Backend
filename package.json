@@ -7,7 +7,7 @@
     "dev": "ts-node src/app.ts",
     "build": "tsc -p tsconfig.json",
     "deploy": "bash deploy.sh",
-    "prod": "node dist/app.js"
+    "start": "node dist/app.js"
   },
   "keywords": [],
   "author": "",
