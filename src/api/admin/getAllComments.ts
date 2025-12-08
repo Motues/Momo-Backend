@@ -8,9 +8,10 @@ import { getQueryNumber, getQueryBoolean, getQueryString } from "../../utils/url
 export default async (ctx: koa.Context, next: koa.Next): Promise<void> => {
 
   const page = getQueryNumber(ctx.query.page as string, 1);
-  const key = getQueryString(ctx.query.key as string, "");
+  // const key = getQueryString(ctx.query.key as string, "");
+  const key = ctx.get("Authorization");
 
-  if(!checkKey(key)) {
+  if(!key || !checkKey(key)) {
     ctx.status = 401;
     ctx.body = { message: "Invalid key" };
     return;

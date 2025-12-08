@@ -6,9 +6,10 @@ import { checkAdmin, checkKey } from "../../utils/security"
 export default async (ctx: koa.Context, next: koa.Next): Promise<void> => {
   const commentId =  getQueryNumber(ctx.query.id as string, 0);
   const status =  getQueryString(ctx.query.status as string, "pending");
-  const key = getQueryString(ctx.query.key as string, "");
+  // const key = getQueryString(ctx.query.key as string, "");
+  const key = ctx.get("Authorization");
 
-  if(!checkKey(key)) {
+  if(!key || !checkKey(key)) {
     ctx.status = 401;
     ctx.body = { error: "Invalid key" };
     return;

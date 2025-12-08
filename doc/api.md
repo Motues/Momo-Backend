@@ -87,14 +87,13 @@
 
 ---
 
-## 管理员接口（需 Authorization: Bearer <ADMIN_TOKEN>）
+## 管理员接口（需 Authorization: <ADMIN_KEY>）
 
 ### 删除评论 (DELETE `/admin/comments/delete`)
 
 **请求参数**：
 
 - `id`（必需）
-- `key`（必需）
 
 **响应**：
 `DELETE /admin/comments/delete?id=...`  
@@ -109,10 +108,9 @@
 
 **查询参数**：
 - `page`（默认 1）
-- `key`（必需）
 
 **响应**：
-`GET /admin/comments/list&page=1&key=...`
+`GET /admin/comments/list&page=1`
 
 ```json
 {
@@ -149,7 +147,6 @@
 **请求参数**：
 - `id`（必需）
 - `status`（必需）
-- `key`（必需）
 
 **响应**：
 `PUT/admin/comments/status?id=...&status=...`

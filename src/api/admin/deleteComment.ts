@@ -6,9 +6,10 @@ import { Comment, CreateCommentInput } from "../../type/prisma"
 
 export default async (ctx: koa.Context, next: koa.Next): Promise<void> => {
   const deleteId =  getQueryNumber(ctx.query.id as string, 0);
-  const key = getQueryString(ctx.query.key as string, "");
+  // const key = getQueryString(ctx.query.key as string, "");
+  const key = ctx.get("Authorization");
 
-  if(!checkKey(key)) {
+  if(!key || !checkKey(key)) {
     ctx.status = 401;
     ctx.body = { error: "Invalid key" };
     return;

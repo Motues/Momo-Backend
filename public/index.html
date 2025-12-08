@@ -225,8 +225,10 @@
             const fetchComments = async (page = 1) => {
                 state.loading = true;
                 try {
-                    const url = `${state.config.baseUrl}/admin/comments/list?page=${page}&key=${state.apiKey}`;
-                    const response = await fetch(url);
+                    const url = `${state.config.baseUrl}/admin/comments/list?page=${page}`;
+                    const response = await fetch(url, {
+                        headers: { 'Authorization': state.apiKey }
+                    });
                     const result = await response.json();
 
                     if (result.message === "Invalid key" || result.status === 401) {
@@ -260,8 +262,11 @@
             const updateStatus = async (id, newStatus) => {
                 state.loading = true;
                 try {
-                    const url = `${state.config.baseUrl}/admin/comments/status?id=${id}&status=${newStatus}&key=${state.apiKey}`;
-                    const response = await fetch(url, { method: 'PUT' });
+                    const url = `${state.config.baseUrl}/admin/comments/status?id=${id}&status=${newStatus}`;
+                    const response = await fetch(url, {
+                        method: 'PUT',
+                        headers: { 'Authorization': state.apiKey }
+                    });
                     const result = await response.json();
                     if (response.ok || result.message) {
                         const comment = state.comments.find(c => c.id === id);
@@ -281,8 +286,11 @@
                 if(!confirm('确定删除？')) return;
                 state.loading = true;
                 try {
-                    const url = `${state.config.baseUrl}/admin/comments/delete?id=${id}&key=${state.apiKey}`;
-                    const response = await fetch(url, { method: 'DELETE' });
+                    const url = `${state.config.baseUrl}/admin/comments/delete?id=${id}`;
+                    const response = await fetch(url, {
+                        method: 'DELETE',
+                        headers: { 'Authorization': state.apiKey }
+                    });
                     if (response.ok) {
                         showToast('删除成功');
                         fetchComments(state.pagination.page);
