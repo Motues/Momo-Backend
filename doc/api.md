@@ -65,6 +65,8 @@
     {
       "id": 123,
       "author": "张三",
+      "url": "https://example.com",
+      "avatar": "https://example.com/avatar.png",
       "contentText": "写得真好！",
       "contentHtml": "<p>写得真好！</p>",
       "pubDate": "2025-10-23T10:00:00Z",
@@ -72,6 +74,8 @@
         {
           "id": 124,
           "author": "李四",
+          "url": "https://example.com",
+          "avatar": "https://example.com/avatar.png",
           "contentText": "同意",
           "contentHtml": "<p>同意</p>",
           "pubDate": "2025-10-23T11:00:00Z",

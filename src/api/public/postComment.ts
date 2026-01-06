@@ -40,28 +40,30 @@ export default async (ctx: koa.Context, next: koa.Next): Promise<void> => {
     }
     const comment = await CommentService.createComment(commentData);
     // 发送邮件通知
-    if(data.parent_id) {
-      LogService.info("Reply comment", { Name: comment.author, Email: comment.email})
-      const parentComment = await CommentService.getCommentById(data.parent_id);
-      if(parentComment && parentComment.email !== data.email) {
-        await sendCommentReplyNotification({
-          toEmail: parentComment.email,
-          toName: parentComment.author,
+    if(process.env.RESEND_API_KEY !== "") {
+      if(data.parent_id) {
+        LogService.info("Reply comment", { Name: comment.author, Email: comment.email})
+        const parentComment = await CommentService.getCommentById(data.parent_id);
+        if(parentComment && parentComment.email !== data.email) {
+          await sendCommentReplyNotification({
+            toEmail: parentComment.email,
+            toName: parentComment.author,
+            postTitle: data.post_title,
+            parentComment: parentComment.content_text,
+            replyAuthor: author,
+            replyContent: content,
+            postUrl: data.post_url,
+          });
+        }
+      } else {
+        LogService.info("New comment", { Name: comment.author, Email: comment.email})
+        await sendCommentNotification({
           postTitle: data.post_title,
-          parentComment: parentComment.content_text,
-          replyAuthor: author,
-          replyContent: content,
           postUrl: data.post_url,
+          commentAuthor: author,
+          commentContent: content
         });
       }
-    } else {
-      LogService.info("New comment", { Name: comment.author, Email: comment.email})
-      await sendCommentNotification({
-        postTitle: data.post_title,
-        postUrl: data.post_url,
-        commentAuthor: author,
-        commentContent: content
-      });
     }
     ctx.body = {
       message: "Comment submitted. Awaiting moderation."

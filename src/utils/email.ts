@@ -21,7 +21,7 @@ export async function sendCommentReplyNotification({
   postUrl: string;
 }) {
   const { data, error } = await resend.emails.send({
-    from: '评论通知 <notify@notifications.motues.top>', // 替换为你验证过的域名邮箱
+    from: `评论通知 ${process.env.RESEND_FROM_EMAIL}`, // 替换为你验证过的域名邮箱
     to: toEmail,
     subject: `你在 blog.motues.top 上的评论有了新回复`,
     html: `
@@ -68,7 +68,7 @@ export async function sendCommentNotification({
   commentContent: string;
 }) { 
   const { data, error } = await resend.emails.send({
-    from: '评论通知 <notify@notifications.motues.top>', // 替换为你验证过的域名邮箱
+    from: `评论通知 ${process.env.RESEND_FROM_EMAIL}`, // 替换为你验证过的域名邮箱
     to: process.env.EMAIL_ADDRESS as string,
     subject: `你在 blog.motues.top 上有新的评论`,
     html: `

@@ -6,8 +6,8 @@ declare global {
       DATABASE_URL: string;
       ALLOW_ORIGIN: string;
       RESEND_API_KEY: string;
+      RESEND_FROM_EMAIL: string;
       EMAIL_ADDRESS: string;
-      ADMIN_KEY: string;
       ADMIN_NAME: string;
       ADMIN_PASSWORD: string;
     }

@@ -35,10 +35,6 @@ export function generateTempKey(username: string): string {
 
 // 检查密钥是否有效
 export function checkKey(key: string): boolean {
-    // 先检查是否是环境变量中的永久密钥
-    // if (key === process.env.ADMIN_KEY) {
-    //     return true;
-    // }
     
     // 检查是否是有效的临时密钥
     const now = Date.now();
