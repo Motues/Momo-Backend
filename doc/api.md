@@ -22,7 +22,6 @@
 ```json
 { "message": "Comment submitted. Awaiting moderation." }
 ```
----
 
 ### 获取评论（GET `/api/comments`）
 
@@ -83,7 +82,12 @@
         }
       ]
     }
-  ]
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 1
+  }
 }
 ```
 

@@ -9,7 +9,7 @@ echo "1. 检查依赖..."
 echo "安装依赖..."
 pnpm install
 
-# 32. 准备数据库
+# 2. 准备数据库
 echo "2. 准备数据库..."
 
 # 检查是否存在数据库文件
@@ -23,11 +23,7 @@ else
   npx prisma migrate dev --name add_new_fields
 fi
 
-# 3. 生成 Prisma Client
-# echo "3. 生成 Prisma Client..."
-# npx prisma generate
-
-# 4. 编译 TypeScript 代码
+# 3. 编译 TypeScript 代码
 echo "3. 编译项目..."
 pnpm build
 echo "项目编译完成"

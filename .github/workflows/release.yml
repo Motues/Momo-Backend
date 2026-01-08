@@ -1,0 +1,34 @@
+name: Zip and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  zip-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Zip NodeJS folder
+        run: |
+          zip -r nodejs.zip nodejs/ -x "*.git*"
+
+      - name: Zip Worker folder
+        run: |
+          zip -r worker.zip worker/ -x "*.git*"
+
+      - name: Create Release and Upload Assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            nodejs.zip
+            worker.zip
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false

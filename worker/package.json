@@ -1,0 +1,23 @@
+{
+	"name": "momo-backend-worker",
+	"version": "0.2.0",
+	"private": true,
+	"scripts": {
+		"deploy": "wrangler deploy",
+		"dev": "wrangler dev",
+		"start": "wrangler dev",
+		"test": "vitest",
+		"cf-typegen": "wrangler types"
+	},
+	"devDependencies": {
+		"@cloudflare/vitest-pool-workers": "^0.8.19",
+		"@types/ua-parser-js": "^0.7.39",
+		"typescript": "^5.5.2",
+		"vitest": "~3.2.0",
+		"wrangler": "^4.56.0"
+	},
+	"dependencies": {
+		"hono": "^4.11.3",
+		"ua-parser-js": "^2.0.7"
+	}
+}
