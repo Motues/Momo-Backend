@@ -22,7 +22,7 @@ Cloudflare Worker 版本基于 Cloudflare Workers + D1 + KV 实现，无需服�
 	```
 * 从 Release 下载代码，可以使用命令行，也可以浏览器直接下载然后解压
 	```bash
-	curl -L https://github.com/Motues/Momo-Backend/releases/latest/download/worker.zip -o worker.zip
+	wget https://github.com/Motues/Momo-Backend/releases/latest/download/worker.zip
 	unzip worker.zip
 	cd worker
 	pnpm install
