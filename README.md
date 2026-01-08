@@ -1,11 +1,12 @@
 # Momo Backend
 
+<span>
 <img src="https://img.shields.io/badge/Node->=22-green" alt="Node">
 <img src="https://img.shields.io/badge/Cloudflare-Worker-orange?logo=cloudflare" alt="Cloudflare Worker">
 <img src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white" alt="TS">
 <img src="https://img.shields.io/badge/Prisma-2E7C7E?logo=prisma&logoColor=white" alt="Prisma">
 <img src="https://img.shields.io/badge/SQLite-3E8E41?logo=sqlite&logoColor=white" alt="SQLite">
-
+</span>
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
