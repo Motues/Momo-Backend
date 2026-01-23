@@ -1,6 +1,6 @@
 # Momo Comment Frontend
 
-提供简单、易用的前端评论组件，使用 Svelte 构建。
+简单、易用的前端评论组件，使用 Svelte 构建，支持多语言与黑暗模式。
 
 ## 快速使用
 
@@ -38,6 +38,36 @@
     --momo-button-hover-bg-color: #3c3c3c;
     --momo-link-color: #fff;
 }
+```
+
+## 本地编译
+
+你也可以下载源码，本地编译出js文件，导入到自己的网站中：
+
+#### 1. 克隆项目，安装依赖
+
+可以直接克隆仓库代码，或者从 Release 下载最新的稳定代码，这里推荐选择后面一种。
+
+* **克隆仓库**
+	```bash
+	git clone https://github.com/Motues/Momo-Backend.git
+	cd Momo-Backend/frontend
+	pnpm install
+	```
+* **从 Release 下载代码**，可以使用命令行，也可以浏览器直接下载然后解压
+	```bash
+	wget https://github.com/Motues/Momo-Backend/releases/latest/download/frontend.zip
+    unzip frontend.zip
+    cd frontend
+    pnpm install
+	```
+
+#### 2. 编译
+
+编译后的文件在 dist 目录下，文件名为 `momo-comment.min.js`。
+
+```bash
+pnpm build
 ```
 
 ## 样式效果

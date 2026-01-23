@@ -22,6 +22,10 @@ jobs:
       - name: Zip Worker folder
         run: |
           zip -r worker.zip worker/ -x "*.git*"
+      
+      - name: Zip Frontend folder
+        run: |
+          zip -r frontend.zip frontend/ -x "*.git*"
 
       - name: Create Release and Upload Assets
         uses: softprops/action-gh-release@v1
@@ -29,6 +33,7 @@ jobs:
           files: |
             nodejs.zip
             worker.zip
+            frontend.zip
           name: Release ${{ github.ref_name }}
           draft: false
           prerelease: false
