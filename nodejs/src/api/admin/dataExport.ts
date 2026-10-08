@@ -47,6 +47,8 @@ export async function exportSettings(c: Context): Promise<Response> {
     admin_comment_key_enabled: true,
     email_verify_enabled: true,
     verify_base_url: true,
+    comment_verify_enabled: true,
+    comment_verify_difficulty: true,
   };
 
   const filtered: Record<string, string> = {};

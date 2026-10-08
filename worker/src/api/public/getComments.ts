@@ -2,6 +2,7 @@ import { Context } from 'hono'
 import { Bindings } from '../../bindings'
 import { getCravatar } from '../../utils/getAvatar'
 import { getSetting } from '../../utils/settings'
+import { getPublicVerifyConfig } from '../../utils/verify'
 
 export const getComments = async (c: Context<{ Bindings: Bindings }>) => {
     const post_slug = c.req.query('post_slug')
@@ -23,6 +24,8 @@ export const getComments = async (c: Context<{ Bindings: Bindings }>) => {
   const adminCommentKey = await getSetting(c.env, "admin_comment_key") || "";
   const adminCommentKeyEnabled = await getSetting(c.env, "admin_comment_key_enabled") || "false";
   const adminEmailHash = adminEmail ? Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(adminEmail.toLowerCase().trim())))).map(b => b.toString(16).padStart(2, "0")).join("") : "";
+  // 无感验证公开配置（开关 + 按文章派生的蜜罐字段名）
+  const verifyConfig = await getPublicVerifyConfig(c.env, post_slug);
 
   try {
     // 1. 查询审核通过的评论
@@ -89,6 +92,8 @@ export const getComments = async (c: Context<{ Bindings: Bindings }>) => {
           placeholder_url: placeholderUrl,
           admin_comment_key_configured: adminCommentKey && adminCommentKeyEnabled === "true" ? "true" : "false",
           admin_email_hash: adminEmailHash,
+          verify_enabled: verifyConfig.verify_enabled,
+          verify_honeypot: verifyConfig.verify_honeypot,
         }
       })
     } else {
@@ -112,6 +117,8 @@ export const getComments = async (c: Context<{ Bindings: Bindings }>) => {
           placeholder_url: placeholderUrl,
           admin_comment_key_configured: adminCommentKey && adminCommentKeyEnabled === "true" ? "true" : "false",
           admin_email_hash: adminEmailHash,
+          verify_enabled: verifyConfig.verify_enabled,
+          verify_honeypot: verifyConfig.verify_honeypot,
         }
       })
     }

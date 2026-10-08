@@ -75,6 +75,42 @@
         </div>
       </section>
 
+      <!-- 人机验证（无感验证） -->
+      <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <h2 class="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+          <i class="fa-solid fa-shield-halved text-emerald-500"></i> 人机验证
+        </h2>
+        <p class="text-sm text-gray-500 mb-4">
+          开启后，评论区会在「预览」按钮左侧显示一个验证框。浏览器在后台静默完成一次工作量证明，真人无需任何点击；
+          机械化的批量提交会因为计算成本而明显受限。默认关闭。
+        </p>
+        <div class="space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium text-gray-700">启用无感验证</p>
+              <p class="text-xs text-gray-400 mt-1">开启后提交评论必须携带验证凭证，博主使用管理员密钥时自动放行</p>
+            </div>
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" v-model="commentVerifyEnabled" class="sr-only peer">
+              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-emerald-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+              <span class="ms-3 text-sm font-medium text-gray-700">
+                {{ commentVerifyEnabled ? '已启用' : '已禁用' }}
+              </span>
+            </label>
+          </div>
+          <div v-if="commentVerifyEnabled" class="max-w-md">
+            <label class="block text-sm font-medium text-gray-700 mb-1">验证强度</label>
+            <select v-model="commentVerifyDifficulty"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-sm">
+              <option value="16">低（约 6.5 万次计算，几乎无感）</option>
+              <option value="18">中（约 26 万次计算，推荐）</option>
+              <option value="20">高（约 105 万次计算，低端设备可能等待 1-2 秒）</option>
+            </select>
+            <p class="text-xs text-gray-400 mt-1">强度越高越能拦住机器人，但访客的等待时间也会变长</p>
+          </div>
+        </div>
+      </section>
+
       <!-- IP 黑名单 -->
       <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
         <h2 class="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
@@ -169,6 +205,8 @@ const newIpEntry = ref('')
 const newEmailEntry = ref('')
 const adminCommentKey = ref('')
 const adminCommentKeyEnabled = ref(false)
+const commentVerifyEnabled = ref(false)
+const commentVerifyDifficulty = ref('18')
 
 const originList = ref([])
 const newOrigin = ref('')
@@ -212,9 +250,17 @@ const removeEmailEntry = (index) => {
 const isDirty = ref(false)
 let initialSnapshot = ''
 
-const takeSnapshot = () => JSON.stringify({ ipList: [...ipBlacklist.value], emailList: [...emailBlacklist.value], origins: [...originList.value], adminKey: adminCommentKey.value, keyEnabled: adminCommentKeyEnabled.value })
+const takeSnapshot = () => JSON.stringify({
+  ipList: [...ipBlacklist.value],
+  emailList: [...emailBlacklist.value],
+  origins: [...originList.value],
+  adminKey: adminCommentKey.value,
+  keyEnabled: adminCommentKeyEnabled.value,
+  verifyEnabled: commentVerifyEnabled.value,
+  verifyDifficulty: commentVerifyDifficulty.value,
+})
 
-watch([ipBlacklist, emailBlacklist, originList], () => {
+watch([ipBlacklist, emailBlacklist, originList, adminCommentKey, adminCommentKeyEnabled, commentVerifyEnabled, commentVerifyDifficulty], () => {
   isDirty.value = takeSnapshot() !== initialSnapshot
 }, { deep: true })
 
@@ -241,6 +287,8 @@ const loadSettings = async () => {
     if (res.code === 200 && res.data) {
       adminCommentKey.value = res.data.admin_comment_key || ''
       adminCommentKeyEnabled.value = res.data.admin_comment_key_enabled === 'true'
+      commentVerifyEnabled.value = res.data.comment_verify_enabled === 'true'
+      commentVerifyDifficulty.value = res.data.comment_verify_difficulty || '18'
       try {
         ipBlacklist.value = res.data.ip_blacklist ? JSON.parse(res.data.ip_blacklist) : []
         if (!Array.isArray(ipBlacklist.value)) ipBlacklist.value = []
@@ -277,6 +325,8 @@ const saveSettings = async () => {
       ip_blacklist: JSON.stringify(ipBlacklist.value),
       email_blacklist: JSON.stringify(emailBlacklist.value),
       admin_comment_key_enabled: adminCommentKeyEnabled.value ? 'true' : 'false',
+      comment_verify_enabled: commentVerifyEnabled.value ? 'true' : 'false',
+      comment_verify_difficulty: commentVerifyDifficulty.value,
     }
     if (adminCommentKeyEnabled.value && adminCommentKey.value) {
       payload.admin_comment_key = adminCommentKey.value

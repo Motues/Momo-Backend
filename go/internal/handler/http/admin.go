@@ -100,14 +100,16 @@ func (h *CommentHandler) GetSettings(c *gin.Context) {
 		"admin_comment_key":         true,
 		"admin_comment_key_enabled": true,
 		"email_verify_enabled":      true,
-		"verify_base_url":          true,
+		"verify_base_url":           true,
+		"comment_verify_enabled":    true,
+		"comment_verify_difficulty": true,
 	}
 
 	// 按模块分组
 	settingsGroups := map[string][]string{
 		"basic":    {"site_name", "admin_email", "comment_auto_approve", "blogger_badge_enabled", "blogger_badge_text", "placeholder_name", "placeholder_email", "placeholder_content", "placeholder_url"},
 		"email":    {"smtp_host", "smtp_port", "email_user", "email_password", "email_secure", "email_enabled", "email_verify_enabled", "verify_base_url", "reply_template", "notification_template"},
-		"security": {"allow_origin", "admin_comment_key", "admin_comment_key_enabled", "ip_blacklist", "email_blacklist"},
+		"security": {"allow_origin", "admin_comment_key", "admin_comment_key_enabled", "ip_blacklist", "email_blacklist", "comment_verify_enabled", "comment_verify_difficulty"},
 		"account":  {"admin_name"},
 	}
 
@@ -184,7 +186,9 @@ func (h *CommentHandler) UpdateSettings(c *gin.Context) {
 		"admin_comment_key":         true,
 		"admin_comment_key_enabled": true,
 		"email_verify_enabled":      true,
-		"verify_base_url":          true,
+		"verify_base_url":           true,
+		"comment_verify_enabled":    true,
+		"comment_verify_difficulty": true,
 	}
 
 	for key := range body {
@@ -707,6 +711,8 @@ func (h *CommentHandler) ExportSettings(c *gin.Context) {
 	"verify_base_url":       true,
 	"comment_auto_approve":  true,
 	"admin_comment_key_enabled": true,
+	"comment_verify_enabled":    true,
+	"comment_verify_difficulty": true,
 	}
 	for key := range allowList {
 		if val, ok := all[key]; ok {
@@ -871,6 +877,8 @@ func (h *CommentHandler) ImportSettings(c *gin.Context) {
 		"verify_base_url":       true,
 		"comment_auto_approve":  true,
 		"admin_comment_key_enabled": true,
+		"comment_verify_enabled":    true,
+		"comment_verify_difficulty": true,
 		"allow_origin":      true, "email_enabled": true,
 		"reply_template": true, "notification_template": true,
 	}

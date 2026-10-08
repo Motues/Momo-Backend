@@ -14,5 +14,5 @@ export default async (c: Context): Promise<Response> => {
   }
 
   const comments = await CommentService.getCommentBySlug(postSlug);
-  return c.json(await getResponseComment(comments, page, limit, nested));
+  return c.json(await getResponseComment(comments, page, limit, nested, postSlug));
 };

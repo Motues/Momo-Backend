@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import CommentItem from './CommentItem.svelte';
+  import SilentVerify from '../verify/SilentVerify.svelte';
   import i18nit from '../i18n/translation';
   import { parseMarkdown, validateMarkdown } from '../utils/markdown';
   import { fly } from 'svelte/transition';
@@ -30,6 +31,17 @@
   let adminEmailHash = '';
   let adminKey = '';
   let isAdminEmail = false;
+
+  // 无感验证（Turnstile 风格）：默认关闭，由后端 verify_enabled 决定是否渲染
+  let verifyEnabled = false;
+  let verifyHoneypot = '';
+  let verifyTicket: string | null = null;
+  let verifyComponent: SilentVerify;
+
+  /** 把后端下发的字符串开关解析为布尔值 */
+  function parseBool(value: any): boolean {
+    return value === true || value === 'true';
+  }
 
   $: if (email && adminEmailHash) {
     sha256(email).then(hash => { isAdminEmail = hash === adminEmailHash; });
@@ -152,6 +164,8 @@
       adminCommentKeyConfigured = data.data.admin_comment_key_configured === 'true';
       adminEmailHash = data.data.admin_email_hash || '';
       if (!adminCommentKeyConfigured) adminKey = '';
+      verifyEnabled = parseBool(data.data.verify_enabled);
+      verifyHoneypot = data.data.verify_honeypot || '';
     } catch (err: any) {
       error = err.message;
     } finally {
@@ -210,9 +224,19 @@
           post_url: window.location.href,
           post_title: postTitle,
           admin_key: submitAdminKey || undefined,
+          verify_ticket: verifyTicket || undefined,
         }),
       });
       const data = await res.json();
+
+      // 人机验证票据失效：重置状态并让验证框重新验证
+      if (res.status === 403 && (data.reason === 'VERIFY_REQUIRED' || data.code === 'VERIFY_REQUIRED')) {
+        verifyTicket = null;
+        verifyComponent?.retry();
+        alert(t('comments.verifyFailed') + '，' + t('comments.verifyRetry'));
+        return;
+      }
+
       if (data.message && data.message.includes('Verification email sent')) {
         alert(t('comments.submitSuccess') + ' ' + t('comments.verificationRequired'));
       } else {
@@ -313,7 +337,17 @@
         </div>
       </div>
 
-      <div class="flex justify-end gap-3">
+      <div class="relative flex flex-wrap justify-end items-center gap-3">
+        {#if verifyEnabled}
+          <SilentVerify
+            bind:this={verifyComponent}
+            {apiUrl}
+            {postSlug}
+            {language}
+            honeypotField={verifyHoneypot}
+            onTicket={(ticket) => (verifyTicket = ticket)}
+          />
+        {/if}
         <button
           type="button"
           on:click={togglePreview}
@@ -322,7 +356,7 @@
         >
           {showPreview ? t('comments.write') : t('comments.preview')}
         </button>
-        <button type="submit" disabled={submitting || !isContentWithinLimit(content)}
+        <button type="submit" disabled={submitting || !isContentWithinLimit(content) || (verifyEnabled && !verifyTicket)}
           class="rounded px-4 py-2 text-sm font-medium text-[var(--text-color)] border border-[var(--button-border-color)] hover:bg-[var(--button-hover-bg-color)] disabled:opacity-50">
           {submitting ? t('comments.sending') : t('comments.send')}
         </button>

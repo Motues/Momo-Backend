@@ -7,6 +7,8 @@
 | POST | `/api/comments` | 提交评论 |
 | GET | `/api/comments` | 获取评论 |
 | GET | `/api/verify-email/verify` | 验证邮箱（从邮件链接访问，返回 HTML 页面） |
+| POST | `/api/verify/challenge` | 签发人机验证挑战（无感验证） |
+| POST | `/api/verify/solution` | 提交人机验证答案并换取票据 |
 | POST | `/admin/login` | 登录 |
 | GET | `/admin/settings` | 获取系统设置 |
 | PUT | `/admin/settings` | 更新系统设置 |
@@ -67,9 +69,12 @@
   "parent_id": null,
   "post_url": "https://blog.example.com/posts/my-article",
   "post_title": "我的文章",
-  "admin_key": "xxxx"
+  "admin_key": "xxxx",
+  "verify_ticket": "eyJ2IjoxLCJpcGgiOi..."
 }
 ```
+
+> `admin_key` 仅在管理员评论密钥开启且邮箱为管理员邮箱时需要；`verify_ticket` 仅在 `comment_verify_enabled` 为 `"true"` 时需要，由 `/api/verify/solution` 下发。
 
 **响应（成功）**：
 ```json
@@ -110,6 +115,16 @@
   "message": "Invalid admin key"
 }
 ```
+```json
+{
+  "code": 403,
+  "message": "Human verification failed or expired",
+  "reason": "VERIFY_REQUIRED"
+}
+```
+
+> 当 `comment_verify_enabled` 设为 `"true"` 时，必须携带有效的 `verify_ticket`，否则返回上面的 `VERIFY_REQUIRED`。
+> 使用管理员评论密钥验证通过的博主评论不受此限制。
 
 > 当 `comment_auto_approve` 设为 `"false"` 时，评论提交后状态为 `"pending"`，需在管理后台审核通过后才会公开显示。
 
@@ -163,7 +178,9 @@
     "placeholder_content": "写下你的评论...",
     "placeholder_url": "https://",
     "admin_comment_key_configured": "false",
-    "admin_email_hash": "xxxxx"
+    "admin_email_hash": "xxxxx",
+    "verify_enabled": "false",
+    "verify_honeypot": ""
   }
 }
 ```
@@ -212,7 +229,9 @@
     "placeholder_content": "写下你的评论...",
     "placeholder_url": "https://",
     "admin_comment_key_configured": "false",
-    "admin_email_hash": "xxxxx"
+    "admin_email_hash": "xxxxx",
+    "verify_enabled": "false",
+    "verify_honeypot": ""
   }
 }
 ```
@@ -238,6 +257,109 @@
 **成功**：返回 HTML 页面，显示"邮箱验证成功！共 N 条评论已通过审核。"
 
 **失败**：返回 HTML 页面，显示具体的错误原因（链接无效、已过期等）。
+
+---
+
+### 人机验证（无感验证）
+
+评论区可开启一套 Turnstile 风格的无感验证，由设置项 `comment_verify_enabled` 控制，**默认关闭**。开启后：
+
+- 前端在加载评论后自动调用 `/api/verify/challenge` 获取挑战
+- 浏览器静默完成一次工作量证明（真人无需任何点击）
+- 将答案提交到 `/api/verify/solution` 换取票据 `ticket`
+- 提交评论时携带该票据，后端校验通过才会写入数据库
+
+#### 签发挑战（POST `/api/verify/challenge`）
+
+**请求体**：
+```json
+{
+  "post_slug": "/posts/my-article"
+}
+```
+
+**响应（开启验证）**：
+```json
+{
+  "code": 200,
+  "message": "Challenge issued",
+  "data": {
+    "enabled": true,
+    "post_slug": "/posts/my-article",
+    "challenge_id": "7Yb1pQ2wS9kLzXcV3nRf4A",
+    "prefix": "eyJjaWQiOiI3WGIxcFEyd1M5a0x6WGNWM25SZjRBIiwiaXBoIjoiYTFiMmMzZDRlNWY2N2E4YiIsImlhdCI6MTczMDAwMDAwMDAwMH0",
+    "difficulty": 18,
+    "expires_in": 600,
+    "sig": "5mQ8x1vTn0pLbE2sKd9cRw7yUa4hGf6jZo3iNq8tVm0"
+  }
+}
+```
+
+**响应（验证已关闭）**：
+```json
+{
+  "code": 200,
+  "message": "Verification disabled",
+  "data": {
+    "enabled": false
+  }
+}
+```
+
+> - `prefix` 是 base64url 编码的自包含载荷（挑战 ID、来源 IP 哈希、签发时间），由 `sig` 做 HMAC-SHA256 签名
+> - `difficulty` 为要求的前导 0 比特数，即需要满足 `leadingZeroBits(SHA256(prefix + ":" + nonce)) >= difficulty`
+> - 挑战有效期 10 分钟，且与来源 IP 绑定
+> - 前端在 `enabled` 为 `false` 时不应渲染验证框
+
+#### 提交答案（POST `/api/verify/solution`）
+
+**请求体**：
+```json
+{
+  "post_slug": "/posts/my-article",
+  "prefix": "eyJjaWQiOiI3WGIxcFEyd1M5a0x6WGNWM25SZjRBIiwi...",
+  "sig": "5mQ8x1vTn0pLbE2sKd9cRw7yUa4hGf6jZo3iNq8tVm0",
+  "nonce": 184213,
+  "elapsed_ms": 1840,
+  "hp": ""
+}
+```
+
+> `hp` 为蜜罐字段，字段名由评论列表接口下发的 `verify_honeypot` 决定。真人始终提交空值；后端一旦发现非空即判定为脚本并直接拒绝。
+
+**响应（成功）**：
+```json
+{
+  "code": 200,
+  "message": "Verification passed",
+  "data": {
+    "enabled": true,
+    "ticket": "eyJ2IjoxLCJpcGgiOiJhMWIyYzNkNGU1ZjY3YThiIiwic2x1ZyI6Ii9wb3N0cy9teS1hcnRpY2xlIiwiaWF0IjoxNzMwMDAwMDAwMDAwLCJleHAiOjE3MzAwMDAzMDAwMDAsImp0aSI6IkxnTjZ4UTJ3In0.9rT2mVpQ4xLbE8sKd1cRw7yUa4hGf6jZo3iNq8tVm0",
+    "expires_in": 300
+  }
+}
+```
+
+> 票据有效期 5 分钟，绑定来源 IP 与 `post_slug`；前端刷新页面会重新发起验证。
+
+**响应（失败）**：
+```json
+{
+  "code": 403,
+  "message": "Verification failed",
+  "reason": "insufficient work"
+}
+```
+
+> `reason` 仅用于调试与日志定位，可能取值：`missing challenge`、`bad signature`、`malformed prefix`、`malformed payload`、`challenge expired`、`challenge from the future`、`ip mismatch`、`implausible timing`、`bad nonce`、`insufficient work`、`replayed nonce`、`honeypot`。
+
+#### 相关设置项
+
+| 设置项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `comment_verify_enabled` | `"false"` | 总开关，默认关闭 |
+| `comment_verify_difficulty` | `"18"` | 难度（前导 0 比特数），允许范围 8-26 |
+| `comment_verify_secret` | 自动生成 | 服务端签名密钥，首次使用时自动生成并写入 `Settings` 表，不对外提供读写 |
 
 ---
 
@@ -328,12 +450,15 @@
     "placeholder_content": "",
     "placeholder_url": "",
     "admin_comment_key": "",
-    "admin_comment_key_enabled": "false"
+    "admin_comment_key_enabled": "false",
+    "comment_verify_enabled": "false",
+    "comment_verify_difficulty": "18"
   }
 }
 ```
 
 > `email_password`、`admin_comment_key` 等敏感字段始终返回空字符串。
+> `comment_verify_secret` 由系统自动生成，不在任何设置接口的读写白名单内。
 
 **模块筛选示例**：
 
@@ -385,7 +510,9 @@
     "admin_comment_key": "",
     "admin_comment_key_enabled": "false",
     "ip_blacklist": "[\"192.168.1.100\",\"10.0.0.0/8\"]",
-    "email_blacklist": "[\"spam@example.com\"]"
+    "email_blacklist": "[\"spam@example.com\"]",
+    "comment_verify_enabled": "false",
+    "comment_verify_difficulty": "18"
   }
 }
 ```
@@ -434,13 +561,16 @@
   "ip_blacklist": "[\"192.168.1.100\",\"10.0.0.0/8\"]",
   "email_blacklist": "[\"spam@example.com\"]",
   "admin_comment_key_enabled": "true",
-  "admin_comment_key": "my-secret-key"
+  "admin_comment_key": "my-secret-key",
+  "comment_verify_enabled": "true",
+  "comment_verify_difficulty": "18"
 }
 ```
 
 > **注意**：
 > - `email_password` 留空时不覆盖已有密码，仅当传入新值时更新
 > - `admin_comment_key_enabled` 控制管理员评论密钥的启用/关闭，关闭时自动清除密钥
+> - `comment_verify_enabled` 控制评论无感验证的启用/关闭，默认 `"false"`；开启后提交评论必须携带 `verify_ticket`
 
 > **邮件模板可用占位符**：
 > - 回复模板：`{{toName}}` `{{replyAuthor}}` `{{postTitle}}` `{{parentComment}}` `{{replyContent}}` `{{postUrl}}`

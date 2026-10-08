@@ -100,6 +100,18 @@ func (h *CommentHandler) PostComment(c *gin.Context) {
 		}
 	}
 
+	// 无感验证票据校验（管理员密钥已通过的博主不受影响）
+	if !isAdminVerified && utils.IsVerifyEnabled() {
+		if !utils.VerifyTicket(req.VerifyTicket, clientIP, req.PostSlug) {
+			c.JSON(http.StatusForbidden, gin.H{
+				"code":    403,
+				"message": "Human verification failed or expired",
+				"reason":  "VERIFY_REQUIRED",
+			})
+			return
+		}
+	}
+
 	// 邮箱验证检查
 	needsVerification := false
 	emailVerifyEnabled := utils.GetSetting("email_verify_enabled")
@@ -288,6 +300,9 @@ func (h *CommentHandler) GetComments(c *gin.Context) {
 		adminCommentKeyConfigured = "true"
 	}
 
+	// 无感验证公开配置（开关 + 按文章派生的蜜罐字段名）
+	verifyEnabled, verifyHoneypot := utils.GetPublicVerifyConfig(slug)
+
 	// 1. 从 Repo 获取所有已审核评论 (status = 'approved')
 	allComments, err := h.Repo.GetByPostSlug(c.Request.Context(), slug)
 	if err != nil {
@@ -351,6 +366,8 @@ func (h *CommentHandler) GetComments(c *gin.Context) {
 			"placeholder_url":              placeholderURL,
 			"admin_comment_key_configured": adminCommentKeyConfigured,
 			"admin_email_hash":             adminEmailHash,
+			"verify_enabled":               verifyEnabled,
+			"verify_honeypot":              verifyHoneypot,
 		},
 	})
 }

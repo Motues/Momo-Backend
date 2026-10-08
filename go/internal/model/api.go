@@ -2,15 +2,16 @@ package model
 
 // CommentRequest 提交评论请求体
 type CommentRequest struct {
-	PostSlug  string `json:"post_slug" binding:"required"`
-	Author    string `json:"author" binding:"required"`
-	Email     string `json:"email" binding:"required,email"`
-	URL       string `json:"url"`
-	Content   string `json:"content" binding:"required"`
-	ParentID  *int64 `json:"parent_id"`
-	PostURL   string `json:"post_url"`
-	PostTitle string `json:"post_title"`
-	AdminKey  string `json:"admin_key"`
+	PostSlug     string `json:"post_slug" binding:"required"`
+	Author       string `json:"author" binding:"required"`
+	Email        string `json:"email" binding:"required,email"`
+	URL          string `json:"url"`
+	Content      string `json:"content" binding:"required"`
+	ParentID     *int64 `json:"parent_id"`
+	PostURL      string `json:"post_url"`
+	PostTitle    string `json:"post_title"`
+	AdminKey     string `json:"admin_key"`
+	VerifyTicket string `json:"verify_ticket"`
 }
 
 // LoginRequest 登录请求体

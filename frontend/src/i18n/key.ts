@@ -42,5 +42,9 @@ export interface Translation {
         list: string;
         showMoreReplies: string;
         collapseReplies: string;
+        verifying: string;
+        verifySuccess: string;
+        verifyFailed: string;
+        verifyRetry: string;
     },
 }

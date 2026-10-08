@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { getCommentBySlug, postComment, verifyEmail } from "../api/index"; // public
+import { getCommentBySlug, postComment, verifyEmail, verifyChallenge, verifySolution } from "../api/index"; // public
 import {
   getAllComments,
   changeCommentStatus,
@@ -28,6 +28,10 @@ const router = new Hono();
 router.get("/api/comments", getCommentBySlug);
 router.post("/api/comments", postComment);
 router.get("/api/verify-email/verify", verifyEmail);
+
+// 无感验证（Turnstile 风格）
+router.post("/api/verify/challenge", verifyChallenge);
+router.post("/api/verify/solution", verifySolution);
 
 // Admin settings
 router.get("/admin/settings", getSettings);

@@ -3,7 +3,8 @@ import { Bindings } from '../../bindings';
 import { getAllSettings, getSetting, setSetting } from '../../utils/settings';
 import { sendTestEmail } from '../../utils/email';
 
-const SENSITIVE_KEYS = new Set(["admin_password", "email_password", "admin_comment_key"]);
+// 敏感字段：读取时始终置空。comment_verify_secret 由系统自动生成，不对外开放读写
+const SENSITIVE_KEYS = new Set(["admin_password", "email_password", "admin_comment_key", "comment_verify_secret"]);
 
 const ALLOWED_SETTINGS = new Set([
   "site_name", "admin_email", "admin_name",
@@ -23,12 +24,14 @@ const ALLOWED_SETTINGS = new Set([
   "admin_comment_key_enabled",
   "email_verify_enabled",
   "verify_base_url",
+  "comment_verify_enabled",
+  "comment_verify_difficulty",
 ]);
 
 const SETTINGS_GROUPS: Record<string, string[]> = {
   basic: ["site_name", "admin_email", "comment_auto_approve", "blogger_badge_enabled", "blogger_badge_text", "placeholder_name", "placeholder_email", "placeholder_content", "placeholder_url"],
   email: ["smtp_host", "smtp_port", "email_user", "email_password", "email_secure", "email_enabled", "email_verify_enabled", "verify_base_url", "reply_template", "notification_template"],
-  security: ["allow_origin", "admin_comment_key", "admin_comment_key_enabled", "ip_blacklist", "email_blacklist"],
+  security: ["allow_origin", "admin_comment_key", "admin_comment_key_enabled", "ip_blacklist", "email_blacklist", "comment_verify_enabled", "comment_verify_difficulty"],
   account: ["admin_name"],
 };
 

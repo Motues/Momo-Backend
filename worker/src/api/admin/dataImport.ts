@@ -78,6 +78,8 @@ export const importSettings = async (c: Context<{ Bindings: Bindings }>) => {
     "admin_comment_key_enabled",
     "email_verify_enabled",
     "verify_base_url",
+    "comment_verify_enabled",
+    "comment_verify_difficulty",
   ]);
 
   const updated: string[] = [];

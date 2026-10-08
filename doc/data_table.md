@@ -75,6 +75,9 @@
 | `placeholder_url` | 网址输入框占位文字 |
 | `admin_comment_key` | 管理员评论密钥（敏感字段） |
 | `admin_comment_key_enabled` | 是否启用管理员评论密钥 |
+| `comment_verify_enabled` | 是否启用评论无感验证（人机验证），默认关闭 |
+| `comment_verify_difficulty` | 无感验证难度（前导 0 比特数，8-26） |
+| `comment_verify_secret` | 无感验证签名密钥，首次启用时自动生成（敏感字段，不对外读写） |
 | `password_changed` | 是否已修改默认密码 |
 
 ---

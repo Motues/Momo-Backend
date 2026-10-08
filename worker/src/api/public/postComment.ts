@@ -3,6 +3,7 @@ import { UAParser } from 'ua-parser-js';
 import { Bindings } from '../../bindings';
 import { sendCommentNotification, sendCommentReplyNotification, sendVerificationEmail, checkEmailVerified, hasUnverifiedToken, saveVerificationToken } from '../../utils/email';
 import { isEmailEnabled, getSetting } from '../../utils/settings';
+import { isVerifyEnabled, verifyTicket } from '../../utils/verify';
 import { parseMarkdown } from '../../utils/markdown';
 
 // 检查内容，删除 XSS 攻击脚本
@@ -111,6 +112,18 @@ export const postComment = async (c: Context<{ Bindings: Bindings }>) => {
       isAdminVerified = true;
     } else {
       return c.json({ code: 403, message: "Invalid admin key" }, 403);
+    }
+  }
+
+  // 5.1 无感验证票据校验（管理员密钥已通过的博主不受影响）
+  if (!isAdminVerified && await isVerifyEnabled(c.env)) {
+    const ticketOk = await verifyTicket(c.env, data.verify_ticket, ip, data.post_slug);
+    if (!ticketOk) {
+      return c.json({
+        code: 403,
+        message: "Human verification failed or expired",
+        reason: "VERIFY_REQUIRED",
+      }, 403);
     }
   }
 

@@ -6,6 +6,7 @@ import { CreateCommentInput } from "../../type/prisma";
 import { sendCommentReplyNotification, sendCommentNotification, isEmailServiceAvailable, checkEmailVerified, saveVerificationToken, hasUnverifiedToken, sendVerificationEmail } from "../../utils/email";
 import { canPostComment, checkContent, sanitizeHtml, checkIpBlacklist, checkEmailBlacklist, getCommentStatus } from "../../utils/security";
 import { getSetting } from "../../utils/settings";
+import { isVerifyEnabled, verifyTicket } from "../../utils/verify";
 import { parseMarkdown } from "../../utils/markdown";
 import { getClientIP } from "../../utils/ip";
 import LogService from "../../utils/log";
@@ -49,6 +50,21 @@ export default async (c: Context): Promise<Response> => {
         isAdminVerified = true;
       } else {
         return c.json({ code: 403, message: "Invalid admin key" }, 403);
+      }
+    }
+
+    // 无感验证票据校验（管理员密钥已通过的博主不受影响）
+    if (!isAdminVerified && (await isVerifyEnabled())) {
+      const ticketOk = await verifyTicket(data.verify_ticket, ip, data.post_slug);
+      if (!ticketOk) {
+        return c.json(
+          {
+            code: 403,
+            message: "Human verification failed or expired",
+            reason: "VERIFY_REQUIRED",
+          },
+          403
+        );
       }
     }
 

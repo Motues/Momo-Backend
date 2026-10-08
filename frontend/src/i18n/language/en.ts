@@ -44,6 +44,10 @@ const translation: Translation = {
         list: "List",
         showMoreReplies: "Show more replies",
         collapseReplies: "Collapse",
+        verifying: "Verifying...",
+        verifySuccess: "Verified",
+        verifyFailed: "Verification failed",
+        verifyRetry: "Click to retry",
     },
 }
 

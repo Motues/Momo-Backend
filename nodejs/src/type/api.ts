@@ -30,6 +30,8 @@ interface CommentsResponse {
     placeholder_url?: string;
     admin_comment_key_configured?: string;
     admin_email_hash?: string;
+    verify_enabled?: string;
+    verify_honeypot?: string;
   }
 }
 
@@ -58,6 +60,8 @@ interface NestedCommentsResponse {
     placeholder_url?: string;
     admin_comment_key_configured?: string;
     admin_email_hash?: string;
+    verify_enabled?: string;
+    verify_honeypot?: string;
   }
 }
 
