@@ -3,6 +3,11 @@ import { Bindings } from '../../bindings'
 import { getCravatar } from '../../utils/getAvatar'
 import { getSetting } from '../../utils/settings'
 import { getPublicVerifyConfig } from '../../utils/verify'
+import { allowRequest } from '../../utils/rateLimit'
+
+// 公开评论列表限流（单 isolate 尽力而为）：缓解批量遍历 post_slug 采集博主邮箱哈希
+const RATE_LIMIT = 120
+const RATE_WINDOW_MS = 60 * 1000
 
 export const getComments = async (c: Context<{ Bindings: Bindings }>) => {
     const post_slug = c.req.query('post_slug')
@@ -11,7 +16,12 @@ export const getComments = async (c: Context<{ Bindings: Bindings }>) => {
   const nested = c.req.query('nested') !== 'false'
   const offset = (page - 1) * limit
 
-  if (!post_slug) return c.json({ message: "post_slug is required" }, 400)
+  if (!post_slug) return c.json({ code: 400, message: "post_slug is required" }, 400)
+
+  const ip = c.req.header('cf-connecting-ip') || '127.0.0.1'
+  if (!allowRequest(`comments:get:${ip}`, RATE_LIMIT, RATE_WINDOW_MS)) {
+    return c.json({ code: 429, message: "Too many requests. Please slow down." }, 429)
+  }
 
   // 读取博主标识设置
   const adminEmail = await getSetting(c.env, "admin_email") || "";
@@ -23,38 +33,47 @@ export const getComments = async (c: Context<{ Bindings: Bindings }>) => {
   const placeholderUrl = await getSetting(c.env, "placeholder_url") || "";
   const adminCommentKey = await getSetting(c.env, "admin_comment_key") || "";
   const adminCommentKeyEnabled = await getSetting(c.env, "admin_comment_key_enabled") || "false";
-  const adminEmailHash = adminEmail ? Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(adminEmail.toLowerCase().trim())))).map(b => b.toString(16).padStart(2, "0")).join("") : "";
+  // 邮箱哈希仅供前端判断「是否需要显示管理员密钥输入框」。
+  // 只有在博主密钥功能开启时才下发，避免被用于离线枚举管理员邮箱。
+  const adminEmailHash = (adminEmail && adminCommentKeyEnabled === "true")
+    ? Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(adminEmail.toLowerCase().trim())))).map(b => b.toString(16).padStart(2, "0")).join("")
+    : "";
   // 无感验证公开配置（开关 + 按文章派生的蜜罐字段名）
   const verifyConfig = await getPublicVerifyConfig(c.env, post_slug);
 
   try {
     // 1. 查询审核通过的评论
+    // 注意：email 仅用于在服务端计算头像与博主标识，绝不进入响应体
     const query = `
       SELECT id, author, email, url, content_text as contentText,
              content_html as contentHtml, pub_date as pubDate, parent_id as parentId
       FROM Comment
-      WHERE post_slug = ? AND status = "approved"
+      WHERE post_slug = ? AND status = 'approved'
       ORDER BY pub_date DESC
     `
     const { results } = await c.env.MOMO_DB.prepare(query).bind(post_slug).all()
 
-    // 2. 批量处理头像并格式化，同时标记博主
+    // 2. 批量处理头像并格式化，同时标记博主（显式挑字段，防止 email 等隐私字段回归）
     const allComments = await Promise.all((results || []).map(async (row: any) => {
+      const isBlogger = row.email === adminEmail;
+      let avatar = '';
       try {
-        return {
-          ...row,
-          avatar: await getCravatar(row.email),
-          replies: [],
-          isBlogger: row.email === adminEmail
-        };
+        avatar = await getCravatar(row.email);
       } catch {
-        return {
-          ...row,
-          avatar: '',
-          replies: [],
-          isBlogger: false
-        };
+        avatar = '';
       }
+      return {
+        id: row.id,
+        author: row.author,
+        url: row.url || undefined,
+        contentText: row.contentText,
+        contentHtml: row.contentHtml,
+        pubDate: row.pubDate,
+        parentId: row.parentId,
+        avatar,
+        replies: [] as any[],
+        isBlogger
+      };
     }))
 
     // 3. 处理嵌套逻辑
@@ -124,6 +143,6 @@ export const getComments = async (c: Context<{ Bindings: Bindings }>) => {
     }
   } catch (e: any) {
     console.error('getComments error:', e)
-    return c.json({ message: 'Internal server error' }, 500)
+    return c.json({ code: 500, message: 'Internal server error' }, 500)
   }
 }

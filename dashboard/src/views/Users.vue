@@ -23,6 +23,12 @@
               class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium">
               搜索
             </button>
+            <select v-model="verifiedFilter" @change="handleFilterChange" title="按邮箱验证状态筛选"
+              class="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm bg-white text-gray-700">
+              <option value="all">全部用户</option>
+              <option value="true">邮箱已验证</option>
+              <option value="false">邮箱未验证</option>
+            </select>
           </div>
           <span v-if="searchKeyword.trim()" class="text-xs text-gray-500 whitespace-nowrap">
             搜索：<strong class="text-blue-600">{{ searchKeyword.trim() }}</strong>
@@ -40,6 +46,14 @@
                     <span v-if="user.blacklisted"
                       class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-red-50 text-red-600 border border-red-200 whitespace-nowrap">
                       <i class="fa-solid fa-ban mr-1"></i>已拉黑
+                    </span>
+                    <span v-if="user.emailVerified"
+                      class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-600 border border-emerald-200 whitespace-nowrap">
+                      <i class="fa-solid fa-envelope-circle-check mr-1"></i>邮箱已验证
+                    </span>
+                    <span v-else
+                      class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-gray-100 text-gray-500 border border-gray-200 whitespace-nowrap">
+                      <i class="fa-solid fa-envelope mr-1"></i>邮箱未验证
                     </span>
                   </div>
                   <span class="text-xs block truncate text-gray-400">{{ user.email }}</span>
@@ -73,7 +87,7 @@
             </div>
           </div>
           <div v-if="users.length === 0" class="px-5 py-8 text-center text-sm text-gray-400">
-            {{ searchKeyword.trim() ? '未找到匹配的用户' : '暂无用户数据' }}
+            {{ searchKeyword.trim() || verifiedFilter !== 'all' ? '未找到匹配的用户' : '暂无用户数据' }}
           </div>
         </div>
 
@@ -84,6 +98,7 @@
               <tr class="border-b bg-gray-50 border-gray-200">
                 <th class="px-5 py-3 text-xs font-semibold uppercase text-gray-500">作者</th>
                 <th class="px-5 py-3 text-xs font-semibold uppercase text-gray-500">邮箱</th>
+                <th class="px-5 py-3 text-xs font-semibold uppercase text-gray-500">邮箱验证</th>
                 <th class="px-5 py-3 text-xs font-semibold uppercase text-gray-500">评论数</th>
                 <th class="px-5 py-3 text-xs font-semibold uppercase text-gray-500">已通过</th>
                 <th class="px-5 py-3 text-xs font-semibold uppercase text-gray-500">待审核</th>
@@ -104,6 +119,16 @@
                   </div>
                 </td>
                 <td class="px-5 py-3 text-sm text-gray-500">{{ user.email }}</td>
+                <td class="px-5 py-3">
+                  <span v-if="user.emailVerified"
+                    :title="user.emailVerifiedAt ? '验证时间：' + formatDateTime(user.emailVerifiedAt) : '已通过邮箱验证'"
+                    class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-600 border border-emerald-200">
+                    <i class="fa-solid fa-envelope-circle-check mr-1"></i>已验证
+                  </span>
+                  <span v-else class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
+                    <i class="fa-solid fa-envelope mr-1"></i>未验证
+                  </span>
+                </td>
                 <td class="px-5 py-3">
                   <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">{{ user.commentCount }}</span>
                 </td>
@@ -129,8 +154,8 @@
                 </td>
               </tr>
               <tr v-if="users.length === 0">
-                <td colspan="8" class="px-5 py-8 text-center text-sm text-gray-400">
-                  {{ searchKeyword.trim() ? '未找到匹配的用户' : '暂无用户数据' }}
+                <td colspan="9" class="px-5 py-8 text-center text-sm text-gray-400">
+                  {{ searchKeyword.trim() || verifiedFilter !== 'all' ? '未找到匹配的用户' : '暂无用户数据' }}
                 </td>
               </tr>
             </tbody>
@@ -169,6 +194,8 @@ const apiUrl = ref(localStorage.getItem('apiUrl') || window.location.origin);
 const users = ref([]);
 const pagination = ref({ page: 1, limit: 20, totalPage: 1 });
 const searchKeyword = ref('');
+// 邮箱验证筛选：all / true（已验证）/ false（未验证）
+const verifiedFilter = ref('all');
 
 const fetchUsers = async (page = 1) => {
   loading.value = true;
@@ -176,6 +203,7 @@ const fetchUsers = async (page = 1) => {
     const params = { page, limit: 20 };
     const keyword = searchKeyword.value.trim();
     if (keyword) params.search = keyword;
+    if (verifiedFilter.value !== 'all') params.verified = verifiedFilter.value;
     const res = await request.get('/admin/stats/users', { params });
     if (res.data) {
       users.value = res.data.users || [];
@@ -186,6 +214,10 @@ const fetchUsers = async (page = 1) => {
   } finally {
     loading.value = false;
   }
+};
+
+const handleFilterChange = () => {
+  fetchUsers(1);
 };
 
 const handleSearch = () => {
@@ -232,6 +264,11 @@ const viewUserComments = (user) => {
 const formatDate = (str) => {
   if (!str) return '-';
   return new Date(str).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+};
+
+const formatDateTime = (str) => {
+  if (!str) return '-';
+  return new Date(str).toLocaleString('zh-CN');
 };
 
 const logout = () => {

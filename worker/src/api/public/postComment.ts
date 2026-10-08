@@ -5,49 +5,32 @@ import { sendCommentNotification, sendCommentReplyNotification, sendVerification
 import { isEmailEnabled, getSetting } from '../../utils/settings';
 import { isVerifyEnabled, verifyTicket } from '../../utils/verify';
 import { parseMarkdown } from '../../utils/markdown';
+import {
+  checkContent,
+  sanitizeUrl,
+  parseIpBlacklist,
+  ipMatchesBlacklist,
+  MAX_CONTENT,
+  MAX_AUTHOR,
+  MAX_EMAIL,
+  MAX_URL,
+  MAX_POST_SLUG,
+} from '../../utils/security';
 
-// 检查内容，删除 XSS 攻击脚本
-export function checkContent(content: string): string {
-    if (!content) return content;
-    return content
-        // Remove script/style blocks and their content
-        .replace(/<(?:script|style)[\s\S]*?<\/(?:script|style)>/gi, '')
-        // Remove event handler attributes (onclick, onerror, onload, etc.)
-        .replace(/\s+on\w+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
-        // Remove javascript: and vbscript: links in href/src/action (quoted)
-        .replace(/(?:href|src|action|formaction)\s*=\s*"(?:javascript|vbscript):[^"]*"/gi, '')
-        .replace(/(?:href|src|action|formaction)\s*=\s*'(?:javascript|vbscript):[^']*'/gi, '')
-        // Remove javascript: and vbscript: links (unquoted, e.g. href=javascript:alert(1))
-        .replace(/(?:href|src|action|formaction)\s*=\s*(?:javascript|vbscript):[^\s>"]+/gi, '')
-        // Remove standalone javascript: and vbscript: protocol
-        .replace(/(?:javascript|vbscript):\s*/gi, '')
-        // Remove dangerous embedding tags
-        .replace(/<\/?(?:iframe|object|embed|frame|meta|link|base|form|input)\b[^>]*>/gi, '');
-}
-
-// IP CIDR 匹配
-function ipInCIDR(ip: string, cidr: string): boolean {
-  const [range, bits = "32"] = cidr.split("/");
-  const prefixLen = parseInt(bits);
-  const mask = ~(2 ** (32 - prefixLen) - 1);
-  const ipNum = ip.split(".").reduce((acc, oct) => (acc << 8) + parseInt(oct), 0);
-  const rangeNum = range.split(".").reduce((acc, oct) => (acc << 8) + parseInt(oct), 0);
-  return (ipNum & mask) >>> 0 === (rangeNum & mask) >>> 0;
-}
+// 兼容既有导入路径（净化逻辑已统一到 utils/security）
+export { checkContent } from '../../utils/security';
 
 async function checkIpBlacklist(env: Bindings, ip: string): Promise<boolean> {
   const blacklistStr = await getSetting(env, "ip_blacklist");
   if (!blacklistStr) return false;
-  try {
-    const blacklist = JSON.parse(blacklistStr);
-    if (!Array.isArray(blacklist)) return false;
-    return blacklist.some((entry: string) => {
-      if (entry.includes("/")) return ipInCIDR(ip, entry);
-      return ip === entry;
-    });
-  } catch {
+
+  const blacklist = parseIpBlacklist(blacklistStr);
+  if (blacklist === null) {
+    // 配置损坏：保持放行（避免因一条坏配置导致全站无法评论），但必须留下告警
+    console.warn("[security] ip_blacklist 不是合法 JSON 数组，黑名单检查已被跳过，请在后台修复该配置");
     return false;
   }
+  return ipMatchesBlacklist(ip, blacklist);
 }
 
 async function checkEmailBlacklist(env: Bindings, email: string): Promise<boolean> {
@@ -55,10 +38,14 @@ async function checkEmailBlacklist(env: Bindings, email: string): Promise<boolea
   if (!blacklistStr) return false;
   try {
     const blacklist = JSON.parse(blacklistStr);
-    if (!Array.isArray(blacklist)) return false;
+    if (!Array.isArray(blacklist)) {
+      console.warn("[security] email_blacklist 不是数组，黑名单检查已被跳过，请在后台修复该配置");
+      return false;
+    }
     // 不区分大小写匹配，与拉黑接口的小写归一化保持一致
-    return blacklist.some((entry: string) => String(entry).toLowerCase() === email.toLowerCase());
+    return blacklist.some((entry: unknown) => String(entry).toLowerCase() === email.toLowerCase());
   } catch {
+    console.warn("[security] email_blacklist 不是合法 JSON，黑名单检查已被跳过，请在后台修复该配置");
     return false;
   }
 }
@@ -72,12 +59,37 @@ export const postComment = async (c: Context<{ Bindings: Bindings }>) => {
   const data = await c.req.json();
   const userAgent = c.req.header('user-agent') || "";
 
-  // 1. 必填字段校验
-  if (!data.post_slug || !data.author || !data.email || !data.content) {
+  // 1. 必填字段校验（含类型）
+  if (
+    typeof data?.post_slug !== "string" ||
+    typeof data?.author !== "string" ||
+    typeof data?.email !== "string" ||
+    typeof data?.content !== "string" ||
+    !data.post_slug.trim() ||
+    !data.author.trim() ||
+    !data.email.trim() ||
+    !data.content.trim()
+  ) {
     return c.json({ code: 400, message: "post_slug, author, email, and content are required" }, 400);
   }
 
-  // 2. 获取 IP (Worker 获取 IP 的标准方式)
+  // 1.1 长度上限校验：避免 MB 级内容触发 CPU 时长与存储风险
+  const overLimit =
+    data.post_slug.length > MAX_POST_SLUG ||
+    data.author.length > MAX_AUTHOR ||
+    data.email.length > MAX_EMAIL ||
+    data.content.length > MAX_CONTENT ||
+    (typeof data.url === "string" && data.url.length > MAX_URL);
+  if (overLimit) {
+    return c.json({
+      code: 400,
+      message: `Field too long (content ≤ ${MAX_CONTENT}, author ≤ ${MAX_AUTHOR}, email ≤ ${MAX_EMAIL}, url ≤ ${MAX_URL}, post_slug ≤ ${MAX_POST_SLUG})`,
+    }, 400);
+  }
+
+  // 2. 获取 IP：cf-connecting-ip 由 Cloudflare 在边缘覆写，客户端无法伪造。
+  // 注意：设置项 trust_proxy 仅对 Node/Go 生效（它们可能直连或位于自建代理后），
+  // Worker 始终使用 Cloudflare 提供的该请求头。
   const ip = c.req.header('cf-connecting-ip') || "127.0.0.1";
 
   // 3. 检查评论频率控制
@@ -127,12 +139,13 @@ export const postComment = async (c: Context<{ Bindings: Bindings }>) => {
     }
   }
 
-  // 6. 准备数据 - 对所有用户输入进行 XSS 检查
+  // 6. 准备数据 - 所有用户输入均需净化
   const content = checkContent(data.content);
   const author = checkContent(data.author);
-  const url = checkContent(data.url || '');
-  const postTitle = checkContent(data.post_title || '');
-  const postUrl = checkContent(data.post_url || '');
+  // url 走协议白名单（只允许 http/https/mailto 与相对路径）
+  const url = sanitizeUrl(data.url);
+  const postTitle = checkContent(typeof data.post_title === "string" ? data.post_title : '');
+  const postUrl = sanitizeUrl(data.post_url);
   const uaParser = new UAParser(userAgent);
   const uaResult = uaParser.getResult();
   let status = isAdminVerified ? "approved" : await getCommentStatus(c.env);
@@ -247,6 +260,7 @@ export const postComment = async (c: Context<{ Bindings: Bindings }>) => {
     }
 
     return c.json({
+      code: 200,
       message: needsVerification
         ? "Comment submitted! Verification email sent. Please check your inbox."
         : "Comment submitted"
@@ -254,6 +268,6 @@ export const postComment = async (c: Context<{ Bindings: Bindings }>) => {
 
   } catch (e: any) {
     console.error("Create Comment Error:", e);
-    return c.json({ message: "Internal Server Error" }, 500);
+    return c.json({ code: 500, message: "Internal Server Error" }, 500);
   }
 };

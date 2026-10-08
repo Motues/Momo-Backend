@@ -317,7 +317,7 @@ class CommentService {
    * 获取用户列表（按 author + email 分组）
    * 支持按昵称/邮箱搜索（不区分大小写），并标记邮箱是否在黑名单中
    */
-  async getUserList(page: number, limit: number, search?: string) {
+  async getUserList(page: number, limit: number, search?: string, verified?: string) {
     // 获取所有唯一用户
     const rawUsers = db
       .select({
@@ -336,6 +336,32 @@ class CommentService {
       }
     });
     let uniqueUsers = Array.from(uniqueMap.values());
+
+    // 邮箱验证记录（精确匹配 email，与 checkEmailVerified 的判定保持一致）
+    const verifiedRows = db
+      .select({
+        email: schema.emailVerifications.email,
+        verified_at: schema.emailVerifications.verified_at,
+      })
+      .from(schema.emailVerifications)
+      .where(eq(schema.emailVerifications.verified, 1))
+      .all() as unknown as { email: string; verified_at: string | null }[];
+
+    const verifiedAtMap = new Map<string, string>();
+    verifiedRows.forEach((r) => {
+      const current = verifiedAtMap.get(r.email);
+      const at = r.verified_at || "";
+      if (current === undefined || (at && at > current)) {
+        verifiedAtMap.set(r.email, at);
+      }
+    });
+
+    // 邮箱验证筛选：true = 已验证，false = 未验证，其余不筛选
+    if (verified === "true") {
+      uniqueUsers = uniqueUsers.filter((u) => verifiedAtMap.has(u.email));
+    } else if (verified === "false") {
+      uniqueUsers = uniqueUsers.filter((u) => !verifiedAtMap.has(u.email));
+    }
 
     // 按昵称/邮箱搜索（不区分大小写）
     const keyword = (search || "").trim().toLowerCase();
@@ -402,6 +428,8 @@ class CommentService {
           firstCommentDate,
           lastCommentDate,
           blacklisted: emailBlacklist.includes(u.email.toLowerCase()),
+          emailVerified: verifiedAtMap.has(u.email),
+          emailVerifiedAt: verifiedAtMap.get(u.email) || "",
         };
       })
     );

@@ -3,6 +3,7 @@ package utils
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"strings"
 	"sync"
@@ -103,8 +104,13 @@ func CheckAdminCredentials(name, password string) bool {
 	dbPass := GetSetting("admin_password")
 
 	if dbName != "" && dbPass != "" {
-		// bcrypt hash 检测
-		if len(dbPass) > 0 && dbPass[0] == '$' {
+		// bcrypt hash 检测（三端统一为 $2 前缀，避免明文以 $ 开头时被永久拒绝登录）
+		if strings.HasPrefix(dbPass, "$2") {
+			// 哈希分支同样必须校验用户名：否则同一密码可用任意用户名登录，
+			// 并产生多个并存的会话
+			if name != dbName {
+				return false
+			}
 			err := bcrypt.CompareHashAndPassword([]byte(dbPass), []byte(password))
 			return err == nil
 		}
@@ -163,6 +169,8 @@ func CheckIPBlacklist(ip string) bool {
 	}
 	var list []string
 	if err := json.Unmarshal([]byte(raw), &list); err != nil {
+		// 配置损坏：保持放行（避免因一条坏配置导致全站无法评论），但必须留下告警
+		log.Printf("[WARN] ip_blacklist 不是合法 JSON，黑名单检查已被跳过，请在后台修复该配置: %v", err)
 		return false
 	}
 	for _, entry := range list {
@@ -178,6 +186,46 @@ func CheckIPBlacklist(ip string) bool {
 	return false
 }
 
+// IsValidIpOrCidr 校验单条黑名单条目是否为合法 IP 或 CIDR
+func IsValidIpOrCidr(entry string) bool {
+	value := strings.TrimSpace(entry)
+	if value == "" {
+		return false
+	}
+	if !strings.Contains(value, "/") {
+		return net.ParseIP(value) != nil
+	}
+	_, _, err := net.ParseCIDR(value)
+	return err == nil
+}
+
+// ValidateIPBlacklistJSON 校验黑名单 JSON 字符串（必须是数组且每项为合法 IP/CIDR）
+func ValidateIPBlacklistJSON(raw string) bool {
+	if raw == "" {
+		return true
+	}
+	var list []string
+	if err := json.Unmarshal([]byte(raw), &list); err != nil {
+		return false
+	}
+	for _, entry := range list {
+		if !IsValidIpOrCidr(entry) {
+			return false
+		}
+	}
+	return true
+}
+
+// IsValidCommentStatus 评论状态枚举白名单
+func IsValidCommentStatus(status string) bool {
+	switch status {
+	case "pending", "approved", "rejected", "deleted":
+		return true
+	default:
+		return false
+	}
+}
+
 // CheckEmailBlacklist 检查邮箱是否在黑名单中（不区分大小写）
 func CheckEmailBlacklist(email string) bool {
 	raw := GetSetting("email_blacklist")
@@ -186,6 +234,7 @@ func CheckEmailBlacklist(email string) bool {
 	}
 	var list []string
 	if err := json.Unmarshal([]byte(raw), &list); err != nil {
+		log.Printf("[WARN] email_blacklist 不是合法 JSON，黑名单检查已被跳过，请在后台修复该配置: %v", err)
 		return false
 	}
 	for _, entry := range list {

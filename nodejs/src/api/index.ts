@@ -14,8 +14,9 @@ import getUserComments from "./admin/getUserComments";
 import { addUserToBlacklist, removeUserFromBlacklist } from "./admin/userBlacklist";
 import { getSettings, updateSettings, testEmail } from "./admin/settings";
 import changePassword from "./admin/password";
+import logout from "./admin/logout";
 import { importComments, importSettings } from "./admin/dataImport";
 import { exportSettings, exportComments } from "./admin/dataExport";
 
 export { getCommentBySlug, postComment, verifyEmail, verifyChallenge, verifySolution };
-export { getAllComments, changeCommentStatus, updateComment, login, getStatsOverview, getUserList, getUserComments, getSettings, updateSettings, changePassword, testEmail, importComments, importSettings, exportSettings, exportComments, addUserToBlacklist, removeUserFromBlacklist };
+export { getAllComments, changeCommentStatus, updateComment, login, getStatsOverview, getUserList, getUserComments, getSettings, updateSettings, changePassword, logout, testEmail, importComments, importSettings, exportSettings, exportComments, addUserToBlacklist, removeUserFromBlacklist };

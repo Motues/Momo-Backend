@@ -11,7 +11,7 @@ import { verifyChallenge } from './api/public/verifyChallenge'
 import { verifySolutionHandler } from './api/public/verifySolution'
 import { adminLogin } from './api/admin/login'
 import { getSettings, updateSettings, testEmail } from './api/admin/settings'
-import { changePassword } from './api/admin/password'
+import { changePassword, adminLogout } from './api/admin/password'
 import { listComments } from './api/admin/listComments'
 import { updateStatus } from './api/admin/updateStatus'
 import { updateComment } from './api/admin/updateComment'
@@ -24,9 +24,9 @@ import { importComments, importSettings } from './api/admin/dataImport'
 
 const app = new Hono<{ Bindings: Bindings }>()
 
-// 跨域（从数据库读取允许的来源）
+// 跨域（从数据库读取允许的来源；未配置即拒绝跨域，与 Node/Go 默认姿态一致）
 app.use('/api/*', async (c, next) => {
-  const allowOriginStr = await getSetting(c.env, "allow_origin") || '*'
+  const allowOriginStr = await getSetting(c.env, "allow_origin") || ''
   const corsMiddleware = customCors(allowOriginStr)
   return corsMiddleware(c, next)
 })
@@ -46,6 +46,7 @@ app.get('/admin/settings', getSettings);
 app.put('/admin/settings', updateSettings);
 app.post('/admin/settings/test-email', testEmail);
 app.put('/admin/password', changePassword);
+app.post('/admin/logout', adminLogout);
 app.get('/admin/comments/list', listComments);
 app.put('/admin/comments/status', updateStatus);
 app.put('/admin/comments/edit', updateComment);

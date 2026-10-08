@@ -42,7 +42,19 @@ vim ./config/config.yaml
 ```yaml
 # ./config/config.yaml
 PORT: 3000  # server port
+# TRUST_PROXY: true  # 可选：是否信任反向代理下发的客户端 IP 头
 ```
+
+> **TRUST_PROXY 说明**：该开关默认由后台页面控制，**无需修改配置文件**：
+> 进入「系统设置 → 安全设置 → 客户端 IP 识别」即可开启/关闭，设置保存在数据库中。
+> 只有在需要强制指定（例如不可变部署）时才在此填写或使用环境变量 `TRUST_PROXY`，
+> 优先级为：环境变量 > 配置文件 > 页面设置。
+>
+> - 关闭时（默认）后端只使用 TCP 连接对端地址，
+>   伪造 `CF-Connecting-IP` / `X-Real-IP` / `X-Forwarded-For` 无法绕过
+>   IP 黑名单、登录失败锁定与评论频率限制。
+> - **部署在 Nginx / Cloudflare 之后时必须开启**，否则所有请求会被识别为代理 IP。
+>   开启后 `X-Forwarded-For` 取**最右一跳**，客户端伪造的前置条目不会生效。
 
 启动成功后，访问 `http://localhost:3000`
 
@@ -193,6 +205,9 @@ docker run -d \
 ## Ngnix 配置
 
 如果使用 Ngnix 和 Cloudflare 做反向代理，需要按照下面的配置 ngnix，确保可以获取到正确的 IP 地址
+
+> 配置了下面的代理头之后，请同时在后台开启「安全设置 → 客户端 IP 识别 → 信任反向代理下发的 IP 头」
+> （或在 `./config/config.yaml` 中写 `TRUST_PROXY: true` 强制指定），否则后端只会使用代理自身的 IP。
 
 ```nginx
 server {

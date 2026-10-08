@@ -44,6 +44,39 @@
         <p class="text-xs text-gray-400 mt-1">输入域名后按回车或点击"添加"，点击标签上的 × 可删除</p>
       </section>
 
+      <!-- 客户端 IP 识别 -->
+      <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <h2 class="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+          <i class="fa-solid fa-network-wired text-sky-500"></i> 客户端 IP 识别
+        </h2>
+        <p class="text-sm text-gray-500 mb-4">
+          默认只使用 TCP 连接的对端地址识别访客 IP，因此伪造
+          <code class="bg-gray-100 px-1.5 rounded text-gray-600 text-xs">CF-Connecting-IP</code> /
+          <code class="bg-gray-100 px-1.5 rounded text-gray-600 text-xs">X-Real-IP</code> /
+          <code class="bg-gray-100 px-1.5 rounded text-gray-600 text-xs">X-Forwarded-For</code>
+          无法绕过 IP 黑名单、登录失败锁定与评论频率限制。
+          <strong>本站部署在 Nginx / Cloudflare 等反向代理之后时请开启本开关</strong>，
+          否则所有访客都会被识别成代理 IP，导致频率限制误伤全站。
+        </p>
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-sm font-medium text-gray-700">信任反向代理下发的 IP 头</p>
+            <p class="text-xs text-gray-400 mt-1">开启后 X-Forwarded-For 取最右一跳，客户端伪造的前置条目不会生效</p>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" v-model="trustProxy" class="sr-only peer">
+            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-sky-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-sky-600"></div>
+            <span class="ms-3 text-sm font-medium text-gray-700">
+              {{ trustProxy ? '已开启' : '已关闭' }}
+            </span>
+          </label>
+        </div>
+        <p v-if="trustProxyOverrideHint"
+          class="mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+          <i class="fa-solid fa-triangle-exclamation mr-1"></i>{{ trustProxyOverrideHint }}
+        </p>
+      </section>
+
       <!-- 管理员评论密钥 -->
       <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
         <h2 class="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
@@ -187,7 +220,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount, computed } from 'vue'
 import { useRouter, onBeforeRouteLeave } from 'vue-router'
 import request from '../utils/request'
 import toast from '../utils/toast'
@@ -207,6 +240,22 @@ const adminCommentKey = ref('')
 const adminCommentKeyEnabled = ref(false)
 const commentVerifyEnabled = ref(false)
 const commentVerifyDifficulty = ref('18')
+// 客户端 IP 识别：是否信任反向代理下发的 IP 头
+const trustProxy = ref(false)
+const trustProxyOverride = ref('')
+
+const trustProxyOverrideHint = computed(() => {
+  switch (trustProxyOverride.value) {
+    case 'env':
+      return '该开关已被环境变量 TRUST_PROXY 强制指定，页面上的修改不会生效。'
+    case 'config':
+      return '该开关已被 config.yaml 中的 TRUST_PROXY 强制指定，页面上的修改不会生效。'
+    case 'worker':
+      return 'Cloudflare Worker 部署始终使用 Cloudflare 提供的 cf-connecting-ip，此开关在该形态下无需设置。'
+    default:
+      return ''
+  }
+})
 
 const originList = ref([])
 const newOrigin = ref('')
@@ -258,9 +307,10 @@ const takeSnapshot = () => JSON.stringify({
   keyEnabled: adminCommentKeyEnabled.value,
   verifyEnabled: commentVerifyEnabled.value,
   verifyDifficulty: commentVerifyDifficulty.value,
+  trustProxy: trustProxy.value,
 })
 
-watch([ipBlacklist, emailBlacklist, originList, adminCommentKey, adminCommentKeyEnabled, commentVerifyEnabled, commentVerifyDifficulty], () => {
+watch([ipBlacklist, emailBlacklist, originList, adminCommentKey, adminCommentKeyEnabled, commentVerifyEnabled, commentVerifyDifficulty, trustProxy], () => {
   isDirty.value = takeSnapshot() !== initialSnapshot
 }, { deep: true })
 
@@ -289,6 +339,8 @@ const loadSettings = async () => {
       adminCommentKeyEnabled.value = res.data.admin_comment_key_enabled === 'true'
       commentVerifyEnabled.value = res.data.comment_verify_enabled === 'true'
       commentVerifyDifficulty.value = res.data.comment_verify_difficulty || '18'
+      trustProxy.value = res.data.trust_proxy === 'true'
+      trustProxyOverride.value = res.data.trust_proxy_override || ''
       try {
         ipBlacklist.value = res.data.ip_blacklist ? JSON.parse(res.data.ip_blacklist) : []
         if (!Array.isArray(ipBlacklist.value)) ipBlacklist.value = []
@@ -327,6 +379,7 @@ const saveSettings = async () => {
       admin_comment_key_enabled: adminCommentKeyEnabled.value ? 'true' : 'false',
       comment_verify_enabled: commentVerifyEnabled.value ? 'true' : 'false',
       comment_verify_difficulty: commentVerifyDifficulty.value,
+      trust_proxy: trustProxy.value ? 'true' : 'false',
     }
     if (adminCommentKeyEnabled.value && adminCommentKey.value) {
       payload.admin_comment_key = adminCommentKey.value
@@ -343,6 +396,8 @@ const saveSettings = async () => {
     }
   } catch (e) {
     console.error('Failed to save settings:', e)
+    // 后端会校验 IP 黑名单格式，失败原因（如非法 IP/CIDR）需要展示给用户
+    toast.error(e?.message || '安全设置保存失败')
   } finally {
     loading.value = false
   }

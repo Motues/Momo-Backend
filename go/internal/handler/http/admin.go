@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 )
@@ -103,13 +104,14 @@ func (h *CommentHandler) GetSettings(c *gin.Context) {
 		"verify_base_url":           true,
 		"comment_verify_enabled":    true,
 		"comment_verify_difficulty": true,
+		"trust_proxy":               true,
 	}
 
 	// 按模块分组
 	settingsGroups := map[string][]string{
 		"basic":    {"site_name", "admin_email", "comment_auto_approve", "blogger_badge_enabled", "blogger_badge_text", "placeholder_name", "placeholder_email", "placeholder_content", "placeholder_url"},
 		"email":    {"smtp_host", "smtp_port", "email_user", "email_password", "email_secure", "email_enabled", "email_verify_enabled", "verify_base_url", "reply_template", "notification_template"},
-		"security": {"allow_origin", "admin_comment_key", "admin_comment_key_enabled", "ip_blacklist", "email_blacklist", "comment_verify_enabled", "comment_verify_difficulty"},
+		"security": {"allow_origin", "admin_comment_key", "admin_comment_key_enabled", "ip_blacklist", "email_blacklist", "comment_verify_enabled", "comment_verify_difficulty", "trust_proxy"},
 		"account":  {"admin_name"},
 	}
 
@@ -142,6 +144,15 @@ func (h *CommentHandler) GetSettings(c *gin.Context) {
 	}
 	if _, ok := filtered["email_enabled"]; !ok {
 		filtered["email_enabled"] = "true"
+	}
+	// 告知前端该开关是否被环境变量/配置文件强制指定（页面设置将不生效）
+	for _, key := range keys {
+		if key == "trust_proxy" {
+			if source := utils.TrustProxyOverrideSource(); source != "" {
+				filtered["trust_proxy_override"] = source
+			}
+			break
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -189,6 +200,7 @@ func (h *CommentHandler) UpdateSettings(c *gin.Context) {
 		"verify_base_url":           true,
 		"comment_verify_enabled":    true,
 		"comment_verify_difficulty": true,
+		"trust_proxy":               true,
 	}
 
 	for key := range body {
@@ -199,6 +211,15 @@ func (h *CommentHandler) UpdateSettings(c *gin.Context) {
 			})
 			return
 		}
+	}
+
+	// 黑名单格式校验：非法条目会让规则失效甚至误伤全部 IP，必须在入口拦下
+	if raw, ok := body["ip_blacklist"]; ok && !utils.ValidateIPBlacklistJSON(raw) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "ip_blacklist must be a JSON array of valid IP or CIDR strings",
+		})
+		return
 	}
 
 	smtpChanged := body["smtp_host"] != "" || body["smtp_port"] != "" || body["email_user"] != "" || body["email_password"] != ""
@@ -213,7 +234,12 @@ func (h *CommentHandler) UpdateSettings(c *gin.Context) {
 		}
 	}
 
-	log.Printf("[INFO] Settings updated by admin: %v", body)
+	// 只记录键名：settings 中含 SMTP 密码等敏感值，不能整体落盘
+	updatedKeys := make([]string, 0, len(body))
+	for key := range body {
+		updatedKeys = append(updatedKeys, key)
+	}
+	log.Printf("[INFO] Settings updated by admin: %v", updatedKeys)
 	c.JSON(http.StatusOK, gin.H{
 		"code":        200,
 		"message":     "Settings updated",
@@ -319,10 +345,25 @@ func (h *CommentHandler) ChangePassword(c *gin.Context) {
 		return
 	}
 
+	// 吊销全部已签发的会话：改密后旧 token 立即失效
+	utils.ClearAllTokens()
+
 	log.Printf("[INFO] Admin credentials changed: %s -> %s", req.OldName, req.NewName)
 	c.JSON(http.StatusOK, gin.H{
 		"code":    200,
 		"message": "Admin credentials updated successfully. Please login again.",
+	})
+}
+
+// Logout 登出：吊销当前 token
+func (h *CommentHandler) Logout(c *gin.Context) {
+	token := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+	if token != "" {
+		utils.RevokeToken(token)
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"code":    200,
+		"message": "Logged out",
 	})
 }
 
@@ -403,6 +444,15 @@ func (h *CommentHandler) UpdateCommentStatus(c *gin.Context) {
 		return
 	}
 
+	// 状态枚举白名单：拒绝任意字符串写入状态机
+	if !utils.IsValidCommentStatus(status) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "Invalid status. Allowed: pending, approved, rejected, deleted",
+		})
+		return
+	}
+
 	if err := h.Repo.UpdateStatus(c.Request.Context(), id, status); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    400,
@@ -434,26 +484,51 @@ func (h *CommentHandler) UpdateComment(c *gin.Context) {
 
 	fields := make(map[string]interface{})
 	if req.Author != nil {
-		fields["author"] = *req.Author
+		fields["author"] = utils.CheckContent(*req.Author)
 	}
 	if req.Email != nil {
-		fields["email"] = *req.Email
+		fields["email"] = strings.TrimSpace(*req.Email)
 	}
 	if req.ContentText != nil {
-		fields["content_text"] = *req.ContentText
+		// 后台写路径必须与前台一致地净化，否则可直接写入 javascript: 链接
+		text := utils.CheckContent(*req.ContentText)
+		fields["content_text"] = text
 		// 只改了 content_text 但没传 content_html 时，自动渲染 markdown
 		if req.ContentHtml == nil {
-			fields["content_html"] = utils.ParseMarkdown(*req.ContentText)
+			fields["content_html"] = utils.SanitizeHtml(utils.ParseMarkdown(text))
 		}
 	}
 	if req.ContentHtml != nil {
-		fields["content_html"] = *req.ContentHtml
+		fields["content_html"] = utils.SanitizeHtml(*req.ContentHtml)
 	}
 	if req.URL != nil {
-		fields["url"] = *req.URL
+		// url 走协议白名单（只允许 http/https/mailto 与相对路径）
+		fields["url"] = utils.SanitizeUrl(*req.URL)
 	}
 	if len(fields) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "No fields to update"})
+		return
+	}
+
+	// 字段长度上限校验
+	if v, ok := fields["author"].(string); ok && utf8.RuneCountInString(v) > MaxAuthorLen {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "Field length limit exceeded"})
+		return
+	}
+	if v, ok := fields["email"].(string); ok && len(v) > MaxEmailLen {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "Field length limit exceeded"})
+		return
+	}
+	if v, ok := fields["content_text"].(string); ok && utf8.RuneCountInString(v) > MaxContentLen {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "Field length limit exceeded"})
+		return
+	}
+	if v, ok := fields["content_html"].(string); ok && len(v) > MaxContentHTMLLen {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "Field length limit exceeded"})
+		return
+	}
+	if v, ok := fields["url"].(string); ok && len(v) > MaxURLLen {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "Field length limit exceeded"})
 		return
 	}
 
@@ -504,8 +579,14 @@ func (h *CommentHandler) GetUserList(c *gin.Context) {
 
 	search := strings.TrimSpace(c.DefaultQuery("search", ""))
 
+	// 邮箱验证筛选：all（默认）/ true（已验证）/ false（未验证）
+	verified := strings.ToLower(strings.TrimSpace(c.DefaultQuery("verified", "all")))
+	if verified != "true" && verified != "false" {
+		verified = "all"
+	}
+
 	offset := (page - 1) * limit
-	users, total, err := h.Repo.GetUserList(c.Request.Context(), offset, limit, search)
+	users, total, err := h.Repo.GetUserList(c.Request.Context(), offset, limit, search, verified)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "Failed to fetch users"})
 		return
@@ -693,6 +774,11 @@ func (h *CommentHandler) GetUserComments(c *gin.Context) {
 func (h *CommentHandler) ExportSettings(c *gin.Context) {
 	all := utils.GetAllSettings()
 	filtered := make(map[string]string)
+	sensitiveExportKeys := map[string]bool{
+		"email_password":    true,
+		"admin_comment_key": true,
+	}
+	sensitiveOmitted := []string{}
 	allowList := map[string]bool{
 		"site_name": true, "admin_email": true,
 		"smtp_host": true, "smtp_port": true, "email_user": true, "email_password": true, "email_secure": true,
@@ -713,10 +799,19 @@ func (h *CommentHandler) ExportSettings(c *gin.Context) {
 	"admin_comment_key_enabled": true,
 	"comment_verify_enabled":    true,
 	"comment_verify_difficulty": true,
+	"trust_proxy":               true,
 	}
 	for key := range allowList {
 		if val, ok := all[key]; ok {
-			filtered[key] = val
+			// 敏感字段导出时置空：避免 SMTP 密码 / 博主密钥以明文落盘
+			if sensitiveExportKeys[key] {
+				filtered[key] = ""
+				if val != "" {
+					sensitiveOmitted = append(sensitiveOmitted, key)
+				}
+			} else {
+				filtered[key] = val
+			}
 		}
 	}
 	if _, ok := filtered["email_enabled"]; !ok {
@@ -725,12 +820,13 @@ func (h *CommentHandler) ExportSettings(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"code":    200,
-		"message": "Settings exported",
+		"message": "Settings exported. Sensitive fields (email_password, admin_comment_key) are blanked; please fill them in manually after importing.",
 		"data": gin.H{
-			"exportedAt": time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
-			"type":       "settings",
-			"version":    h.Version,
-			"settings":   filtered,
+			"exportedAt":       time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+			"type":             "settings",
+			"version":          h.Version,
+			"sensitiveOmitted": sensitiveOmitted,
+			"settings":         filtered,
 		},
 	})
 }
@@ -812,16 +908,36 @@ func (h *CommentHandler) ImportComments(c *gin.Context) {
 				pubDate = t.UnixMilli()
 			}
 		}
+
+		// 导入路径同样必须净化：数据可能来自不可信文件
+		safeAuthor := utils.CheckContent(cData.Author)
+		safeText := utils.CheckContent(cData.ContentText)
+		if utf8.RuneCountInString(safeText) > MaxContentLen ||
+			utf8.RuneCountInString(safeAuthor) > MaxAuthorLen ||
+			len(cData.Email) > MaxEmailLen ||
+			len(cData.PostSlug) > MaxPostSlugLen {
+			errors = append(errors, "第 "+strconv.Itoa(i+1)+" 条字段超出长度限制")
+			continue
+		}
+
+		var safeURL *string
+		if cData.URL != nil {
+			if u := utils.SanitizeUrl(*cData.URL); u != "" {
+				safeURL = &u
+			}
+		}
+
 		comment := &model.Comment{
 			PostSlug:    cData.PostSlug,
-			Author:      cData.Author,
+			Author:      safeAuthor,
 			Email:       cData.Email,
-			URL:         cData.URL,
+			URL:         safeURL,
 			IPAddress:   cData.IPAddress,
 			OS:          cData.OS,
 			Browser:     cData.Browser,
-			ContentText: cData.ContentText,
-			ContentHTML: cData.ContentHtml,
+			ContentText: safeText,
+			// 不信任导入文件中的 contentHtml：统一由正文重新渲染并净化
+			ContentHTML: utils.SanitizeHtml(utils.ParseMarkdown(safeText)),
 			ParentID:    cData.ParentID,
 			Status:      "approved",
 			PubDate:     pubDate,
@@ -876,16 +992,33 @@ func (h *CommentHandler) ImportSettings(c *gin.Context) {
 		"email_verify_enabled":  true,
 		"verify_base_url":       true,
 		"comment_auto_approve":  true,
-		"admin_comment_key_enabled": true,
-		"comment_verify_enabled":    true,
-		"comment_verify_difficulty": true,
-		"allow_origin":      true, "email_enabled": true,
+		"admin_comment_key_enabled":  true,
+		"comment_verify_enabled":     true,
+		"comment_verify_difficulty":  true,
+		"trust_proxy":                true,
+		"allow_origin":               true, "email_enabled": true,
 		"reply_template": true, "notification_template": true,
+	}
+
+	// 黑名单格式校验：非法条目会让规则失效甚至误伤全部 IP，必须在入口拦下
+	if raw, ok := body["ip_blacklist"]; ok && !utils.ValidateIPBlacklistJSON(raw) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "ip_blacklist must be a JSON array of valid IP or CIDR strings",
+		})
+		return
 	}
 
 	updated := 0
 	for key, value := range body {
-		if allowList[key] && value != "" {
+		if !allowList[key] {
+			continue
+		}
+		// 导出的敏感字段是空串：留空表示「未修改」，不得覆盖已有值
+		if (key == "email_password" || key == "admin_comment_key") && value == "" {
+			continue
+		}
+		if value != "" {
 			if err := utils.SetSetting(key, value); err == nil {
 				updated++
 			}

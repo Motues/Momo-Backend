@@ -1,7 +1,8 @@
 import type { Context } from "hono";
 import { getAllSettings, setSetting } from "../../utils/settings";
 import { sendTestEmail } from "../../utils/email";
-import { checkKey, extractToken } from "../../utils/security";
+import { checkKey, extractToken, isValidIpBlacklistJson } from "../../utils/security";
+import { applyTrustProxySetting, hasTrustProxyEnvOverride } from "../../utils/ip";
 import LogService from "../../utils/log";
 
 // 敏感字段：读取时始终置空。comment_verify_secret 由系统自动生成，不对外开放读写
@@ -28,13 +29,14 @@ const ALLOWED_SETTINGS = [
   "verify_base_url",
   "comment_verify_enabled",
   "comment_verify_difficulty",
+  "trust_proxy",
 ];
 
 // 按模块分组的设置键
 const SETTINGS_GROUPS: Record<string, string[]> = {
   basic: ["site_name", "admin_email", "comment_auto_approve", "blogger_badge_enabled", "blogger_badge_text", "placeholder_name", "placeholder_email", "placeholder_content", "placeholder_url"],
   email: ["smtp_host", "smtp_port", "email_user", "email_password", "email_secure", "email_enabled", "email_verify_enabled", "verify_base_url", "reply_template", "notification_template"],
-  security: ["allow_origin", "admin_comment_key", "admin_comment_key_enabled", "ip_blacklist", "email_blacklist", "comment_verify_enabled", "comment_verify_difficulty"],
+  security: ["allow_origin", "admin_comment_key", "admin_comment_key_enabled", "ip_blacklist", "email_blacklist", "comment_verify_enabled", "comment_verify_difficulty", "trust_proxy"],
   account: ["admin_name"],
 };
 
@@ -73,6 +75,10 @@ export async function getSettings(c: Context): Promise<Response> {
   if (!("email_enabled" in filtered)) {
     filtered.email_enabled = "true";
   }
+  // 告知前端该开关是否被环境变量强制指定（页面设置将不生效）
+  if (keys.includes("trust_proxy") && hasTrustProxyEnvOverride()) {
+    filtered.trust_proxy_override = "env";
+  }
 
   return c.json({ code: 200, message: "Settings fetched", data: filtered });
 }
@@ -87,9 +93,17 @@ export async function updateSettings(c: Context): Promise<Response> {
   }
 
   for (const key of Object.keys(body)) {
-    if (!ALLOWED_SETTINGS.includes(key) && key !== "admin_password") {
+    if (!ALLOWED_SETTINGS.includes(key)) {
       return c.json({ code: 400, message: `Setting "${key}" is not allowed` }, 400);
     }
+  }
+
+  // 黑名单格式校验：非法条目会让规则失效甚至误伤全部 IP，必须在入口拦下
+  if ("ip_blacklist" in body && !isValidIpBlacklistJson(String(body.ip_blacklist ?? ""))) {
+    return c.json(
+      { code: 400, message: "ip_blacklist must be a JSON array of valid IP or CIDR strings" },
+      400
+    );
   }
 
   const smtpChanged =
@@ -102,6 +116,11 @@ export async function updateSettings(c: Context): Promise<Response> {
       if (key === "email_password" && String(value) === "") continue;
       await setSetting(key, String(value));
     }
+  }
+
+  // 客户端 IP 识别策略需要立即生效，不能等缓存过期
+  if (body.trust_proxy !== undefined) {
+    applyTrustProxySetting(String(body.trust_proxy));
   }
 
   LogService.info("Settings updated", Object.keys(body));

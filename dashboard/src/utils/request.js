@@ -1,6 +1,7 @@
 import axios from 'axios'
 import toast from './toast'
 import router from '../router'
+import { isAllowedApiUrl } from './apiUrl'
 
 const service = axios.create({
   timeout: 10000 // 建议超时时间稍微设长一点，以应对不同网络环境
@@ -12,7 +13,14 @@ service.interceptors.request.use(
     // 动态获取 LocalStorage 中的 API 地址
     const apiUrl = localStorage.getItem('apiUrl')
     if (apiUrl) {
-      config.baseURL = apiUrl
+      if (isAllowedApiUrl(apiUrl)) {
+        config.baseURL = apiUrl
+      } else {
+        // 已保存的地址不合法（例如被恶意脚本改写）：丢弃并清除，
+        // 避免把管理员 token 发送到攻击者控制的地址
+        console.warn('Ignoring unsafe apiUrl from localStorage')
+        localStorage.removeItem('apiUrl')
+      }
     }
 
     // 处理 Token

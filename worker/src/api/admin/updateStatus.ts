@@ -1,5 +1,6 @@
 import { Context } from 'hono';
 import { Bindings } from '../../bindings';
+import { isValidCommentStatus } from '../../utils/security';
 
 export const updateStatus = async (c: Context<{ Bindings: Bindings }>) => {
   const id = c.req.query('id');
@@ -9,6 +10,14 @@ export const updateStatus = async (c: Context<{ Bindings: Bindings }>) => {
     return c.json({ 
       code: 400,
       message: "Invalid request parameters" 
+    }, 400);
+  }
+
+  // 状态枚举白名单：拒绝任意字符串写入状态机
+  if (!isValidCommentStatus(status)) {
+    return c.json({
+      code: 400,
+      message: "Invalid status. Allowed: pending, approved, rejected, deleted"
     }, 400);
   }
 

@@ -6,6 +6,7 @@
   import i18nit from '../i18n/translation';
   import { parseMarkdown, validateMarkdown } from '../utils/markdown';
   import { formatFullDate } from '../utils/time';
+  import { notify } from '../utils/notify';
   import CommentItem from './CommentItem.svelte';
 
   export let c: any;
@@ -25,6 +26,8 @@
   export let isFlattened: boolean = false; // 是否处于移动端被"拍平"的状态
   export let parentAuthorName: string = ''; // 记录它在回复谁（移动端拍平后使用）
   export let parentCommentId: string | number | null = null; // 用于锚点跳转的父评论 ID
+  // 正在提交回复的评论 ID（由父组件统一维护）：相等即表示"本条评论的回复正在提交中"
+  export let replySubmittingId: number | null = null;
 
   let isMobile = false;
 
@@ -53,11 +56,21 @@
   let replyUrl = '';
   let replyContent = '';
   let replyAdminKey = '';
-
-  let replySubmitting = false;
   let replyShowPreview = false;
   let replyPreviewHtml = '';
   let replyMarkdownWarnings: string[] = [];
+
+  // 提交中状态由父组件维护，避免子组件状态残留导致回复按钮被永久禁用
+  $: isReplySubmitting = replySubmittingId === c.id;
+
+  // 回复表单被父组件关闭（提交成功或切换到其他评论）后清空内容
+  $: if (replyingToId !== c.id && (replyContent || replyAdminKey || replyShowPreview)) {
+    replyContent = '';
+    replyAdminKey = '';
+    replyShowPreview = false;
+    replyPreviewHtml = '';
+    replyMarkdownWarnings = [];
+  }
 
   $: isAdminEmail = false;
   $: if (email && adminEmailHash) {
@@ -86,6 +99,26 @@
   const dispatch = createEventDispatcher();
 
   const avatarUrl = c.avatar;
+
+  /**
+   * 渲染前校验作者链接的协议：仅放行 http/https/mailto（含相对路径）。
+   * 历史数据中的 javascript: / data: 链接若直接渲染为 href，
+   * 点击后会在宿主页面执行脚本。
+   */
+  function safeUrl(value: any): string {
+    if (!value || typeof value !== 'string') return '';
+    try {
+      const url = new URL(value, window.location.origin);
+      if (url.protocol === 'http:' || url.protocol === 'https:' || url.protocol === 'mailto:') {
+        return value;
+      }
+      return '';
+    } catch {
+      return '';
+    }
+  }
+
+  $: commentUrl = safeUrl(c.url);
 
   function getWordCount(text: string): { chars: number; words: number } {
     const chars = text.length;
@@ -143,8 +176,8 @@
 
 
 <div id="comment-{c.id}" data-aos="fade-up" class="flex gap-2 md:gap-3 w-full max-w-full">
-  {#if c.url}
-  <a href={c.url} target="_blank" rel="noopener noreferrer" class="w-10 h-10 shrink-0">
+  {#if commentUrl}
+  <a href={commentUrl} target="_blank" rel="noopener noreferrer" class="w-10 h-10 shrink-0">
     <img src={avatarUrl} alt="avatar" class="w-10 h-10 rounded-full object-cover"/>
   </a>
   {:else}
@@ -153,8 +186,8 @@
 
   <div class="flex-1 min-w-0">
     <div class="flex items-center flex-wrap gap-x-2 gap-y-1">
-      {#if c.url}
-        <a href={c.url} target="_blank" rel="noopener noreferrer" class="font-semibold text-[var(--text-color)] hover:text-[var(--link-color)] transition-colors">
+      {#if commentUrl}
+        <a href={commentUrl} target="_blank" rel="noopener noreferrer" class="font-semibold text-[var(--text-color)] hover:text-[var(--link-color)] transition-colors">
           {c.author}
         </a>
       {:else}
@@ -227,20 +260,21 @@
     {#if replyingToId === c.id}
       <div transition:slide={{ duration: 300 }} class="mt-4 pl-4 border-l-2 border-gray-200">
         <form on:submit|preventDefault={() => {
-          if (replySubmitting) return;
+          if (isReplySubmitting) return;
 
           if (!replyAuthor || !replyEmail || !replyContent) {
-            alert(t('comments.fillRequired') || '请填写昵称、邮箱和评论内容');
+            notify(t('comments.fillRequired') || '请填写昵称、邮箱和评论内容');
             return;
           }
 
           // 检查字数限制
           if (!isContentWithinLimit(replyContent)) {
-            alert(t('comments.contentTooLong') || '评论内容超出限制：不超过2000汉字或1000单词');
+            notify(t('comments.contentTooLong') || '评论内容超出限制：不超过2000汉字或1000单词');
             return;
           }
 
-          replySubmitting = true;
+          // 提交中状态由父组件设置（replySubmittingId），提交完成后复位；
+          // 提交失败时保留回复内容，成功时父组件会关闭表单并触发内容清空
           dispatch('submit', {
             parentId: c.id,
             author: replyAuthor,
@@ -250,8 +284,6 @@
             post_url: window.location.href,
             admin_key: replyAdminKey || undefined,
           });
-          replyContent = '';
-          replyAdminKey = '';
         }} class="space-y-3">
           <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
             <div>
@@ -288,7 +320,7 @@
                 {#if replyContent.trim() === ''}
                   <p>{t('comments.preview') || '预览'}</p>
                 {:else}
-                  <div>{@html replyPreviewHtml}</div>
+                  <div>{@html DOMPurify.sanitize(replyPreviewHtml)}</div>
                 {/if}
               </div>
               {#if replyMarkdownWarnings.length > 0}
@@ -318,12 +350,11 @@
             </button>
             <button type="button" on:click={() => {
               dispatch('cancel');
-              replySubmitting = false;
             }} class="rounded px-3 py-1 text-sm text-[var(--text-color)] border border-[var(--button-border-color)] hover:bg-[var(--button-hover-bg-color)]">
               {t('comments.cancel')}
             </button>
-            <button type="submit" disabled={replySubmitting || !isContentWithinLimit(replyContent)} class="rounded px-3 py-1 text-sm font-medium text-[var(--text-color)] border border-[var(--button-border-color)] hover:bg-[var(--button-hover-bg-color)] disabled:opacity-50">
-              {replySubmitting ? t('comments.sending') : t('comments.reply')}
+            <button type="submit" disabled={isReplySubmitting || !isContentWithinLimit(replyContent)} class="rounded px-3 py-1 text-sm font-medium text-[var(--text-color)] border border-[var(--button-border-color)] hover:bg-[var(--button-hover-bg-color)] disabled:opacity-50">
+              {isReplySubmitting ? t('comments.sending') : t('comments.reply')}
             </button>
           </div>
         </form>
@@ -352,6 +383,7 @@
               on:submit={(e) => dispatch('submit', e.detail)}
               on:cancel={() => dispatch('cancel')}
               replyingToId={replyingToId}
+              replySubmittingId={replySubmittingId}
               on:userInfoChange={(e) => dispatch('userInfoChange', e.detail)}
             />
           </div>
@@ -388,6 +420,7 @@
               on:submit={(e) => dispatch('submit', e.detail)}
               on:cancel={() => dispatch('cancel')}
               replyingToId={replyingToId}
+              replySubmittingId={replySubmittingId}
               on:userInfoChange={(e) => dispatch('userInfoChange', e.detail)}
             />
           </div>

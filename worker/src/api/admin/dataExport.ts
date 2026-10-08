@@ -3,6 +3,9 @@ import { Bindings } from '../../bindings';
 import { getAllSettings } from '../../utils/settings';
 import pkg from '../../../package.json';
 
+// 导出时置空的敏感字段：避免 SMTP 密码 / 博主密钥以明文落盘
+const SENSITIVE_EXPORT_KEYS = new Set(["email_password", "admin_comment_key"]);
+
 export const exportSettings = async (c: Context<{ Bindings: Bindings }>) => {
   const all = await getAllSettings(c.env);
 
@@ -26,12 +29,19 @@ export const exportSettings = async (c: Context<{ Bindings: Bindings }>) => {
     "verify_base_url",
     "comment_verify_enabled",
     "comment_verify_difficulty",
+    "trust_proxy",
   ]);
 
   const filtered: Record<string, string> = {};
+  const sensitiveOmitted: string[] = [];
   for (const key of allowList) {
     if (key in all) {
-      filtered[key] = all[key];
+      if (SENSITIVE_EXPORT_KEYS.has(key)) {
+        filtered[key] = "";
+        if (all[key]) sensitiveOmitted.push(key);
+      } else {
+        filtered[key] = all[key];
+      }
     }
   }
   if (!("email_enabled" in filtered)) {
@@ -40,11 +50,12 @@ export const exportSettings = async (c: Context<{ Bindings: Bindings }>) => {
 
   return c.json({
     code: 200,
-    message: "Settings exported",
+    message: "Settings exported. Sensitive fields (email_password, admin_comment_key) are blanked; please fill them in manually after importing.",
     data: {
       exportedAt: new Date().toISOString(),
       type: "settings",
       version: pkg.version,
+      sensitiveOmitted,
       settings: filtered,
     },
   });

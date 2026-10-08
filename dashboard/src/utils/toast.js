@@ -13,7 +13,15 @@ function show(message, type = 'info', duration = 3000) {
 
   const el = document.createElement('div');
   el.id = id;
-  el.innerHTML = `<i class="fa-solid ${s.iconClass}" style="flex-shrink:0"></i><span>${message}</span>`;
+  // 使用 textContent 而非 innerHTML：message 可能来自服务端响应，
+  // 直接 innerHTML 会形成 DOM XSS 注入点。
+  const icon = document.createElement('i');
+  icon.className = `fa-solid ${s.iconClass}`;
+  icon.style.flexShrink = '0';
+  const text = document.createElement('span');
+  text.textContent = message === undefined || message === null ? '' : String(message);
+  el.appendChild(icon);
+  el.appendChild(text);
   Object.assign(el.style, {
     position: 'fixed',
     top: '16px',

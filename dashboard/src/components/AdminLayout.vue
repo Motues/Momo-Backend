@@ -74,7 +74,7 @@
             <i class="fa-solid fa-arrows-rotate text-base text-gray-600"></i>
           </button>
 
-          <button @click="$emit('logout')" class="px-3 py-1.5 md:px-4 md:py-2 rounded-lg transition-colors text-sm font-medium hover:bg-red-100 bg-red-50 text-red-600">
+          <button @click="handleLogout" class="px-3 py-1.5 md:px-4 md:py-2 rounded-lg transition-colors text-sm font-medium hover:bg-red-100 bg-red-50 text-red-600">
             <span class="hidden sm:inline">退出登录</span>
             <span class="sm:hidden"><i class="fa-solid fa-right-from-bracket"></i></span>
           </button>
@@ -91,11 +91,25 @@
 <script setup>
 import { ref, computed } from 'vue';
 import { useRoute } from 'vue-router';
+import request from '../utils/request';
 
 const route = useRoute();
 
 defineProps(['baseUrl']);
-defineEmits(['logout', 'refresh']);
+const emit = defineEmits(['logout', 'refresh']);
+
+/**
+ * 退出登录：先请求后端吊销 token（失败也不阻塞退出流程），
+ * 再交给各页面既有的注销逻辑清理本地状态。
+ */
+const handleLogout = async () => {
+  try {
+    await request.post('/admin/logout');
+  } catch {
+    // 忽略：token 可能已过期或后端不支持该接口
+  }
+  emit('logout');
+};
 
 const isMobileMenuOpen = ref(false);
 

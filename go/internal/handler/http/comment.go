@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/mileusna/useragent"
@@ -25,6 +26,16 @@ type CommentHandler struct {
 	Version string
 }
 
+// 字段长度上限（与前端组件约束对齐）
+const (
+	MaxContentLen  = 2000
+	MaxContentHTMLLen = 50000
+	MaxAuthorLen   = 100
+	MaxEmailLen    = 254
+	MaxURLLen      = 500
+	MaxPostSlugLen = 200
+)
+
 // PostComment 提交评论 (POST /api/comments)
 func (h *CommentHandler) PostComment(c *gin.Context) {
 	var req model.CommentRequest
@@ -32,6 +43,20 @@ func (h *CommentHandler) PostComment(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    400,
 			"message": "Invalid request body",
+		})
+		return
+	}
+
+	// 长度上限校验：避免 MB 级内容导致数据库膨胀与 Markdown 渲染 CPU 放大
+	if utf8.RuneCountInString(req.Content) > MaxContentLen ||
+		utf8.RuneCountInString(req.Author) > MaxAuthorLen ||
+		len(req.Email) > MaxEmailLen ||
+		len(req.PostSlug) > MaxPostSlugLen ||
+		len(req.URL) > MaxURLLen {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code": 400,
+			"message": fmt.Sprintf("Field too long (content ≤ %d, author ≤ %d, email ≤ %d, url ≤ %d, post_slug ≤ %d)",
+				MaxContentLen, MaxAuthorLen, MaxEmailLen, MaxURLLen, MaxPostSlugLen),
 		})
 		return
 	}
@@ -156,9 +181,10 @@ func (h *CommentHandler) PostComment(c *gin.Context) {
 
 	// 5. XSS 检查（纯文本字段使用 CheckContent，content 走 Markdown + bluemonday 完整净化）
 	sanitizedAuthor := utils.CheckContent(req.Author)
-	sanitizedURL := utils.CheckContent(req.URL)
+	// url 走协议白名单（只允许 http/https/mailto 与相对路径）
+	sanitizedURL := utils.SanitizeUrl(req.URL)
 	sanitizedPostTitle := utils.CheckContent(req.PostTitle)
-	sanitizedPostURL := utils.CheckContent(req.PostURL)
+	sanitizedPostURL := utils.SanitizeUrl(req.PostURL)
 	sanitizedContent := utils.CheckContent(req.Content)
 
 	// 6. 构造数据库模型
@@ -280,10 +306,6 @@ func (h *CommentHandler) GetComments(c *gin.Context) {
 
 	// 读取博主标识设置
 	adminEmail := utils.GetSetting("admin_email")
-	adminEmailHash := ""
-	if adminEmail != "" {
-		adminEmailHash = fmt.Sprintf("%x", sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(adminEmail)))))
-	}
 	badgeEnabled := utils.GetSetting("blogger_badge_enabled")
 	if badgeEnabled == "" {
 		badgeEnabled = "false"
@@ -298,6 +320,13 @@ func (h *CommentHandler) GetComments(c *gin.Context) {
 	adminCommentKeyConfigured := "false"
 	if adminCommentKey != "" && adminCommentKeyEnabled == "true" {
 		adminCommentKeyConfigured = "true"
+	}
+
+	// 邮箱哈希仅供前端判断「是否需要显示管理员密钥输入框」。
+	// 只有在博主密钥功能开启时才下发，避免被用于离线枚举管理员邮箱。
+	adminEmailHash := ""
+	if adminEmail != "" && adminCommentKeyEnabled == "true" {
+		adminEmailHash = fmt.Sprintf("%x", sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(adminEmail)))))
 	}
 
 	// 无感验证公开配置（开关 + 按文章派生的蜜罐字段名）

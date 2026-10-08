@@ -6,8 +6,14 @@ import LogService from "../../utils/log";
 import { isIPBlocked, recordFailedAttempt, recordSuccessfulLogin } from "../../utils/ipSecurity";
 
 export default async (c: Context): Promise<Response> => {
-  const data = await c.req.json();
+  const data = await c.req.json().catch(() => null);
   const ip = getClientIP(c);
+
+  // 类型校验：非字符串（如 {"password":{}}）直接 400，
+  // 否则 bcrypt 会抛错并被全局 handler 吞成 500，而该次失败不会计入锁定计数
+  if (typeof data?.name !== "string" || typeof data?.password !== "string") {
+    return c.json({ code: 400, message: "name and password must be strings" }, 400);
+  }
 
   // 检查IP是否被阻止
   if (isIPBlocked(ip)) {
@@ -40,8 +46,8 @@ export default async (c: Context): Promise<Response> => {
   recordSuccessfulLogin(ip);
   LogService.info("Login successful", { ip });
 
-  // 生成临时密钥
-  const tempKey = await generateTempKey(data.name);
+  // 生成临时密钥（键为随机 ID，不再使用用户名）
+  const tempKey = await generateTempKey();
   const needChangePassword = await isDefaultAdmin();
 
   return c.json({

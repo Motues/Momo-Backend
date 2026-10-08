@@ -13,6 +13,7 @@ import {
   getSettings,
   updateSettings,
   changePassword,
+  logout,
   testEmail,
   importComments,
   importSettings,
@@ -38,6 +39,7 @@ router.get("/admin/settings", getSettings);
 router.put("/admin/settings", updateSettings);
 router.post("/admin/settings/test-email", testEmail);
 router.put("/admin/password", changePassword);
+router.post("/admin/logout", logout);
 
 // Admin comments
 router.get("/admin/comments/list", getAllComments);

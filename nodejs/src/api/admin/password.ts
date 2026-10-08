@@ -1,6 +1,6 @@
 import type { Context } from "hono";
 import { checkAdminCredentials, changeAdminPassword } from "../../utils/settings";
-import { checkKey, extractToken } from "../../utils/security";
+import { checkKey, extractToken, clearAllTempKeys } from "../../utils/security";
 import LogService from "../../utils/log";
 
 export default async (c: Context): Promise<Response> => {
@@ -10,10 +10,14 @@ export default async (c: Context): Promise<Response> => {
     return c.json({ code: 401, message: "Invalid token" }, 401);
   }
 
-  const body = await c.req.json();
-  const { old_name, old_password, new_name, new_password } = body as Record<string, string>;
+  const body = await c.req.json().catch(() => null);
+  const { old_name, old_password, new_name, new_password } = (body ?? {}) as Record<string, unknown>;
 
-  if (!old_name || !old_password || !new_name || !new_password) {
+  if (
+    typeof old_name !== "string" || typeof old_password !== "string" ||
+    typeof new_name !== "string" || typeof new_password !== "string" ||
+    !old_name || !old_password || !new_name || !new_password
+  ) {
     return c.json(
       { code: 400, message: "old_name, old_password, new_name, new_password are required" },
       400
@@ -32,6 +36,9 @@ export default async (c: Context): Promise<Response> => {
 
   // 更新密码
   await changeAdminPassword(new_name, new_password);
+
+  // 吊销全部已签发的会话：改密后旧 token 立即失效
+  clearAllTempKeys();
 
   LogService.info("Admin credentials changed", { oldName: old_name, newName: new_name });
 

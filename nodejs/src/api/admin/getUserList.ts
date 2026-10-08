@@ -15,7 +15,13 @@ export default async (c: Context): Promise<Response> => {
   const limit = getQueryNumber(c.req.query("limit"), 20);
   const search = getQueryString(c.req.query("search"), "");
 
-  const result = await CommentService.getUserList(page, limit, search);
+  // 邮箱验证筛选：all（默认）/ true（已验证）/ false（未验证）
+  let verified = getQueryString(c.req.query("verified"), "all").trim().toLowerCase();
+  if (verified !== "true" && verified !== "false") {
+    verified = "all";
+  }
+
+  const result = await CommentService.getUserList(page, limit, search, verified);
 
   return c.json({
     code: 200,

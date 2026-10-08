@@ -78,10 +78,11 @@
           <h4 class="text-[11px] font-bold text-slate-400 uppercase tracking-widest">作者链接</h4>
           <div class="text-xs">
             <template v-if="!editing">
-              <div v-if="comment.url" class="flex items-center text-blue-500/80 hover:text-blue-600 transition-colors">
+              <div v-if="safeCommentUrl" class="flex items-center text-blue-500/80 hover:text-blue-600 transition-colors">
                 <i class="fa-solid fa-link mr-2 scale-75"></i>
-                <a :href="comment.url" target="_blank" rel="noopener noreferrer" class="truncate underline underline-offset-2">{{ comment.url }}</a>
+                <a :href="safeCommentUrl" target="_blank" rel="noopener noreferrer" class="truncate underline underline-offset-2">{{ comment.url }}</a>
               </div>
+              <span v-else-if="comment.url" class="text-slate-400 break-all">{{ comment.url }}（链接协议不受支持，已禁止点击）</span>
               <span v-else class="text-slate-400">无</span>
             </template>
             <template v-else>
@@ -137,7 +138,7 @@
 </template>
 
 <script setup>
-import { reactive, ref, watch } from 'vue';
+import { reactive, ref, watch, computed } from 'vue';
 
 const props = defineProps({
   visible: Boolean,
@@ -220,6 +221,24 @@ const statusStyle = (status) => {
   };
   return map[status] || 'bg-gray-100 text-gray-700';
 }
+
+/**
+ * 渲染前校验作者链接的协议：仅放行 http/https/mailto（含相对路径）。
+ * 历史数据里的 javascript: 链接若被点击会在后台源执行脚本并窃取 token。
+ */
+const safeCommentUrl = computed(() => {
+  const value = props.comment?.url;
+  if (!value || typeof value !== 'string') return '';
+  try {
+    const url = new URL(value, window.location.origin);
+    if (url.protocol === 'http:' || url.protocol === 'https:' || url.protocol === 'mailto:') {
+      return value;
+    }
+    return '';
+  } catch {
+    return '';
+  }
+});
 </script>
 
 <style scoped>

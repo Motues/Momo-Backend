@@ -1,13 +1,16 @@
 import { Context } from 'hono';
 import { Bindings } from '../../bindings';
 import { setSetting } from '../../utils/settings';
-import { checkContent } from '../public/postComment';
+import { checkContent, sanitizeUrl, isValidIpBlacklistJson, MAX_CONTENT, MAX_AUTHOR, MAX_EMAIL, MAX_URL, MAX_POST_SLUG } from '../../utils/security';
 import { parseMarkdown } from '../../utils/markdown';
+
+// 导入时不允许用空值覆盖已有值的敏感字段
+const SENSITIVE_SETTINGS = new Set(["email_password", "admin_comment_key"]);
 
 export const importComments = async (c: Context<{ Bindings: Bindings }>) => {
   const body = await c.req.json<{ comments: Record<string, any>[] }>();
   if (!body?.comments || !Array.isArray(body.comments)) {
-    return c.json({ code: 400, message: "请求体须包含 comments 数组" });
+    return c.json({ code: 400, message: "请求体须包含 comments 数组" }, 400);
   }
 
   let imported = 0;
@@ -21,16 +24,30 @@ export const importComments = async (c: Context<{ Bindings: Bindings }>) => {
       if (!item.email) { errors.push(`第 ${i + 1} 条缺少 email`); continue; }
       if (!item.contentText && !item.content_text) { errors.push(`第 ${i + 1} 条缺少 contentText`); continue; }
 
-      const postSlug = item.postSlug || item.post_slug;
-      const author = checkContent(item.author);
-      const email = item.email;
-      const rawContent = item.contentText || item.content_text;
+      // 导入路径同样必须净化：数据可能来自不可信文件
+      const postSlug = checkContent(String(item.postSlug || item.post_slug));
+      const author = checkContent(String(item.author));
+      const email = String(item.email);
+      const rawContent = String(item.contentText || item.content_text);
       const contentText = checkContent(rawContent);
-      const contentHtml = parseMarkdown(rawContent);
+
+      if (
+        postSlug.length > MAX_POST_SLUG ||
+        author.length > MAX_AUTHOR ||
+        email.length > MAX_EMAIL ||
+        contentText.length > MAX_CONTENT ||
+        (item.url && String(item.url).length > MAX_URL)
+      ) {
+        errors.push(`第 ${i + 1} 条字段超出长度限制`);
+        continue;
+      }
+
+      // 不信任导入文件中的 contentHtml：统一由正文重新渲染
+      const contentHtml = parseMarkdown(contentText);
       const pubDate = item.pubDate || item.pub_date || new Date().toISOString();
       const status = item.status || 'approved';
       const parentId = item.parentId || item.parent_id || null;
-      const url = item.url || null;
+      const url = sanitizeUrl(item.url) || null;
       const ipAddress = item.ipAddress || item.ip_address || null;
       const os = item.os || null;
       const browser = item.browser || null;
@@ -80,14 +97,20 @@ export const importSettings = async (c: Context<{ Bindings: Bindings }>) => {
     "verify_base_url",
     "comment_verify_enabled",
     "comment_verify_difficulty",
+    "trust_proxy",
   ]);
+
+  if ("ip_blacklist" in body && !isValidIpBlacklistJson(String(body.ip_blacklist ?? ""))) {
+    return c.json({ code: 400, message: "ip_blacklist must be a JSON array of valid IP or CIDR strings" }, 400);
+  }
 
   const updated: string[] = [];
   for (const [key, value] of Object.entries(body)) {
-    if (allowList.has(key) && value !== undefined && value !== null) {
-      await setSetting(c.env, key, String(value));
-      updated.push(key);
-    }
+    if (!allowList.has(key) || value === undefined || value === null) continue;
+    // 导出的敏感字段是空串：留空表示「未修改」，不得覆盖已有值
+    if (SENSITIVE_SETTINGS.has(key) && String(value) === "") continue;
+    await setSetting(c.env, key, String(value));
+    updated.push(key);
   }
 
   return c.json({

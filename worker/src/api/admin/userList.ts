@@ -6,16 +6,32 @@ export const userList = async (c: Context<{ Bindings: Bindings }>) => {
   const page = parseInt(c.req.query('page') || '1');
   const limit = parseInt(c.req.query('limit') || '20');
   const search = (c.req.query('search') || '').trim();
+  // 邮箱验证筛选：all（默认）/ true（已验证）/ false（未验证）
+  let verified = (c.req.query('verified') || 'all').trim().toLowerCase();
+  if (verified !== 'true' && verified !== 'false') verified = 'all';
   const offset = (page - 1) * limit;
 
-  // 按昵称/邮箱搜索（不区分大小写）
-  const whereClause = search ? "WHERE LOWER(author) LIKE ? OR LOWER(email) LIKE ?" : "";
-  const like = `%${search.toLowerCase()}%`;
-  const searchArgs = search ? [like, like] : [];
+  // 与评论提交时的判定保持一致：EmailVerification.email 精确匹配且 verified = 1
+  const verifiedExists = "EXISTS (SELECT 1 FROM EmailVerification ev WHERE ev.email = Comment.email AND ev.verified = 1)";
+
+  const conditions: string[] = [];
+  const args: any[] = [];
+  if (search) {
+    // 按昵称/邮箱搜索（不区分大小写）
+    conditions.push("(LOWER(author) LIKE ? OR LOWER(email) LIKE ?)");
+    const like = `%${search.toLowerCase()}%`;
+    args.push(like, like);
+  }
+  if (verified === 'true') {
+    conditions.push(verifiedExists);
+  } else if (verified === 'false') {
+    conditions.push(`NOT ${verifiedExists}`);
+  }
+  const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
   const totalCount = await c.env.MOMO_DB.prepare(
     `SELECT COUNT(*) as count FROM (SELECT DISTINCT author, email FROM Comment ${whereClause})`
-  ).bind(...searchArgs).first<{ count: number }>();
+  ).bind(...args).first<{ count: number }>();
 
   const { results } = await c.env.MOMO_DB.prepare(`
     SELECT
@@ -25,13 +41,15 @@ export const userList = async (c: Context<{ Bindings: Bindings }>) => {
       COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0) as pendingCount,
       COALESCE(SUM(CASE WHEN status = 'deleted' THEN 1 ELSE 0 END), 0) as deletedCount,
       MIN(pub_date) as firstCommentDate,
-      MAX(pub_date) as lastCommentDate
+      MAX(pub_date) as lastCommentDate,
+      CASE WHEN ${verifiedExists} THEN 1 ELSE 0 END as emailVerified,
+      COALESCE((SELECT MAX(ev.verified_at) FROM EmailVerification ev WHERE ev.email = Comment.email AND ev.verified = 1), '') as emailVerifiedAt
     FROM Comment
     ${whereClause}
     GROUP BY author, email
     ORDER BY commentCount DESC
     LIMIT ? OFFSET ?
-  `).bind(...searchArgs, limit, offset).all();
+  `).bind(...args, limit, offset).all();
 
   // 加载邮箱黑名单，标记用户是否已被拉黑
   let blacklistSet = new Set<string>();
@@ -49,6 +67,8 @@ export const userList = async (c: Context<{ Bindings: Bindings }>) => {
 
   const users = (results || []).map((u: any) => ({
     ...u,
+    emailVerified: u.emailVerified === 1,
+    emailVerifiedAt: u.emailVerifiedAt || '',
     blacklisted: blacklistSet.has(String(u.email).toLowerCase()),
   }));
 

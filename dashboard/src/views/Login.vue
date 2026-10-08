@@ -22,6 +22,7 @@
               class="w-full px-4 py-3 bg-[#f0f5ff] border-none rounded-lg focus:ring-2 focus:ring-blue-300 transition-all outline-none text-gray-600 placeholder-gray-400"
               placeholder="后端 API 地址"
             />
+            <p v-if="apiUrlWarning" class="text-xs text-red-400 px-1">{{ apiUrlWarning }}</p>
           </div>
 
           <div class="space-y-1">
@@ -107,6 +108,7 @@ import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import request from '../utils/request'
 import toast from '../utils/toast'
+import { normalizeApiUrl, isAllowedApiUrl, API_URL_REQUIREMENT } from '../utils/apiUrl'
 
 const router = useRouter()
 const loading = ref(false)
@@ -123,6 +125,13 @@ const passwordForm = reactive({
   new_name: '',
   new_password: '',
   confirm_password: ''
+})
+
+// 仅在地址不满足安全要求时才提示（浅红色）
+const apiUrlWarning = computed(() => {
+  const raw = (form.apiUrl || '').trim()
+  if (!raw) return ''
+  return isAllowedApiUrl(raw) ? '' : API_URL_REQUIREMENT
 })
 
 // 实时校验状态
@@ -203,7 +212,13 @@ const handleLogin = async () => {
   }
 
   loading.value = true
-  const formattedApiUrl = form.apiUrl.replace(/\/$/, '')
+  // 校验 API 地址：token 会附加到发往该地址的每个请求上，必须限制为可信地址
+  const formattedApiUrl = normalizeApiUrl(form.apiUrl)
+  if (!formattedApiUrl) {
+    toast.error(`API 地址无效：${API_URL_REQUIREMENT}`)
+    loading.value = false
+    return
+  }
   localStorage.setItem('apiUrl', formattedApiUrl)
   try {
     const res = await request.post('/admin/login', { name: form.name, password: form.password })

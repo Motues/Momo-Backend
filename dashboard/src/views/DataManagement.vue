@@ -16,7 +16,7 @@
         <h2 class="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
           <i class="fa-solid fa-download text-gray-500"></i> 导出数据
         </h2>
-        <p class="text-sm text-gray-500 mb-5">将数据导出为 JSON 文件，可用于备份或迁移。</p>
+        <p class="text-sm text-gray-500 mb-5">将数据导出为 JSON 文件，可用于备份或迁移。出于安全考虑，SMTP 密码与博主密钥等敏感字段会被置空，导入后需手工补填。</p>
         <div class="flex flex-wrap gap-4">
           <button @click="exportComments" :disabled="exportingComments"
             class="flex items-center gap-2 px-5 py-2.5 bg-sky-500 text-white rounded-lg hover:bg-sky-600 disabled:opacity-50 transition-colors text-sm font-medium">
@@ -133,7 +133,12 @@ const exportSettings = async () => {
     const res = await request.get('/admin/data/export/settings')
     if (res.code === 200 && res.data) {
       downloadJSON(res.data, `momo-settings-${new Date().toISOString().slice(0, 10)}.json`)
-      toast.success('系统设置导出成功')
+      const omitted = res.data.sensitiveOmitted || []
+      if (omitted.length) {
+        toast.warning(`敏感字段（${omitted.join('、')}）出于安全考虑已置空，导入后请手工补填`)
+      } else {
+        toast.success('系统设置导出成功')
+      }
     }
   } catch (e) {
     toast.error('导出系统设置失败')

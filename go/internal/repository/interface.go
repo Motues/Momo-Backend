@@ -16,7 +16,7 @@ type CommentRepository interface {
 
 	// Stats methods
 	GetStatsOverview(ctx context.Context, rangeParam string) (*model.StatsOverview, error)
-	GetUserList(ctx context.Context, offset, limit int, search string) ([]*model.UserStats, int64, error)
+	GetUserList(ctx context.Context, offset, limit int, search string, verified string) ([]*model.UserStats, int64, error)
 	GetUserComments(ctx context.Context, author, email string, offset, limit int) ([]*model.AdminCommentResponse, int64, error)
 	// Export
 	ListAll(ctx context.Context) ([]*model.Comment, error)

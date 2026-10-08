@@ -14,6 +14,7 @@
 | PUT | `/admin/settings` | 更新系统设置 |
 | POST | `/admin/settings/test-email` | 发送测试邮件 |
 | PUT | `/admin/password` | 修改管理员凭据 |
+| POST | `/admin/logout` | 登出（吊销当前 token） |
 | GET | `/admin/comments/list` | 获取所有评论 |
 | PUT | `/admin/comments/status` | 修改评论状态 |
 | PUT | `/admin/comments/edit` | 修改评论内容 |
@@ -47,11 +48,11 @@
 | 状态码 | 说明 | 典型场景 |
 | --- | --- | --- |
 | 200 | 请求成功 | 操作成功 |
-| 400 | 请求参数错误 | 缺少必填字段、格式不正确等 |
+| 400 | 请求参数错误 | 缺少必填字段、格式不正确、字段超长、非法状态值、非法 IP/CIDR 等 |
 | 401 | 未授权 | 未携带 Token 或 Token 失效 |
 | 403 | 禁止访问 | IP 被封禁、IP/邮箱在黑名单中、登录失败次数过多 |
 | 404 | 资源不存在 | 资源不存在场景 |
-| 429 | 请求过于频繁 | 评论频率超过限制 |
+| 429 | 请求过于频繁 | 评论频率超过限制（同一 IP 60 秒一条）、公开评论列表请求过于频繁 |
 | 500 | 服务器内部错误 | 未捕获异常、数据库错误等 |
 
 ## 用户接口
@@ -128,6 +129,14 @@
 
 > 当 `comment_auto_approve` 设为 `"false"` 时，评论提交后状态为 `"pending"`，需在管理后台审核通过后才会公开显示。
 
+> **字段长度上限**（超出返回 `400`）：
+> `content` ≤ 2000 字符、`author` ≤ 100、`email` ≤ 254、`url` ≤ 500、`post_slug` ≤ 200。
+> 字段类型不是字符串时同样返回 `400`。
+
+> **`url` 协议白名单**：仅接受 `http:`、`https:`、`mailto:` 以及不带协议的相对路径，
+> 其他协议（`javascript:`、`vbscript:`、`data:` 等，含 `java\nscript:` 这类控制字符变体）
+> 会被丢弃为空。后台编辑与数据导入路径同样执行该校验。
+
 > **邮箱验证**：当 `email_verify_enabled` 设为 `"true"` 且 SMTP 已配置时：
 > - 如果评论者的邮箱尚未验证，评论状态会被设为 `"pending"`
 > - 系统会自动发送验证邮件到评论者邮箱
@@ -144,6 +153,12 @@
 - `page`：查询页数（默认 1）
 - `limit`：每页的评论数量（默认 20，最大 50）
 - `nested`：评论是否使用嵌套结果返回（默认 true）
+
+> **限流**：同一 IP 每分钟最多请求 120 次，超出返回 `429`。
+> 客户端 IP 的判定方式见各后端 README 中的 `TRUST_PROXY` 说明。
+>
+> **隐私**：响应中不包含评论者邮箱；`admin_email_hash` 仅在后台开启「博主评论密钥」
+> （`admin_comment_key_enabled = "true"`）时才下发，否则为空字符串。
 
 **响应（成功）**：
 `GET /api/comments?post_slug=...&nested=false`
@@ -459,6 +474,11 @@
 
 > `email_password`、`admin_comment_key` 等敏感字段始终返回空字符串。
 > `comment_verify_secret` 由系统自动生成，不在任何设置接口的读写白名单内。
+>
+> 当 `trust_proxy` 出现在返回结果中时，若该开关被环境变量或配置文件强制指定，
+> 响应会额外带上 `trust_proxy_override` 字段，取值为 `"env"`（环境变量）、
+> `"config"`（Go 的 config.yaml）或 `"worker"`（Cloudflare Worker 形态下该开关无意义），
+> 前端据此提示「页面设置不生效」。
 
 **模块筛选示例**：
 
@@ -563,7 +583,8 @@
   "admin_comment_key_enabled": "true",
   "admin_comment_key": "my-secret-key",
   "comment_verify_enabled": "true",
-  "comment_verify_difficulty": "18"
+  "comment_verify_difficulty": "18",
+  "trust_proxy": "false"
 }
 ```
 
@@ -571,6 +592,14 @@
 > - `email_password` 留空时不覆盖已有密码，仅当传入新值时更新
 > - `admin_comment_key_enabled` 控制管理员评论密钥的启用/关闭，关闭时自动清除密钥
 > - `comment_verify_enabled` 控制评论无感验证的启用/关闭，默认 `"false"`；开启后提交评论必须携带 `verify_ticket`
+> - `admin_password` **不在允许写入的字段中**，直接提交会返回 `400`；修改密码请使用 `PUT /admin/password`（需要提供旧凭据）
+> - `ip_blacklist` 会被校验格式，必须是「合法 IP 或 CIDR」组成的 JSON 数组，否则返回 `400`
+> - `allow_origin`：逗号分隔的来源白名单；**留空表示不放开跨域**，填 `*` 表示允许任意来源。
+>   管理接口使用 `Authorization: Bearer`，不依赖 Cookie 凭据，因此不会下发 `Access-Control-Allow-Credentials`
+> - `trust_proxy`：是否信任反向代理下发的客户端 IP 头（`cf-connecting-ip` / `x-real-ip` / `x-forwarded-for`）。
+>   默认 `"false"`，只使用 TCP 连接对端地址；部署在 Nginx / Cloudflare 之后时必须设为 `"true"`。
+>   开启后 `x-forwarded-for` 取最右一跳。该项也可由环境变量 `TRUST_PROXY`（Node）或
+>   `config.yaml` 中的 `TRUST_PROXY`（Go）强制指定，此时页面设置不生效，详见各后端 README
 
 > **邮件模板可用占位符**：
 > - 回复模板：`{{toName}}` `{{replyAuthor}}` `{{postTitle}}` `{{parentComment}}` `{{replyContent}}` `{{postUrl}}`
@@ -679,11 +708,35 @@
 
 ---
 
+### 登出 (POST `/admin/logout`)
+
+> 吊销当前 token。修改密码时后端也会吊销**全部**已签发的 token。
+
+**请求头**：`Authorization: Bearer <token>`
+
+**响应（成功）**：
+```json
+{
+  "code": 200,
+  "message": "Logged out"
+}
+```
+
+**响应（失败）**：
+```json
+{
+  "code": 401,
+  "message": "Invalid token"
+}
+```
+
+---
+
 ### 修改评论状态 (PUT `/admin/comments/status`)
 
 **请求参数**：
 - `id`：评论ID（必需）
-- `status`：评论状态，包括`approved`、`pending`、`deleted`（必需）
+- `status`：评论状态，仅允许 `approved`、`pending`、`rejected`、`deleted`（必需）
 
 **响应（成功）**：
 `PUT/admin/comments/status?id=...&status=...`
@@ -700,7 +753,7 @@
 ```json
 {
   "code": 400,
-  "message": "Invalid request parameters"
+  "message": "Invalid status. Allowed: pending, approved, rejected, deleted"
 }
 ```
 
@@ -871,15 +924,21 @@
 
 ### 用户列表 (GET `/admin/stats/users`)
 
-> 按用户名+邮箱唯一标识用户，显示每个用户的评论统计，并标记邮箱是否已被拉黑
+> 按用户名+邮箱唯一标识用户，显示每个用户的评论统计，标记邮箱是否已被拉黑，以及该邮箱是否已通过邮箱验证。
 
 **查询参数**：
 - `page`：查询页数（默认 1）
 - `limit`：每页用户数（默认 20）
 - `search`：搜索关键字（可选），按昵称或邮箱模糊匹配（不区分大小写）
+- `verified`：按邮箱验证状态筛选（可选）。`all`（默认，不筛选）/ `true`（仅已验证）/ `false`（仅未验证）
+
+> **判定口径**：只要 `EmailVerification` 表中存在该邮箱 `verified = 1` 的记录即视为「已验证」，
+> 与提交评论时跳过邮箱验证的判定完全一致（邮箱为精确匹配，大小写敏感）。
+> 验证记录不会过期，因此用户验证过一次后，后续评论都不再需要重复验证。
 
 **响应（成功）**：
 `GET /admin/stats/users?search=张三`
+`GET /admin/stats/users?verified=false`
 
 ```json
 {
@@ -896,7 +955,9 @@
         "deletedCount": 1,
         "firstCommentDate": "2024-01-01T00:00:00.000Z",
         "lastCommentDate": "2026-04-27T10:00:00.000Z",
-        "blacklisted": false
+        "blacklisted": false,
+        "emailVerified": true,
+        "emailVerifiedAt": "2026-04-20T08:30:00.000Z"
       }
     ],
     "pagination": {
@@ -1075,7 +1136,10 @@
 
 ### 导出系统设置 (GET `/admin/data/export/settings`)
 
-> 导出系统设置，含 `email_password`，不含 `admin_name`/`admin_password`
+> 导出系统设置，不含 `admin_name`/`admin_password`/`comment_verify_secret`。
+>
+> **敏感字段会被置空**：`email_password` 与 `admin_comment_key` 出于安全考虑统一导出为空字符串，
+> 响应中的 `sensitiveOmitted` 会列出被置空的字段名，导入后需要手工补填。
 
 **查询参数**：无
 
@@ -1083,22 +1147,24 @@
 ```json
 {
   "code": 200,
-  "message": "Settings exported",
+  "message": "Settings exported. Sensitive fields (email_password, admin_comment_key) are blanked; please fill them in manually after importing.",
   "data": {
     "exportedAt": "2026-05-02T10:00:00.000Z",
     "type": "settings",
     "version": "1.0",
+    "sensitiveOmitted": ["email_password", "admin_comment_key"],
     "settings": {
       "site_name": "Momo Blog",
       "admin_email": "admin@example.com",
       "smtp_host": "smtp.example.com",
       "smtp_port": "465",
       "email_user": "notify@example.com",
-      "email_password": "actual-password",
+      "email_password": "",
       "email_secure": "true",
       "allow_origin": "*",
       "email_enabled": "true",
-    "email_verify_enabled": "false",
+      "admin_comment_key": "",
+      "email_verify_enabled": "false",
       "reply_template": "...",
       "notification_template": "..."
     }
@@ -1106,11 +1172,18 @@
 }
 ```
 
+> 导入时，`email_password` / `admin_comment_key` 为空字符串表示「未修改」，不会覆盖数据库中已有的值。
+
 ---
 
 ### 导入评论数据 (POST `/admin/data/import/comments`)
 
 > 导入之前导出的评论 JSON 文件数据
+>
+> **安全说明**：导入路径与前台提交执行相同的净化处理——
+> `author`/`contentText` 会去除脚本与危险标签，`url` 会经过协议白名单校验，
+> 并且 `contentHtml` **不会被采信**，一律由 `contentText` 重新渲染生成，防止通过导入文件写入 XSS 载荷。
+> 字段长度上限与提交评论一致。
 
 **请求体**：
 ```json

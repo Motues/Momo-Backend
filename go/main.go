@@ -71,11 +71,20 @@ func main() {
 
 	// 4. 初始化 Settings 和 Repo
 	utils.InitSettingsDB(db)
+	// 客户端 IP 解析策略：环境变量 > 配置文件 > 页面设置（Settings 表 trust_proxy）。
+	// 未显式配置时留空，由页面设置决定。
+	utils.SetTrustProxyOverride(cfg.ResolveTrustProxy())
+	// 定期清理过期 token（避免从未被访问的过期项永久驻留内存）
+	utils.StartTokenJanitor(10 * time.Minute)
 	repo := sqlite.NewCommentRepository(db)
 	handler := &h.CommentHandler{Repo: repo, Version: Version}
 
 	// 5. 设置 Gin 引擎
 	r := gin.Default()
+
+	// 客户端 IP 一律由 utils.GetClientIP 解析（它按设置逐请求判断是否信任代理头），
+	// 这里让 gin 自身永远不信任代理头，避免两套策略不一致。
+	_ = r.SetTrustedProxies(nil)
 
 	// 全局中间件：跨域处理（从数据库读取 allow_origin）
 	r.Use(func(c *gin.Context) {
@@ -91,15 +100,23 @@ func main() {
 			allowedOrigins[i] = strings.TrimSpace(allowedOrigins[i])
 		}
 
+		// 显式配置 * 时按通配处理（API 使用 Bearer token，不依赖 Cookie 凭据）
+		allowAll := false
 		isAllowed := false
 		for _, o := range allowedOrigins {
+			if o == "*" {
+				allowAll = true
+			}
 			if o == origin {
 				isAllowed = true
-				break
 			}
 		}
 
-		if isAllowed {
+		if allowAll {
+			c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+			c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
+			c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		} else if isAllowed {
 			c.Writer.Header().Set("Access-Control-Allow-Origin", origin)
 			c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
 			c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")

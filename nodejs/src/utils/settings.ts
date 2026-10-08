@@ -61,8 +61,13 @@ export async function checkAdminCredentials(
   const dbPass = await getSetting("admin_password");
 
   if (dbName && dbPass) {
-    // bcrypt hash 检测
+    // bcrypt hash 检测（三端统一为 $2 前缀，避免明文以 $ 开头时被误判）
     if (dbPass.startsWith("$2")) {
+      // 哈希分支同样必须校验用户名：否则同一密码可用任意用户名登录，
+      // 并产生多个并存的会话
+      if (name !== dbName) {
+        return false;
+      }
       return await compare(password, dbPass);
     }
     // 明文兼容 + 自动升级为 hash

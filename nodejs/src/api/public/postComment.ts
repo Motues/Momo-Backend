@@ -4,22 +4,55 @@ import { UAParser } from "ua-parser-js";
 import CommentService from "../../orm/commentService";
 import { CreateCommentInput } from "../../type/prisma";
 import { sendCommentReplyNotification, sendCommentNotification, isEmailServiceAvailable, checkEmailVerified, saveVerificationToken, hasUnverifiedToken, sendVerificationEmail } from "../../utils/email";
-import { canPostComment, checkContent, sanitizeHtml, checkIpBlacklist, checkEmailBlacklist, getCommentStatus } from "../../utils/security";
+import { canPostComment, checkContent, sanitizeHtml, sanitizeUrl, checkIpBlacklist, checkEmailBlacklist, getCommentStatus } from "../../utils/security";
 import { getSetting } from "../../utils/settings";
 import { isVerifyEnabled, verifyTicket } from "../../utils/verify";
 import { parseMarkdown } from "../../utils/markdown";
 import { getClientIP } from "../../utils/ip";
 import LogService from "../../utils/log";
 
+// 字段长度上限（与前端组件约束对齐）
+const MAX_CONTENT = 2000;
+const MAX_AUTHOR = 100;
+const MAX_EMAIL = 254;
+const MAX_URL = 500;
+const MAX_POST_SLUG = 200;
+
 export default async (c: Context): Promise<Response> => {
   try {
     const data = await c.req.json();
     const ip = getClientIP(c);
 
-    // 必填字段校验
-    if (!data.post_slug || !data.author || !data.email || !data.content) {
+    // 必填字段校验（同时校验类型，避免非字符串导致后续处理抛错）
+    if (
+      typeof data?.post_slug !== "string" ||
+      typeof data?.author !== "string" ||
+      typeof data?.email !== "string" ||
+      typeof data?.content !== "string" ||
+      !data.post_slug.trim() ||
+      !data.author.trim() ||
+      !data.email.trim() ||
+      !data.content.trim()
+    ) {
       return c.json(
         { code: 400, message: "post_slug, author, email, and content are required" },
+        400
+      );
+    }
+
+    // 长度上限校验：避免 MB 级内容导致数据库膨胀与 Markdown 渲染 CPU 放大
+    const overLimit =
+      data.post_slug.length > MAX_POST_SLUG ||
+      data.author.length > MAX_AUTHOR ||
+      data.email.length > MAX_EMAIL ||
+      data.content.length > MAX_CONTENT ||
+      (typeof data.url === "string" && data.url.length > MAX_URL);
+    if (overLimit) {
+      return c.json(
+        {
+          code: 400,
+          message: `Field too long (content ≤ ${MAX_CONTENT}, author ≤ ${MAX_AUTHOR}, email ≤ ${MAX_EMAIL}, url ≤ ${MAX_URL}, post_slug ≤ ${MAX_POST_SLUG})`,
+        },
         400
       );
     }
@@ -71,9 +104,10 @@ export default async (c: Context): Promise<Response> => {
     // 对所有用户输入进行 XSS 检查
     const content = checkContent(data.content);
     const author = checkContent(data.author);
-    const url = checkContent(data.url || "");
-    const postTitle = checkContent(data.post_title || "");
-    const postUrl = checkContent(data.post_url || "");
+    // url 走协议白名单（只允许 http/https/mailto 与相对路径）
+    const url = sanitizeUrl(data.url);
+    const postTitle = checkContent(typeof data.post_title === "string" ? data.post_title : "");
+    const postUrl = sanitizeUrl(data.post_url);
     const uaParser = new UAParser(c.req.header("user-agent") ?? "");
     const uaResult = uaParser.getResult();
     const commentData: CreateCommentInput = {

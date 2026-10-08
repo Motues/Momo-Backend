@@ -8,6 +8,7 @@ import fs from "fs";
 import corsMiddleware from "./middleware/cors";
 import router from "./middleware/routes";
 import LogService from "./utils/log";
+import { initTrustProxy } from "./utils/ip";
 
 const app = new Hono();
 
@@ -36,6 +37,12 @@ app.get("*", async (c) => {
 });
 
 const port = Number(process.env.PORT || 3000);
-serve({ fetch: app.fetch, port });
 
-console.log(`Server running on http://localhost:${port}`);
+// 先把「是否信任代理头」的页面设置读入缓存，再开始监听，
+// 避免最初的几个请求按默认值（不信任）处理
+initTrustProxy()
+  .catch((e) => LogService.error("读取 trust_proxy 设置失败", e))
+  .finally(() => {
+    serve({ fetch: app.fetch, port });
+    console.log(`Server running on http://localhost:${port}`);
+  });

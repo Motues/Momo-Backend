@@ -325,16 +325,31 @@ func (r *commentRepo) GetStatsOverview(ctx context.Context, rangeParam string) (
 	return stats, nil
 }
 
-func (r *commentRepo) GetUserList(ctx context.Context, offset, limit int, search string) ([]*model.UserStats, int64, error) {
+func (r *commentRepo) GetUserList(ctx context.Context, offset, limit int, search string, verified string) ([]*model.UserStats, int64, error) {
 	search = strings.TrimSpace(search)
 
+	// 与评论提交时的判定保持一致：EmailVerification.email 精确匹配且 verified = 1
+	const verifiedExists = "EXISTS (SELECT 1 FROM EmailVerification ev WHERE ev.email = Comment.email AND ev.verified = 1)"
+
 	// 按昵称/邮箱搜索（SQLite LIKE 对 ASCII 不区分大小写）
-	where := ""
+	conditions := make([]string, 0, 2)
 	args := make([]interface{}, 0)
 	if search != "" {
 		like := "%" + search + "%"
-		where = " WHERE author LIKE ? OR email LIKE ?"
+		conditions = append(conditions, "(author LIKE ? OR email LIKE ?)")
 		args = append(args, like, like)
+	}
+	// 邮箱验证筛选：verified = "true" / "false"，其余取值（含 "all"）不筛选
+	switch verified {
+	case "true":
+		conditions = append(conditions, verifiedExists)
+	case "false":
+		conditions = append(conditions, "NOT "+verifiedExists)
+	}
+
+	where := ""
+	if len(conditions) > 0 {
+		where = " WHERE " + strings.Join(conditions, " AND ")
 	}
 
 	var total int64
@@ -342,14 +357,16 @@ func (r *commentRepo) GetUserList(ctx context.Context, offset, limit int, search
 	_ = r.db.GetContext(ctx, &total, countQuery, args...)
 
 	type userRow struct {
-		Author        string `db:"author"`
-		Email         string `db:"email"`
-		CommentCount  int64  `db:"commentCount"`
-		ApprovedCount int64  `db:"approvedCount"`
-		PendingCount  int64  `db:"pendingCount"`
-		DeletedCount  int64  `db:"deletedCount"`
-		MinDate       int64  `db:"min_date"`
-		MaxDate       int64  `db:"max_date"`
+		Author          string `db:"author"`
+		Email           string `db:"email"`
+		CommentCount    int64  `db:"commentCount"`
+		ApprovedCount   int64  `db:"approvedCount"`
+		PendingCount    int64  `db:"pendingCount"`
+		DeletedCount    int64  `db:"deletedCount"`
+		MinDate         int64  `db:"min_date"`
+		MaxDate         int64  `db:"max_date"`
+		EmailVerified   int64  `db:"emailVerified"`
+		EmailVerifiedAt string `db:"emailVerifiedAt"`
 	}
 	var rows []userRow
 	query := `
@@ -360,7 +377,9 @@ func (r *commentRepo) GetUserList(ctx context.Context, offset, limit int, search
 			COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0) as pendingCount,
 			COALESCE(SUM(CASE WHEN status = 'deleted' THEN 1 ELSE 0 END), 0) as deletedCount,
 			MIN(pub_date) as min_date,
-			MAX(pub_date) as max_date
+			MAX(pub_date) as max_date,
+			CASE WHEN ` + verifiedExists + ` THEN 1 ELSE 0 END as emailVerified,
+			COALESCE((SELECT MAX(ev.verified_at) FROM EmailVerification ev WHERE ev.email = Comment.email AND ev.verified = 1), '') as emailVerifiedAt
 		FROM Comment` + where + `
 		GROUP BY author, email
 		ORDER BY commentCount DESC
@@ -383,6 +402,8 @@ func (r *commentRepo) GetUserList(ctx context.Context, offset, limit int, search
 			DeletedCount:     row.DeletedCount,
 			FirstCommentDate: time.UnixMilli(row.MinDate).UTC().Format("2006-01-02T15:04:05.000Z"),
 			LastCommentDate:  time.UnixMilli(row.MaxDate).UTC().Format("2006-01-02T15:04:05.000Z"),
+			EmailVerified:    row.EmailVerified == 1,
+			EmailVerifiedAt:  row.EmailVerifiedAt,
 		})
 	}
 

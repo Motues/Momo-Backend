@@ -7,7 +7,15 @@ const MAX_ATTEMPTS = 5;
 const LOCK_TIME = 30 * 60; // 秒
 
 export const adminLogin = async (c: Context<{ Bindings: Bindings }>) => {
-  const data = await c.req.json();
+  const data = await c.req.json().catch(() => null);
+
+  // 类型校验：非字符串（如 {"password":{}}）直接 400，
+  // 否则 bcrypt 会抛错变成 500，且该次失败不计入锁定计数
+  if (typeof data?.name !== 'string' || typeof data?.password !== 'string') {
+    return c.json({ code: 400, message: "name and password must be strings" }, 400);
+  }
+
+  // cf-connecting-ip 由 Cloudflare 在边缘覆写，客户端无法伪造
   const ip = c.req.header('cf-connecting-ip') || "127.0.0.1";
   
   const blockKey = `block:${ip}`;

@@ -14,7 +14,10 @@ function checkAuth(c: Context): boolean {
   return true;
 }
 
-// 导出系统设置（含 email_password，不含 admin_name/admin_password）
+// 导出时置空的敏感字段：避免 SMTP 密码 / 博主密钥以明文落盘
+const SENSITIVE_EXPORT_KEYS = ["email_password", "admin_comment_key"];
+
+// 导出系统设置（不含 admin_name/admin_password/comment_verify_secret；敏感字段置空）
 export async function exportSettings(c: Context): Promise<Response> {
   if (!checkAuth(c)) {
     return c.json({ code: 401, message: "Invalid token" }, 401);
@@ -49,12 +52,19 @@ export async function exportSettings(c: Context): Promise<Response> {
     verify_base_url: true,
     comment_verify_enabled: true,
     comment_verify_difficulty: true,
+    trust_proxy: true,
   };
 
   const filtered: Record<string, string> = {};
+  const sensitiveOmitted: string[] = [];
   for (const key of Object.keys(allowList)) {
     if (key in all) {
-      filtered[key] = all[key];
+      if (SENSITIVE_EXPORT_KEYS.includes(key)) {
+        filtered[key] = "";
+        if (all[key]) sensitiveOmitted.push(key);
+      } else {
+        filtered[key] = all[key];
+      }
     }
   }
   if (!("email_enabled" in filtered)) {
@@ -63,11 +73,12 @@ export async function exportSettings(c: Context): Promise<Response> {
 
   return c.json({
     code: 200,
-    message: "Settings exported",
+    message: "Settings exported. Sensitive fields (email_password, admin_comment_key) are blanked; please fill them in manually after importing.",
     data: {
       exportedAt: new Date().toISOString(),
       type: "settings",
       version: pkg.version,
+      sensitiveOmitted,
       settings: filtered,
     },
   });

@@ -60,6 +60,7 @@ func RegisterRoutes(r *gin.Engine, h *CommentHandler) {
 			auth.PUT("/settings", h.UpdateSettings)
 			auth.POST("/settings/test-email", h.TestEmail)
 			auth.PUT("/password", h.ChangePassword)
+			auth.POST("/logout", h.Logout)
 			auth.GET("/comments/list", h.ListAllComments)
 			auth.PUT("/comments/status", h.UpdateCommentStatus)
 			auth.PUT("/comments/edit", h.UpdateComment)

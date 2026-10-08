@@ -44,6 +44,7 @@ vim .env
 | `NODE_ENV` | 在 development 环境下，没有跨域保护，建议部署到服务器的时候选择 production 环境 | 
 | `PORT` | 端口号，默认为3000 |
 | `DATABASE_URL` | 数据库连接地址 |
+| `TRUST_PROXY` | **可选，一般无需设置**。是否信任反向代理下发的客户端 IP 头。请优先在后台「系统设置 → 安全设置 → 客户端 IP 识别」中开关；只有当需要强制指定（例如不可变部署）时才使用本变量，一旦设置将覆盖页面设置 |
 
 #### 3. 编译部署
 
@@ -190,6 +191,12 @@ pm2 start dist/app.js --name momo-backend
 
 如果使用 Ngnix 和 Cloudflare 做反向代理，需要按照下面的配置 ngnix，确保可以获取到正确的 IP 地址
 
+> **重要**：配置了下面的代理头之后，必须同时开启后端的「信任反向代理下发的 IP 头」开关
+> （**系统设置 → 安全设置 → 客户端 IP 识别**，也可用环境变量 `TRUST_PROXY=true` 强制指定），
+> 否则后端只会使用代理自身的 IP，导致 IP 黑名单、登录失败锁定与评论频率限制失效或误伤所有访客。
+> 未使用反向代理时保持该开关关闭，此时伪造 `CF-Connecting-IP` / `X-Real-IP` / `X-Forwarded-For`
+> 无法影响后端的 IP 判定。
+
 ```ngnix
 server {
     server_name api.example.com; # 这里修改为你的域名
@@ -209,3 +216,6 @@ server {
     }
 }
 ```
+
+> 说明：开启 `TRUST_PROXY` 后，`X-Forwarded-For` 取**最右一跳**（离本机最近的可信代理看到的地址），
+> 因此客户端自行伪造的前置条目不会生效。

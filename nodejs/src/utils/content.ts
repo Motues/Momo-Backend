@@ -20,7 +20,11 @@ async (comments: Comment[] | null, page: number, limit: number, nested: boolean,
   const placeholderUrl = await getSetting("placeholder_url") || "";
   const adminCommentKey = await getSetting("admin_comment_key") || "";
   const adminCommentKeyEnabled = await getSetting("admin_comment_key_enabled") || "false";
-  const adminEmailHash = adminEmail ? crypto.createHash("sha256").update(adminEmail.toLowerCase().trim()).digest("hex") : "";
+  // 邮箱哈希仅供前端判断「是否需要显示管理员密钥输入框」。
+  // 只有在博主密钥功能开启时才下发，避免被用于离线枚举管理员邮箱。
+  const adminEmailHash = adminEmail && adminCommentKeyEnabled === "true"
+    ? crypto.createHash("sha256").update(adminEmail.toLowerCase().trim()).digest("hex")
+    : "";
   // 无感验证公开配置（开关 + 按文章派生的蜜罐字段名）
   const verifyConfig = await getPublicVerifyConfig(postSlug);
 
