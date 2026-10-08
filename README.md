@@ -65,19 +65,26 @@ API 应用基于 SQLite 数据库，对外提供 RESTful API，目前提供四�
 
 #### Docker 部署
 
-Go 版本支持 Docker 一键部署，镜像发布在 GitHub Container Registry。
+Go 版本支持 Docker 一键部署，镜像同时发布在 GitHub Container Registry 与 Docker Hub。
 
 ```bash
 # 使用 docker-compose（推荐）
 curl -fsSLO https://raw.githubusercontent.com/Motues/Momo-backend/main/docker-compose.yml
 docker compose up -d
 
-# 或直接运行
+# 或直接运行（两个仓库内容相同，任选其一）
 docker run -d \
   --name momo-backend \
   -p 3000:3000 \
   -v momo-data:/app/data \
   ghcr.io/motues/momo-backend:latest
+
+# Docker Hub
+docker run -d \
+  --name momo-backend \
+  -p 3000:3000 \
+  -v momo-data:/app/data \
+  motues/momo-backend:latest
 ```
 
 启动后访问 `http://localhost:3000`，默认管理员账号密码均为 `momo`。

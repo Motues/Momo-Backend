@@ -9,7 +9,7 @@
 ```html
 <div id="momo-comment"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/@motues/momo-comment@1.4.x/dist/momo-comment.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@motues/momo-comment@1.5.x/dist/momo-comment.min.js"></script>
 <script>
     momo.init({
         el: '#momo-comment', // 评论容器的 id

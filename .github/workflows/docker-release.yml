@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - 'v*'
+  # 手动触发：用于在发版之前验证镜像能否构建并推送到两个仓库
+  workflow_dispatch:
 
 jobs:
   build-dashboard:
@@ -60,11 +62,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Docker Meta
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/momo-backend
+          # 同一个镜像同时打上两个仓库的标签；metadata-action 会自动生成 latest
+          images: |
+            ghcr.io/${{ github.repository_owner }}/momo-backend
+            ${{ vars.DOCKERHUB_USERNAME }}/momo-backend
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
