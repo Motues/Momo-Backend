@@ -48,6 +48,8 @@ const translation: Translation = {
         verifySuccess: "Verified",
         verifyFailed: "Verification failed",
         verifyRetry: "Click to retry",
+        adminKey: "Admin verification key",
+        adminKeyPlaceholder: "Enter the admin comment key",
     },
 }
 

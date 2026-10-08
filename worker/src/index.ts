@@ -3,6 +3,7 @@ import { Bindings } from './bindings'
 import { customCors } from './utils/cors'
 import { getSetting } from './utils/settings'
 import { adminAuth } from './utils/auth'
+import { ensureMigrated } from './utils/migrations'
 
 import { getComments } from './api/public/getComments'
 import { postComment } from './api/public/postComment'
@@ -23,6 +24,12 @@ import { exportSettings, exportComments } from './api/admin/dataExport'
 import { importComments, importSettings } from './api/admin/dataImport'
 
 const app = new Hono<{ Bindings: Bindings }>()
+
+// 幂等启动自迁移：每个 isolate 只执行一次，失败仅记录日志不阻断请求
+app.use('*', async (c, next) => {
+  await ensureMigrated(c.env)
+  await next()
+})
 
 // 跨域（从数据库读取允许的来源；未配置即拒绝跨域，与 Node/Go 默认姿态一致）
 app.use('/api/*', async (c, next) => {

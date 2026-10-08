@@ -21,9 +21,25 @@ export const updateStatus = async (c: Context<{ Bindings: Bindings }>) => {
     }, 400);
   }
 
-  const { success } = await c.env.MOMO_DB.prepare(
-    "UPDATE Comment SET status = ? WHERE id = ?"
-  ).bind(status, id).run();
+  // 级联语义（与 Node/Go 一致）：
+  //  - deleted / pending：连同全部子孙评论一起改（管理员删除或打回一条评论时，
+  //    其下回复不应继续可见/保留旧状态）
+  //  - approved / rejected：只改本条
+  const shouldCascade = status === 'deleted' || status === 'pending';
+
+  const { success } = shouldCascade
+    ? await c.env.MOMO_DB.prepare(`
+        WITH RECURSIVE comment_tree AS (
+          SELECT id FROM Comment WHERE id = ?
+          UNION ALL
+          SELECT c.id FROM Comment c
+          INNER JOIN comment_tree ct ON c.parent_id = ct.id
+        )
+        UPDATE Comment SET status = ? WHERE id IN (SELECT id FROM comment_tree)
+      `).bind(id, status).run()
+    : await c.env.MOMO_DB.prepare(
+        "UPDATE Comment SET status = ? WHERE id = ?"
+      ).bind(status, id).run();
 
   if (!success) {
     return c.json({ 

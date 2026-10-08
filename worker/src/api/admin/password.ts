@@ -27,8 +27,9 @@ export const changePassword = async (c: Context<{ Bindings: Bindings }>) => {
     return c.json({ code: 400, message: "old_name, old_password, new_name, new_password are required" }, 400);
   }
 
-  if (new_password.length < 4) {
-    return c.json({ code: 400, message: "New password must be at least 4 characters" }, 400);
+  // 最小长度与 Node/Go 统一为 8 位，避免安全策略随部署形态变化（C10）
+  if (new_password.length < 8) {
+    return c.json({ code: 400, message: "New password must be at least 8 characters" }, 400);
   }
 
   const valid = await checkAdminCredentials(c.env, old_name, old_password);

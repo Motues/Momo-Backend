@@ -1,6 +1,6 @@
 import type { Context } from "hono";
 import CommentService from "../../orm/commentService";
-import { getQueryNumber, getQueryBoolean, getQueryString } from "../../utils/url";
+import { getQueryClampedNumber, getQueryBoolean, getQueryString } from "../../utils/url";
 import { getResponseComment } from "../../utils/content";
 import { getClientIP } from "../../utils/ip";
 import { allowRequest } from "../../utils/rateLimit";
@@ -16,12 +16,14 @@ export default async (c: Context): Promise<Response> => {
   }
 
   const postSlug = getQueryString(c.req.query("post_slug"), "");
-  const page = getQueryNumber(c.req.query("page"), 1);
-  const limit = getQueryNumber(c.req.query("limit"), 20);
+  // 分页参数 clamp（C14）：page >= 1，1 <= limit <= 50，与 Go/Worker 一致
+  const page = getQueryClampedNumber(c.req.query("page"), 1, 1, Number.MAX_SAFE_INTEGER);
+  const limit = getQueryClampedNumber(c.req.query("limit"), 20, 1, 50);
   const nested = getQueryBoolean(c.req.query("nested"), true);
 
   if (postSlug === "") {
-    return c.json({ error: "Invalid post_slug" }, 400);
+    // 错误响应形状与 Go/Worker 对齐（C8）：必须带 code
+    return c.json({ code: 400, message: "post_slug is required" }, 400);
   }
 
   const comments = await CommentService.getCommentBySlug(postSlug);

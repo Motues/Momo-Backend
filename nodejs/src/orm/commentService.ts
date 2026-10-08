@@ -113,13 +113,30 @@ class CommentService {
 
   /*
    * 修改评论状态
+   *
+   * 级联语义（与 Go/Worker 保持一致，见 C6）：
+   *  - deleted / pending：连同全部子孙评论一起修改（删除/打回一条评论时，
+   *    其下的回复不应继续可见或保留旧状态）
+   *  - approved / rejected：只修改本条
    */
   async updateCommentStatus(id: number, status: string): Promise<Comment> {
-    await db
-      .update(schema.comments)
-      .set({ status })
-      .where(eq(schema.comments.id, id))
-      .run();
+    if (status === "deleted" || status === "pending") {
+      db.run(sql`
+        WITH RECURSIVE comment_tree AS (
+          SELECT id FROM "Comment" WHERE id = ${id}
+          UNION ALL
+          SELECT c.id FROM "Comment" c
+          INNER JOIN comment_tree ct ON c.parent_id = ct.id
+        )
+        UPDATE "Comment" SET status = ${status} WHERE id IN (SELECT id FROM comment_tree)
+      `);
+    } else {
+      await db
+        .update(schema.comments)
+        .set({ status })
+        .where(eq(schema.comments.id, id))
+        .run();
+    }
 
     const updated = await this.getCommentById(id);
     if (!updated) throw new Error("Comment not found after update");

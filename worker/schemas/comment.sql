@@ -1,7 +1,8 @@
 -- create comment table
+-- 注意：pub_date 统一为「毫秒整数」（与 Node/Go 一致），不要再写成 DATETIME/CURRENT_TIMESTAMP
 CREATE TABLE IF NOT EXISTS Comment (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    pub_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+    pub_date INTEGER NOT NULL DEFAULT (CAST(strftime('%s', 'now') AS INTEGER) * 1000),
     post_slug TEXT NOT NULL,
     author TEXT NOT NULL,
     email TEXT NOT NULL,
@@ -14,9 +15,17 @@ CREATE TABLE IF NOT EXISTS Comment (
     content_text TEXT NOT NULL,
     content_html TEXT NOT NULL,
     parent_id INTEGER,
-    status TEXT DEFAULT 'approved',
+    -- 默认值与 Node/Go 一致：绕过应用层的写入落在最安全的 pending
+    status TEXT DEFAULT 'pending',
     -- 建立自引用外键约束（父子评论关系）
     FOREIGN KEY (parent_id) REFERENCES Comment (id) ON DELETE SET NULL
+);
+
+-- 迁移记录表（幂等启动自迁移使用，见 src/utils/migrations.ts）
+CREATE TABLE IF NOT EXISTS SchemaMigration (
+    id TEXT PRIMARY KEY,
+    description TEXT NOT NULL DEFAULT '',
+    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- Settings table for web-based configuration

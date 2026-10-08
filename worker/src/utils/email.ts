@@ -22,6 +22,15 @@ async function getSmtpConfig(env: Bindings) {
 }
 
 /**
+ * SMTP 服务是否可用（host + 账号 + 密码三项齐全）。
+ * 与 Node 的 isEmailServiceAvailable / Go 的 GetService().IsAvailable() 语义一致：
+ * 只配了 smtp_host 而没有账号密码时视为不可用，避免把评论置为 pending 却发不出验证邮件。
+ */
+export async function isEmailServiceAvailable(env: Bindings): Promise<boolean> {
+  return (await getSmtpConfig(env)) !== null;
+}
+
+/**
  * 通用 SMTP 发送函数 (适配 Cloudflare Workers)
  */
 async function smtpFetch(env: Bindings, options: { to: string, subject: string, html: string }) {

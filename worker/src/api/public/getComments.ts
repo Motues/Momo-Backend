@@ -3,6 +3,7 @@ import { Bindings } from '../../bindings'
 import { getCravatar } from '../../utils/getAvatar'
 import { getSetting } from '../../utils/settings'
 import { getPublicVerifyConfig } from '../../utils/verify'
+import { toIsoString } from '../../utils/time'
 import { allowRequest } from '../../utils/rateLimit'
 
 // 公开评论列表限流（单 isolate 尽力而为）：缓解批量遍历 post_slug 采集博主邮箱哈希
@@ -11,8 +12,9 @@ const RATE_WINDOW_MS = 60 * 1000
 
 export const getComments = async (c: Context<{ Bindings: Bindings }>) => {
     const post_slug = c.req.query('post_slug')
-  const page = parseInt(c.req.query('page') || '1')
-  const limit = Math.min(parseInt(c.req.query('limit') || '20'), 50)
+  // 分页参数 clamp：page >= 1，1 <= limit <= 50（与 Node/Go 一致，C14）
+  const page = Math.max(1, parseInt(c.req.query('page') || '1', 10) || 1)
+  const limit = Math.min(Math.max(1, parseInt(c.req.query('limit') || '20', 10) || 20), 50)
   const nested = c.req.query('nested') !== 'false'
   const offset = (page - 1) * limit
 
@@ -68,7 +70,8 @@ export const getComments = async (c: Context<{ Bindings: Bindings }>) => {
         url: row.url || undefined,
         contentText: row.contentText,
         contentHtml: row.contentHtml,
-        pubDate: row.pubDate,
+        // pub_date 在库里是毫秒整数，响应契约统一为 ISO 字符串（与 Node/Go 一致）
+        pubDate: toIsoString(row.pubDate),
         parentId: row.parentId,
         avatar,
         replies: [] as any[],

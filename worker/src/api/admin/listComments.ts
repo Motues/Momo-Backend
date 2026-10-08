@@ -1,8 +1,9 @@
 import { Context } from 'hono';
 import { Bindings } from '../../bindings';
+import { toIsoString } from '../../utils/time';
 
 export const listComments = async (c: Context<{ Bindings: Bindings }>) => {
-  const page = parseInt(c.req.query('page') || '1');
+  const page = Math.max(1, parseInt(c.req.query('page') || '1', 10) || 1);
   const status = c.req.query('status') || '';
   const limit = 10;
   const offset = (page - 1) * limit;
@@ -27,7 +28,8 @@ export const listComments = async (c: Context<{ Bindings: Bindings }>) => {
 
   const comments = (results || []).map((row: any) => ({
     id: row.id,
-    pubDate: row.pub_date,
+    // pub_date 在库里是毫秒整数，响应契约统一为 ISO 字符串（与 Node/Go 一致）
+    pubDate: toIsoString(row.pub_date),
     postSlug: row.post_slug,
     author: row.author,
     email: row.email,

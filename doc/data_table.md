@@ -7,7 +7,7 @@
 | 字段 | 类型 | 约束 | 说明 |
 |------|------|------|------|
 | `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | 自增 ID |
-| `pub_date` | TEXT/DATETIME | DEFAULT CURRENT_TIMESTAMP | 创建时间 |
+| `pub_date` | INTEGER | NOT NULL DEFAULT `(CAST(strftime('%s','now') AS INTEGER) * 1000)` | 创建时间（**Unix 毫秒整数**，三端统一） |
 | `post_slug` | TEXT | NOT NULL | 博客文章唯一标识（如 `/posts/hello-world`） |
 | `author` | TEXT | NOT NULL | 昵称 |
 | `email` | TEXT | NOT NULL | 邮箱（用于 Gravatar，不公开） |
@@ -22,7 +22,12 @@
 | `parent_id` | INTEGER | REFERENCES `Comment`(`id`) ON DELETE SET NULL | 回复的父评论 ID（NULL 表示顶级评论） |
 | `status` | TEXT | DEFAULT 'pending' | `pending` / `approved` / `rejected` / `deleted` |
 
-> **状态默认值说明**: Node.js 版本默认值为 `'pending'`；Worker/Go 版本的 SQL schema 默认值为 `'approved'`，应用层会自动覆盖处理。
+> **状态默认值说明**: 三端已统一为 `'pending'`（最安全的默认值）。已有数据库的列默认值需要重建表才能生效，
+> 见 `doc/migrations/0002_status_default_pending.sql`；应用层写入时都会显式带上 `status`，不受影响。
+>
+> **时间字段说明**: `pub_date` 统一存储为 Unix **毫秒**整数（如 `1712345678901`），
+> API 响应中的 `pubDate` 始终是 ISO 8601 UTC 字符串（如 `2024-03-05T06:07:08.000Z`）。
+> 三端启动时会自动把历史 ISO 字符串归一化为毫秒整数（见 `doc/migrations/README.md`）。
 
 ### 索引
 
@@ -104,3 +109,18 @@
 |--------|------|------|
 | `idx_ev_email` | `email` | 加速按邮箱查询验证记录 |
 | `idx_ev_token` | `token` | 加速按令牌查询验证记录 |
+
+---
+
+## 表：`SchemaMigration`
+
+三端启动自迁移的执行记录表（幂等：同一条迁移只执行一次）。
+
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| `id` | TEXT | PRIMARY KEY | 迁移标识（如 `0001_pub_date_to_millis`），发布后不可修改 |
+| `description` | TEXT | NOT NULL DEFAULT '' | 迁移说明 |
+| `applied_at` | TEXT | NOT NULL DEFAULT `datetime('now')` | 执行时间 |
+
+> 迁移定义位于 `nodejs/src/orm/migrations.ts`、`worker/src/utils/migrations.ts`、
+> `go/internal/repository/sqlite/migrate.go`；需要重建表的结构变更见 `doc/migrations/`。

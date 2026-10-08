@@ -46,5 +46,7 @@ export interface Translation {
         verifySuccess: string;
         verifyFailed: string;
         verifyRetry: string;
+        adminKey: string;
+        adminKeyPlaceholder: string;
     },
 }

@@ -3,10 +3,11 @@ import CommentService from "../../orm/commentService";
 import { Comment } from "../../type/prisma";
 import { getResponseCommentAdmin } from "../../utils/content";
 import { checkKey, extractToken } from "../../utils/security";
-import { getQueryNumber, getQueryString } from "../../utils/url";
+import { getQueryClampedNumber, getQueryString } from "../../utils/url";
 
 export default async (c: Context): Promise<Response> => {
-  const page = getQueryNumber(c.req.query("page"), 1);
+  // 分页参数 clamp（C14）：page >= 1
+  const page = getQueryClampedNumber(c.req.query("page"), 1, 1, Number.MAX_SAFE_INTEGER);
   const status = getQueryString(c.req.query("status"), "");
   const authHeader = c.req.header("Authorization") || "";
   const key = extractToken(authHeader);

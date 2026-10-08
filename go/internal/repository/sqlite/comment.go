@@ -44,7 +44,8 @@ func InitSchema(db *sqlx.DB) error {
 		content_text TEXT NOT NULL,
 		content_html TEXT NOT NULL,
 		parent_id INTEGER,
-		status TEXT DEFAULT 'approved',
+		-- 默认值与 Node/Worker 一致（C11）：绕过应用层的写入落在最安全的 pending
+		status TEXT DEFAULT 'pending',
 		FOREIGN KEY (parent_id) REFERENCES Comment (id) ON DELETE SET NULL
 	);
 	CREATE INDEX IF NOT EXISTS idx_post_slug ON Comment(post_slug);
@@ -81,7 +82,12 @@ func InitSchema(db *sqlx.DB) error {
 	}
 
 	_, err := db.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// 幂等启动自迁移（数据归一化等，见 migrate.go）
+	return RunMigrations(db)
 }
 
 func (r *commentRepo) Create(ctx context.Context, c *model.Comment) error {
@@ -200,15 +206,19 @@ func (r *commentRepo) ListAll(ctx context.Context) ([]*model.Comment, error) {
 func (r *commentRepo) GetStatsOverview(ctx context.Context, rangeParam string) (*model.StatsOverview, error) {
 	stats := &model.StatsOverview{}
 
+	// range=all / range=0：最近 12 个月按月聚合；其余：最近 N 天（默认 7，上限 365）。
+	// 三端统一（C9）：此前 all 会退化成「近 365 天」
 	var daysBack int
 	var isAll bool
-	switch rangeParam {
+	switch strings.ToLower(strings.TrimSpace(rangeParam)) {
 	case "all", "0":
 		isAll = true
-		daysBack = 365
 	default:
-		if r, err := strconv.Atoi(rangeParam); err == nil && r > 0 {
-			daysBack = r - 1
+		if n, err := strconv.Atoi(strings.TrimSpace(rangeParam)); err == nil && n > 0 {
+			if n > 365 {
+				n = 365
+			}
+			daysBack = n - 1
 		} else {
 			daysBack = 6
 		}
@@ -241,37 +251,41 @@ func (r *commentRepo) GetStatsOverview(ctx context.Context, rangeParam string) (
 	}
 
 	if isAll {
-			// 最近 12 个月：按月聚合
-			monthlyMap := make(map[string]int64)
-			now := time.Now()
-			for i := 11; i >= 0; i-- {
-				d := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -i, 0)
-				key := d.Format("2006-01")
-				monthlyMap[key] = 0
+		// 最近 12 个月：按月聚合。
+		// 分桶统一使用 UTC（strftime(...,'unixepoch') 就是 UTC），键也必须用 UTC 生成，
+		// 否则非 UTC 时区下跨月边界会错位（C3）
+		monthlyMap := make(map[string]int64)
+		now := time.Now().UTC()
+		for i := 11; i >= 0; i-- {
+			d := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -i, 0)
+			key := d.Format("2006-01")
+			monthlyMap[key] = 0
+		}
+		twelveMonthsAgo := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -11, 0)
+		var monthlyRows []struct {
+			MonthStr string `db:"month_str"`
+			Count    int64  `db:"count"`
+		}
+		_ = r.db.SelectContext(ctx, &monthlyRows, `
+			SELECT strftime('%Y-%m', pub_date / 1000, 'unixepoch') as month_str, COUNT(*) as count
+			FROM Comment
+			WHERE pub_date >= ?
+			GROUP BY month_str ORDER BY month_str ASC
+		`, twelveMonthsAgo.UnixMilli())
+		for _, row := range monthlyRows {
+			if _, ok := monthlyMap[row.MonthStr]; ok {
+				monthlyMap[row.MonthStr] = row.Count
 			}
-			twelveMonthsAgo := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -11, 0)
-			var monthlyRows []struct {
-				MonthStr string `db:"month_str"`
-				Count    int64  `db:"count"`
-			}
-			_ = r.db.SelectContext(ctx, &monthlyRows, `
-				SELECT strftime('%Y-%m', pub_date / 1000, 'unixepoch') as month_str, COUNT(*) as count
-				FROM Comment
-				WHERE pub_date >= ?
-				GROUP BY month_str ORDER BY month_str ASC
-			`, twelveMonthsAgo.UnixMilli())
-			for _, row := range monthlyRows {
-				if _, ok := monthlyMap[row.MonthStr]; ok {
-					monthlyMap[row.MonthStr] = row.Count
-				}
-			}
-			for _, d := range getMonthRange(11) {
-				stats.RecentComments = append(stats.RecentComments, model.DateCount{Date: d, Count: monthlyMap[d]})
-			}
+		}
+		for _, d := range getMonthRange(11) {
+			stats.RecentComments = append(stats.RecentComments, model.DateCount{Date: d, Count: monthlyMap[d]})
+		}
 	} else {
+		// 日分桶同样统一 UTC：键与 SQL 的 strftime(...,'unixepoch') 必须落在同一时区
 		dateCountMap := make(map[string]int64)
+		nowUTC := time.Now().UTC()
 		for i := daysBack; i >= 0; i-- {
-			d := time.Now().AddDate(0, 0, -i)
+			d := nowUTC.AddDate(0, 0, -i)
 			key := d.Format("2006-01-02")
 			dateCountMap[key] = 0
 		}
@@ -279,7 +293,7 @@ func (r *commentRepo) GetStatsOverview(ctx context.Context, rangeParam string) (
 			DateStr string `db:"date_str"`
 			Count   int64  `db:"count"`
 		}
-		startDateStr := time.Now().AddDate(0, 0, -daysBack).Format("2006-01-02")
+		startDateStr := nowUTC.AddDate(0, 0, -daysBack).Format("2006-01-02")
 		_ = r.db.SelectContext(ctx, &recentRows, `
 			SELECT strftime('%Y-%m-%d', pub_date / 1000, 'unixepoch') as date_str, COUNT(*) as count
 			FROM Comment
@@ -412,8 +426,10 @@ func (r *commentRepo) GetUserList(ctx context.Context, offset, limit int, search
 
 func getDateRange(daysBack int) []string {
 	var dates []string
+	// 与 SQL 的 strftime(...,'unixepoch') 对齐：必须使用 UTC 日期
+	nowUTC := time.Now().UTC()
 	for i := daysBack; i >= 0; i-- {
-		d := time.Now().AddDate(0, 0, -i)
+		d := nowUTC.AddDate(0, 0, -i)
 		dates = append(dates, d.Format("2006-01-02"))
 	}
 	return dates
@@ -421,7 +437,7 @@ func getDateRange(daysBack int) []string {
 
 func getMonthRange(monthsBack int) []string {
 	var months []string
-	now := time.Now()
+	now := time.Now().UTC()
 	for i := monthsBack; i >= 0; i-- {
 		d := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -i, 0)
 		months = append(months, d.Format("2006-01"))

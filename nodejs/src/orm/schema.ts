@@ -4,6 +4,11 @@ import { sql } from "drizzle-orm";
 /**
  * Comment 表 — 与 Prisma 生成的表结构保持一致
  * 表名 "Comment" 必须加引号（SQLite 大小写敏感）
+ *
+ * ⚠️ 本文件只提供 Drizzle 的**查询元数据**，不是建表语句的来源。
+ * 真正的建表 DDL 与启动自迁移在 `src/orm/migrations.ts`（C7）：
+ * 改动表结构时必须同时修改那边，否则新库/旧库会与这里的字段定义漂移。
+ * 本项目未使用 drizzle-kit 迁移流程（`pnpm db:push` 不是升级手段）。
  */
 export const comments = sqliteTable(
   "Comment",

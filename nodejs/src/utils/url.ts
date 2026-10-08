@@ -18,6 +18,22 @@ const getQueryNumber = (query: string | string[] | undefined, defaultValue: numb
   return isNaN(num) ? defaultValue : num;
 };
 
+/**
+ * 取查询参数中的整数并夹在 [min, max] 区间内。
+ * 用于分页参数：getQueryNumber 会把负数/0 原样返回，直接参与 slice/OFFSET 会出错（C14）。
+ * 小于 min 的取值（0、负数）视为非法并回退到 defaultValue，与 Go/Worker 的 clamp 行为一致。
+ */
+const getQueryClampedNumber = (
+  query: string | string[] | undefined,
+  defaultValue: number,
+  min: number,
+  max: number
+): number => {
+  const value = getQueryNumber(query, defaultValue);
+  if (value < min) return defaultValue;
+  return Math.min(value, max);
+};
+
 const getQueryBoolean = (query: string | string[] | undefined, defaultValue: boolean): boolean => {
   let strValue: string | undefined;
 
@@ -48,4 +64,4 @@ const getQueryString = (query: string | string[] | undefined, defaultValue: stri
   return strValue;
 }
 
-export { getQueryNumber, getQueryBoolean, getQueryString };
+export { getQueryNumber, getQueryClampedNumber, getQueryBoolean, getQueryString };

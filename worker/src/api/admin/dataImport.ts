@@ -2,7 +2,8 @@ import { Context } from 'hono';
 import { Bindings } from '../../bindings';
 import { setSetting } from '../../utils/settings';
 import { checkContent, sanitizeUrl, isValidIpBlacklistJson, MAX_CONTENT, MAX_AUTHOR, MAX_EMAIL, MAX_URL, MAX_POST_SLUG } from '../../utils/security';
-import { parseMarkdown } from '../../utils/markdown';
+import { parseMarkdown, sanitizeHtml } from '../../utils/markdown';
+import { toMillis } from '../../utils/time';
 
 // 导入时不允许用空值覆盖已有值的敏感字段
 const SENSITIVE_SETTINGS = new Set(["email_password", "admin_comment_key"]);
@@ -42,10 +43,12 @@ export const importComments = async (c: Context<{ Bindings: Bindings }>) => {
         continue;
       }
 
-      // 不信任导入文件中的 contentHtml：统一由正文重新渲染
-      const contentHtml = parseMarkdown(contentText);
-      const pubDate = item.pubDate || item.pub_date || new Date().toISOString();
-      const status = item.status || 'approved';
+      // 不信任导入文件中的 contentHtml：统一由正文重新渲染并净化
+      const contentHtml = sanitizeHtml(parseMarkdown(contentText));
+      // pub_date 兼容毫秒整数与 ISO 字符串，无法解析时退回当前时间（三端契约一致）
+      const pubDate = toMillis(item.pubDate ?? item.pub_date) ?? Date.now();
+      // 缺省状态与三端表默认值对齐：pending（最安全）
+      const status = item.status || 'pending';
       const parentId = item.parentId || item.parent_id || null;
       const url = sanitizeUrl(item.url) || null;
       const ipAddress = item.ipAddress || item.ip_address || null;
@@ -74,7 +77,7 @@ export const importComments = async (c: Context<{ Bindings: Bindings }>) => {
 export const importSettings = async (c: Context<{ Bindings: Bindings }>) => {
   const body = await c.req.json<Record<string, string>>();
   if (!body || typeof body !== "object") {
-    return c.json({ code: 400, message: "请提供有效的设置数据" });
+    return c.json({ code: 400, message: "请提供有效的设置数据" }, 400);
   }
 
   const allowList = new Set([

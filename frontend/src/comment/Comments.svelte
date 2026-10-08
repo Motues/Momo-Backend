@@ -155,7 +155,13 @@
     return count;
   }
 
-  async function loadComments(loadMore = false) {
+  /**
+   * 拉取评论。
+   * @param loadMore 是否为「加载更多」（决定使用 loadingMore 还是 loading 状态）
+   * @param targetPage 目标页码（默认当前页）；成功后才会推进 page，保证失败可重试
+   * @returns 是否成功
+   */
+  async function loadComments(loadMore = false, targetPage: number = page): Promise<boolean> {
     if (loadMore) {
       loadingMore = true;
     } else {
@@ -163,30 +169,36 @@
     }
     try {
       const res = await fetch(
-        `${apiUrl}/api/comments?post_slug=${encodeURIComponent(postSlug)}&nested=true&page=${page}&limit=${limit}`
+        `${apiUrl}/api/comments?post_slug=${encodeURIComponent(postSlug)}&nested=true&page=${targetPage}&limit=${limit}`
       );
-      if (!res.ok) throw new Error(t('comments.loadFailed'));
+      // 只抛出 HTTP 状态，避免与渲染处的「加载失败」文案重复
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      const newComments = data.data?.comments || [];
-      if (page === 1) {
+      const newComments = data?.data?.comments || [];
+      if (targetPage === 1) {
         comments = newComments;
       } else {
         comments = [...comments, ...newComments];
       }
-      hasMore = data.data.pagination.totalPage > page;
-      bloggerBadgeEnabled = data.data.blogger_badge_enabled === 'true';
-      bloggerBadgeText = data.data.blogger_badge_text || '';
-      placeholderName = data.data.placeholder_name || '';
-      placeholderEmail = data.data.placeholder_email || '';
-      placeholderContent = data.data.placeholder_content || '';
-      placeholderUrl = data.data.placeholder_url || '';
-      adminCommentKeyConfigured = data.data.admin_comment_key_configured === 'true';
-      adminEmailHash = data.data.admin_email_hash || '';
+      hasMore = (data?.data?.pagination?.totalPage || 0) > targetPage;
+      bloggerBadgeEnabled = data?.data?.blogger_badge_enabled === 'true';
+      bloggerBadgeText = data?.data?.blogger_badge_text || '';
+      placeholderName = data?.data?.placeholder_name || '';
+      placeholderEmail = data?.data?.placeholder_email || '';
+      placeholderContent = data?.data?.placeholder_content || '';
+      placeholderUrl = data?.data?.placeholder_url || '';
+      adminCommentKeyConfigured = data?.data?.admin_comment_key_configured === 'true';
+      adminEmailHash = data?.data?.admin_email_hash || '';
       if (!adminCommentKeyConfigured) adminKey = '';
-      verifyEnabled = parseBool(data.data.verify_enabled);
-      verifyHoneypot = data.data.verify_honeypot || '';
+      verifyEnabled = parseBool(data?.data?.verify_enabled);
+      verifyHoneypot = data?.data?.verify_honeypot || '';
+      // 成功后必须重置错误态：否则一次失败会让评论区在本次会话内再也不显示
+      error = '';
+      page = targetPage;
+      return true;
     } catch (err: any) {
-      error = err.message;
+      error = err?.message || t('comments.loadFailed');
+      return false;
     } finally {
       if (loadMore) {
         loadingMore = false;
@@ -194,6 +206,12 @@
         loading = false;
       }
     }
+  }
+
+  /** 加载下一页：只有请求成功才推进页码，失败时保持原页码可重试 */
+  async function loadMoreComments() {
+    if (loadingMore) return;
+    await loadComments(true, page + 1);
   }
 
   async function submitComment(parentId: number | null = null, replyData: any = null) {
@@ -285,7 +303,7 @@
         notify(data?.message || t('comments.submitSuccess'));
       }
 
-      await loadComments();
+      await loadComments(false, 1);
     } catch (err) {
       notify(t('comments.submitFailed'));
     } finally {
@@ -338,8 +356,8 @@
 
         {#if adminCommentKeyConfigured && isAdminEmail}
           <div>
-            <label for="admin-key" class="block text-sm text-[var(--text-color)] mb-1">管理员验证密钥<span class="text-red-500">*</span></label>
-            <input id="admin-key" type="password" placeholder="请输入管理员评论密钥" bind:value={adminKey}
+            <label for="admin-key" class="block text-sm text-[var(--text-color)] mb-1">{t('comments.adminKey')}<span class="text-red-500">*</span></label>
+            <input id="admin-key" type="password" placeholder={t('comments.adminKeyPlaceholder')} bind:value={adminKey}
               class="rounded w-full text-[var(--text-color)] border border-[var(--button-border-color)] focus:outline-none focus:border-[var(--link-color)] text-sm p-2" />
           </div>
         {/if}
@@ -434,7 +452,7 @@
 
       {#if hasMore}
         <div class="flex justify-center mt-8">
-          <button on:click={() => { page++; loadComments(true); }}
+          <button on:click={loadMoreComments}
             disabled={loadingMore}
             class="px-6 py-2.5 w-full text-sm font-medium text-[var(--text-color)] bg-transparent hover:bg-[var(--button-hover-bg-color)] active:bg-[var(--button-hover-bg-color)] transition-all duration-300 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
             {#if loadingMore}

@@ -17,7 +17,7 @@ function checkAuth(c: Context): boolean {
 // 导出时置空的敏感字段：避免 SMTP 密码 / 博主密钥以明文落盘
 const SENSITIVE_EXPORT_KEYS = ["email_password", "admin_comment_key"];
 
-// 导出系统设置（不含 admin_name/admin_password/comment_verify_secret；敏感字段置空）
+// 导出系统设置（含 admin_name；不含 admin_password/comment_verify_secret；敏感字段置空）
 export async function exportSettings(c: Context): Promise<Response> {
   if (!checkAuth(c)) {
     return c.json({ code: 401, message: "Invalid token" }, 401);
@@ -28,6 +28,8 @@ export async function exportSettings(c: Context): Promise<Response> {
   const allowList: Record<string, boolean> = {
     site_name: true,
     admin_email: true,
+    // 与 Go/Worker 一致：导出管理员用户名，保证「导出 → 导入」往返后管理员身份不丢
+    admin_name: true,
     smtp_host: true,
     smtp_port: true,
     email_user: true,

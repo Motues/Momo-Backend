@@ -16,6 +16,26 @@ const MAX_POST_SLUG = 200;
 // 导入时不允许用空值覆盖已有值的敏感字段
 const SENSITIVE_SETTINGS = ["email_password", "admin_comment_key"];
 
+/**
+ * 解析导入数据中的 pub_date（C12 契约）：
+ * 依次兼容毫秒整数、数字字符串与 ISO 字符串；无法解析时退回当前时间。
+ */
+function parsePubDate(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (/^\d+$/.test(trimmed)) {
+      const n = Number(trimmed);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+    const parsed = Date.parse(trimmed);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return Date.now();
+}
+
 function checkAuth(c: Context): boolean {
   const authHeader = c.req.header("Authorization") || "";
   const key = extractToken(authHeader);
@@ -95,8 +115,12 @@ export async function importComments(c: Context): Promise<Response> {
       if (item.browser) data.browser = String(item.browser);
       if (item.user_agent) data.user_agent = String(item.user_agent);
       if (item.parent_id || item.parentId) data.parent_id = item.parent_id || item.parentId;
-      if (item.status) data.status = String(item.status);
-      if (item.pub_date || item.pubDate) data.pub_date = new Date(item.pub_date || item.pubDate).getTime();
+      // 缺省状态与三端表默认值对齐：pending（最安全）
+      data.status = item.status ? String(item.status) : "pending";
+      // pub_date 兼容毫秒整数与 ISO 字符串，无法解析时退回当前时间
+      if (item.pub_date !== undefined || item.pubDate !== undefined) {
+        data.pub_date = parsePubDate(item.pub_date ?? item.pubDate);
+      }
 
       await db.insert(schema.comments).values(data as any).run();
       imported++;

@@ -1,6 +1,7 @@
 import { Context } from 'hono';
 import { Bindings } from '../../bindings';
 import { getAllSettings } from '../../utils/settings';
+import { toIsoString } from '../../utils/time';
 import pkg from '../../../package.json';
 
 // 导出时置空的敏感字段：避免 SMTP 密码 / 博主密钥以明文落盘
@@ -10,7 +11,7 @@ export const exportSettings = async (c: Context<{ Bindings: Bindings }>) => {
   const all = await getAllSettings(c.env);
 
   const allowList = new Set([
-    "site_name", "admin_email",
+    "site_name", "admin_email", "admin_name",
     "smtp_host", "smtp_port", "email_user", "email_password", "email_secure",
     "allow_origin", "email_enabled",
     "reply_template", "notification_template",
@@ -68,7 +69,8 @@ export const exportComments = async (c: Context<{ Bindings: Bindings }>) => {
 
   const comments = (results || []).map((row: any) => ({
     id: row.id,
-    pubDate: row.pub_date,
+    // 与 Node/Go 一致：导出 ISO 字符串（pub_date 在库里是毫秒整数）
+    pubDate: toIsoString(row.pub_date),
     postSlug: row.post_slug,
     author: row.author,
     email: row.email,

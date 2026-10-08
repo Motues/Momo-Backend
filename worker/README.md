@@ -45,7 +45,7 @@ Cloudflare Worker 版本基于 Cloudflare Workers + D1 + KV 实现，无需服�
 ```sql
 CREATE TABLE IF NOT EXISTS Comment (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    pub_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+    pub_date INTEGER NOT NULL DEFAULT (CAST(strftime('%s', 'now') AS INTEGER) * 1000),
     post_slug TEXT NOT NULL,
     author TEXT NOT NULL,
     email TEXT NOT NULL,
@@ -58,12 +58,15 @@ CREATE TABLE IF NOT EXISTS Comment (
     content_text TEXT NOT NULL,
     content_html TEXT NOT NULL,
     parent_id INTEGER,
-    status TEXT DEFAULT 'approved',
+    status TEXT DEFAULT 'pending',
     FOREIGN KEY (parent_id) REFERENCES Comment (id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_post_slug ON Comment(post_slug);
 CREATE INDEX IF NOT EXISTS idx_status ON Comment(status);
 ```
+
+> `pub_date` 统一为 **Unix 毫秒整数**（与 Node/Go 一致）。`SchemaMigration` 表由 Worker 首次请求时自动创建，
+> 不需要手工执行；历史数据里的 ISO 字符串也会在那时自动转为毫秒整数（见 `doc/migrations/README.md`）。
 ![deploy-3-D1-2](../doc/images/worker/deploy-3-D1-2.png)
 
 KV 命名空间的绑定与数据类似。左侧选择 `KV命名空间`，然后点击右下角的添加绑定。这里的变量名称一定要填写为 `MOMO_AUTH_KV`，KV 选择已有的，或者创建一个新的。完成之后点击右下角的 `添加绑定` 按钮。

@@ -283,8 +283,9 @@ func (h *CommentHandler) TestEmail(c *gin.Context) {
 
 	if err := svc.SendRaw(adminEmail, "SMTP 配置验证", htmlContent); err != nil {
 		log.Printf("[ERROR] Test email failed: %v", err)
+		// HTTP 状态码与响应体 code 必须一致（C8）
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    400,
+			"code":    500,
 			"message": "邮件发送失败，请检查 SMTP 配置",
 		})
 		return
@@ -329,8 +330,9 @@ func (h *CommentHandler) ChangePassword(c *gin.Context) {
 	}
 
 	if !utils.CheckAdminCredentials(req.OldName, req.OldPassword) {
+		// HTTP 状态码与响应体 code 必须一致（C8）
 		c.JSON(http.StatusUnauthorized, gin.H{
-			"code":    400,
+			"code":    401,
 			"message": "Current credentials are incorrect",
 		})
 		return
@@ -454,9 +456,10 @@ func (h *CommentHandler) UpdateCommentStatus(c *gin.Context) {
 	}
 
 	if err := h.Repo.UpdateStatus(c.Request.Context(), id, status); err != nil {
+		// HTTP 状态码与响应体 code 必须一致（C8）
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    400,
-			"message": "Invalid request parameters",
+			"code":    500,
+			"message": "Failed to update comment status",
 		})
 		return
 	}
@@ -573,8 +576,11 @@ func (h *CommentHandler) GetUserList(c *gin.Context) {
 
 	limitStr := c.DefaultQuery("limit", "20")
 	limit, err := strconv.Atoi(limitStr)
+	// 分页参数 clamp（C14）：1 <= limit <= 100
 	if err != nil || limit < 1 {
 		limit = 20
+	} else if limit > 100 {
+		limit = 100
 	}
 
 	search := strings.TrimSpace(c.DefaultQuery("search", ""))
@@ -726,6 +732,38 @@ func mustJSON(v interface{}) string {
 	return string(data)
 }
 
+// parseImportedPubDate 解析导入数据中的 pub_date（C12 契约）：
+// 依次兼容毫秒整数、数字字符串与 ISO 字符串；无法解析时退回当前时间。
+func parseImportedPubDate(raw json.RawMessage) int64 {
+	text := strings.TrimSpace(string(raw))
+	if text == "" || text == "null" {
+		return time.Now().UnixMilli()
+	}
+
+	// 毫秒整数，或形如 "1712345678901" 的数字字符串
+	if n, err := strconv.ParseInt(strings.Trim(text, `"`), 10, 64); err == nil && n > 0 {
+		return n
+	}
+
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		s = strings.TrimSpace(s)
+		for _, layout := range []string{
+			time.RFC3339Nano,
+			time.RFC3339,
+			"2006-01-02T15:04:05.000Z",
+			"2006-01-02 15:04:05",
+			"2006-01-02",
+		} {
+			if t, err := time.Parse(layout, s); err == nil {
+				return t.UnixMilli()
+			}
+		}
+	}
+
+	return time.Now().UnixMilli()
+}
+
 // GetUserComments 获取指定用户的评论
 func (h *CommentHandler) GetUserComments(c *gin.Context) {
 	author := c.Query("author")
@@ -770,7 +808,7 @@ func (h *CommentHandler) GetUserComments(c *gin.Context) {
 	})
 }
 
-// ExportSettings 导出系统设置（含 email_password，不含 admin_name/admin_password）
+// ExportSettings 导出系统设置（含 admin_name 与置空后的 email_password/admin_comment_key，不含 admin_password）
 func (h *CommentHandler) ExportSettings(c *gin.Context) {
 	all := utils.GetAllSettings()
 	filtered := make(map[string]string)
@@ -780,7 +818,8 @@ func (h *CommentHandler) ExportSettings(c *gin.Context) {
 	}
 	sensitiveOmitted := []string{}
 	allowList := map[string]bool{
-		"site_name": true, "admin_email": true,
+		// admin_name 也一并导出：否则「导出 → 导入」往返后管理员用户名会丢失（C12）
+		"site_name": true, "admin_email": true, "admin_name": true,
 		"smtp_host": true, "smtp_port": true, "email_user": true, "email_password": true, "email_secure": true,
 		"admin_comment_key": true,
 		"allow_origin":      true, "email_enabled": true,
@@ -839,9 +878,27 @@ func (h *CommentHandler) ExportComments(c *gin.Context) {
 		return
 	}
 
-	resp := make([]model.AdminCommentResponse, 0)
+	// 导出契约与 Node/Worker 对齐（C12）：必须带上 parentId，
+	// 否则「导出 → 导入」会丢失回复关系
+	type exportComment struct {
+		ID          int64   `json:"id"`
+		PubDate     string  `json:"pubDate"`
+		PostSlug    string  `json:"postSlug"`
+		Author      string  `json:"author"`
+		Email       string  `json:"email"`
+		URL         *string `json:"url"`
+		IPAddress   *string `json:"ipAddress"`
+		OS          *string `json:"os"`
+		Browser     *string `json:"browser"`
+		ContentText string  `json:"contentText"`
+		ContentHtml string  `json:"contentHtml"`
+		ParentID    *int64  `json:"parentId,omitempty"`
+		Status      string  `json:"status"`
+	}
+
+	resp := make([]exportComment, 0)
 	for _, comm := range allComments {
-		resp = append(resp, model.AdminCommentResponse{
+		resp = append(resp, exportComment{
 			ID:          comm.ID,
 			PubDate:     time.UnixMilli(comm.PubDate).UTC().Format("2006-01-02T15:04:05.000Z"),
 			PostSlug:    comm.PostSlug,
@@ -853,6 +910,7 @@ func (h *CommentHandler) ExportComments(c *gin.Context) {
 			Browser:     comm.Browser,
 			ContentText: comm.ContentText,
 			ContentHtml: comm.ContentHTML,
+			ParentID:    comm.ParentID,
 			Status:      comm.Status,
 		})
 	}
@@ -883,9 +941,9 @@ func (h *CommentHandler) ImportComments(c *gin.Context) {
 			Browser     *string `json:"browser"`
 			ContentText string  `json:"contentText"`
 			ContentHtml string  `json:"contentHtml"`
-			ParentID    *int64  `json:"parentId"`
-			Status      string  `json:"status"`
-			PubDate     string  `json:"pubDate"`
+			ParentID    *int64          `json:"parentId"`
+			Status      string          `json:"status"`
+			PubDate     json.RawMessage `json:"pubDate"`
 		} `json:"comments"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil || len(body.Comments) == 0 {
@@ -900,14 +958,7 @@ func (h *CommentHandler) ImportComments(c *gin.Context) {
 			errors = append(errors, "第 "+strconv.Itoa(i+1)+" 条缺少必填字段")
 			continue
 		}
-		pubDate := time.Now().UnixMilli()
-		if cData.PubDate != "" {
-			if t, err := time.Parse("2006-01-02T15:04:05.000Z", cData.PubDate); err == nil {
-				pubDate = t.UnixMilli()
-			} else if t, err := time.Parse("2006-01-02T15:04:05Z", cData.PubDate); err == nil {
-				pubDate = t.UnixMilli()
-			}
-		}
+		pubDate := parseImportedPubDate(cData.PubDate)
 
 		// 导入路径同样必须净化：数据可能来自不可信文件
 		safeAuthor := utils.CheckContent(cData.Author)
@@ -939,8 +990,9 @@ func (h *CommentHandler) ImportComments(c *gin.Context) {
 			// 不信任导入文件中的 contentHtml：统一由正文重新渲染并净化
 			ContentHTML: utils.SanitizeHtml(utils.ParseMarkdown(safeText)),
 			ParentID:    cData.ParentID,
-			Status:      "approved",
-			PubDate:     pubDate,
+			// 缺省状态与三端表默认值对齐：pending（最安全，C11/C12）
+			Status:  "pending",
+			PubDate: pubDate,
 		}
 		if cData.Status != "" {
 			comment.Status = cData.Status
@@ -1009,25 +1061,24 @@ func (h *CommentHandler) ImportSettings(c *gin.Context) {
 		return
 	}
 
-	updated := 0
+	// 契约与 Node/Worker 对齐（C12）：返回已更新的键名数组；空字符串照写（用于清空配置），
+	// 仅导出时被置空的敏感字段留空表示「未修改」
+	updated := make([]string, 0)
 	for key, value := range body {
 		if !allowList[key] {
 			continue
 		}
-		// 导出的敏感字段是空串：留空表示「未修改」，不得覆盖已有值
 		if (key == "email_password" || key == "admin_comment_key") && value == "" {
 			continue
 		}
-		if value != "" {
-			if err := utils.SetSetting(key, value); err == nil {
-				updated++
-			}
+		if err := utils.SetSetting(key, value); err == nil {
+			updated = append(updated, key)
 		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"code":    200,
-		"message": "设置导入完成，已更新 " + strconv.Itoa(updated) + " 项",
+		"message": "设置导入完成，已更新 " + strconv.Itoa(len(updated)) + " 项",
 		"data":    gin.H{"updated": updated},
 	})
 }

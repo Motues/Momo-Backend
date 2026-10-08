@@ -199,8 +199,11 @@ func (h *CommentHandler) PostComment(c *gin.Context) {
 				return nil
 			}
 		}(),
-		PubDate:     time.Now().UnixMilli(),
-		ContentText: utils.SanitizeHtml(sanitizedContent),
+		PubDate: time.Now().UnixMilli(),
+		// 纯文本列存原始文本（与 Node/Worker 一致，C2）：
+		// SanitizeHtml 只用于 ParseMarkdown 的输出，否则「我写 <script> 会怎样」
+		// 会被 bluemonday 剥成「我写 会怎样」
+		ContentText: sanitizedContent,
 		ContentHTML: utils.ParseMarkdown(sanitizedContent),
 		ParentID:    req.ParentID,
 		IPAddress:   ptrString(clientIP),

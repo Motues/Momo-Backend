@@ -1,10 +1,12 @@
 import { Context } from 'hono';
 import { Bindings } from '../../bindings';
 import { getSetting } from '../../utils/settings';
+import { toIsoString } from '../../utils/time';
 
 export const userList = async (c: Context<{ Bindings: Bindings }>) => {
-  const page = parseInt(c.req.query('page') || '1');
-  const limit = parseInt(c.req.query('limit') || '20');
+  // 分页参数 clamp：page >= 1，1 <= limit <= 100（避免 limit=0/负数导致 OFFSET 异常）
+  const page = Math.max(1, parseInt(c.req.query('page') || '1', 10) || 1);
+  const limit = Math.min(Math.max(1, parseInt(c.req.query('limit') || '20', 10) || 20), 100);
   const search = (c.req.query('search') || '').trim();
   // 邮箱验证筛选：all（默认）/ true（已验证）/ false（未验证）
   let verified = (c.req.query('verified') || 'all').trim().toLowerCase();
@@ -67,6 +69,9 @@ export const userList = async (c: Context<{ Bindings: Bindings }>) => {
 
   const users = (results || []).map((u: any) => ({
     ...u,
+    // pub_date 为毫秒整数：与 Node/Go 一致地输出 ISO 字符串（面板直接 formatDate 展示）
+    firstCommentDate: toIsoString(u.firstCommentDate),
+    lastCommentDate: toIsoString(u.lastCommentDate),
     emailVerified: u.emailVerified === 1,
     emailVerifiedAt: u.emailVerifiedAt || '',
     blacklisted: blacklistSet.has(String(u.email).toLowerCase()),

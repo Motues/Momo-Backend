@@ -694,7 +694,7 @@
 **响应（失败）**：
 ```json
 {
-  "code": 400,
+  "code": 401,
   "message": "Current credentials are incorrect"
 }
 ```
@@ -702,9 +702,11 @@
 ```json
 {
   "code": 400,
-  "message": "New password must be at least 4 characters"
+  "message": "New password must be at least 8 characters"
 }
 ```
+
+> 最小长度三端统一为 **8 位**（C10）。
 
 ---
 
@@ -737,6 +739,10 @@
 **请求参数**：
 - `id`：评论ID（必需）
 - `status`：评论状态，仅允许 `approved`、`pending`、`rejected`、`deleted`（必需）
+
+**级联语义**（三端一致）：
+- `deleted` / `pending`：**连同全部子孙评论一起修改**（递归更新所有回复）
+- `approved` / `rejected`：只修改本条评论
 
 **响应（成功）**：
 `PUT/admin/comments/status?id=...&status=...`
@@ -854,7 +860,10 @@
   - `7` — 最近 7 天（逐日）
   - `14` — 最近 14 天（逐日）
   - `30` — 最近 30 天（逐日）
-  - `0` — 最近 12 个月（按月聚合）
+  - `0` 或 `all` — 最近 12 个月（按月聚合）
+  - 上限 365 天，超出按 365 处理；非法值按默认 7 处理
+
+> 分桶时区：三端统一按 **UTC** 聚合（`strftime(..., 'unixepoch')`），返回的 `date` 形如 `2026-04-27`（逐日）或 `2026-04`（逐月）。
 
 **响应（成功）**：
 `GET /admin/stats/overview?range=7`
@@ -1136,10 +1145,12 @@
 
 ### 导出系统设置 (GET `/admin/data/export/settings`)
 
-> 导出系统设置，不含 `admin_name`/`admin_password`/`comment_verify_secret`。
+> 导出系统设置，不含 `admin_password`/`comment_verify_secret`。
 >
 > **敏感字段会被置空**：`email_password` 与 `admin_comment_key` 出于安全考虑统一导出为空字符串，
 > 响应中的 `sensitiveOmitted` 会列出被置空的字段名，导入后需要手工补填。
+>
+> `admin_name`（管理员用户名）会正常导出，保证「导出 → 导入」往返后管理员身份不丢失。
 
 **查询参数**：无
 
@@ -1156,6 +1167,7 @@
     "settings": {
       "site_name": "Momo Blog",
       "admin_email": "admin@example.com",
+      "admin_name": "momo",
       "smtp_host": "smtp.example.com",
       "smtp_port": "465",
       "email_user": "notify@example.com",
@@ -1182,8 +1194,14 @@
 >
 > **安全说明**：导入路径与前台提交执行相同的净化处理——
 > `author`/`contentText` 会去除脚本与危险标签，`url` 会经过协议白名单校验，
-> 并且 `contentHtml` **不会被采信**，一律由 `contentText` 重新渲染生成，防止通过导入文件写入 XSS 载荷。
+> 并且 `contentHtml` **不会被采信**，一律由 `contentText` 重新渲染并净化后生成，防止通过导入文件写入 XSS 载荷。
 > 字段长度上限与提交评论一致。
+>
+> **字段契约**（三端一致）：
+> - `pubDate`：同时接受毫秒整数（`1712345678901`）与 ISO 字符串（`2025-10-23T10:00:00.000Z`）；
+>   无法解析时使用当前时间。
+> - `status`：缺省为 `pending`（与三端表默认值一致，最安全）。
+> - `parentId`：用于还原回复关系，导出文件中已包含。
 
 **请求体**：
 ```json
@@ -1233,6 +1251,12 @@
 ### 导入系统设置 (POST `/admin/data/import/settings`)
 
 > 导入之前导出的系统设置 JSON 数据
+>
+> **字段契约**（三端一致）：
+> - 只有白名单内的键会被写入，其余键被忽略。
+> - 空字符串**会照写**（用于清空某项配置）；例外是 `email_password` 与 `admin_comment_key`，
+>   它们留空表示「未修改」（导出时这两个字段固定为空串）。
+> - `ip_blacklist` 必须是合法的 IP/CIDR JSON 数组，否则整个请求返回 400。
 
 **请求体**：
 ```json
@@ -1251,7 +1275,13 @@
   "code": 200,
   "message": "设置导入完成，已更新 5 项",
   "data": {
-    "updated": 5
+    "updated": [
+      "site_name",
+      "smtp_host",
+      "smtp_port",
+      "email_user",
+      "email_password"
+    ]
   }
 }
 ```

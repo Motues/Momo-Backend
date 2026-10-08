@@ -308,8 +308,8 @@
 
           {#if adminCommentKeyConfigured && isAdminEmail}
             <div>
-              <label for="reply-admin-key-{c.id}" class="block text-xs text-[var(--text-color)] mb-1">管理员验证密钥<span class="text-red-500">*</span></label>
-              <input id="reply-admin-key-{c.id}" type="password" placeholder="请输入管理员评论密钥" bind:value={replyAdminKey}
+              <label for="reply-admin-key-{c.id}" class="block text-xs text-[var(--text-color)] mb-1">{t('comments.adminKey')}<span class="text-red-500">*</span></label>
+              <input id="reply-admin-key-{c.id}" type="password" placeholder={t('comments.adminKeyPlaceholder')} bind:value={replyAdminKey}
                 class="rounded w-full text-[var(--text-color)] border border-[var(--button-border-color)] focus:outline-none focus:border-[var(--link-color)] text-sm py-1 px-2" />
             </div>
           {/if}

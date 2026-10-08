@@ -51,10 +51,11 @@ async (comments: Comment[] | null, page: number, limit: number, nested: boolean,
   if (nested) {
     // 构建嵌套结构的评论数据
     const nestedComments = await buildNestedComments(comments, adminEmail);
-    // 对根评论进行分页
+    // 对根评论进行分页（limit 防御性下限：limit=0 时 Math.ceil 会得到 Infinity）
+    const safeLimit = Math.max(1, limit);
     const rootTotal = nestedComments.length;
-    const start = (page - 1) * limit;
-    const paginatedRoots = nestedComments.slice(start, start + limit);
+    const start = (page - 1) * safeLimit;
+    const paginatedRoots = nestedComments.slice(start, start + safeLimit);
     return {
       code: 200,
       message: "Comments fetched successfully",
@@ -63,7 +64,7 @@ async (comments: Comment[] | null, page: number, limit: number, nested: boolean,
         pagination: {
           page,
           limit,
-          totalPage: Math.ceil(rootTotal / limit) || 1,
+          totalPage: Math.ceil(rootTotal / safeLimit) || 1,
         },
         blogger_badge_enabled: badgeEnabled,
         blogger_badge_text: badgeText,
@@ -78,10 +79,11 @@ async (comments: Comment[] | null, page: number, limit: number, nested: boolean,
       }
     }
   } else {
-    // 构建平面结构的评论数据，按页截取
+    // 构建平面结构的评论数据，按页截取（limit 防御性下限，避免负数页码截到最后一条）
+    const safeLimit = Math.max(1, limit);
     const total = comments.length;
-    const start = (page - 1) * limit;
-    const pageComments = comments.slice(start, start + limit);
+    const start = (page - 1) * safeLimit;
+    const pageComments = comments.slice(start, start + safeLimit);
     const plainComments = await Promise.all(pageComments.map(async comment => ({
       id: comment.id,
       author: comment.author,
@@ -102,7 +104,7 @@ async (comments: Comment[] | null, page: number, limit: number, nested: boolean,
         pagination: {
           page,
           limit,
-          totalPage: Math.ceil(total / limit) || 1,
+          totalPage: Math.ceil(total / safeLimit) || 1,
         },
         blogger_badge_enabled: badgeEnabled,
         blogger_badge_text: badgeText,

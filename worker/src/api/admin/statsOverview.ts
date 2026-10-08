@@ -1,10 +1,13 @@
 import { Context } from 'hono';
 import { Bindings } from '../../bindings';
+import { toIsoString } from '../../utils/time';
 
 export const statsOverview = async (c: Context<{ Bindings: Bindings }>) => {
-  const rangeParam = c.req.query('range');
-  const range = rangeParam ? parseInt(rangeParam) : 7;
-  const isAll = rangeParam === 'all' || range === 0;
+  // range=all / range=0：最近 12 个月按月聚合；其余：最近 N 天（默认 7，上限 365）
+  const rangeParam = (c.req.query('range') || '').trim().toLowerCase();
+  const isAll = rangeParam === 'all' || rangeParam === '0';
+  const parsedRange = parseInt(rangeParam, 10);
+  const range = isAll ? 0 : (Number.isFinite(parsedRange) && parsedRange > 0 ? Math.min(parsedRange, 365) : 7);
 
   // 1. 总评论数
   const totalComments = await c.env.MOMO_DB.prepare(
@@ -34,21 +37,23 @@ export const statsOverview = async (c: Context<{ Bindings: Bindings }>) => {
   }
 
   // 5. 最近趋势
+  // pub_date 为毫秒整数，分桶统一使用 UTC（strftime(...,'unixepoch') 就是 UTC），
+  // 键也用 UTC 生成，避免非 UTC 时区下整体偏移一天/一月（C3）
   const recentComments: { date: string; count: number }[] = [];
+  const now = new Date();
 
   if (isAll) {
     // 最近 12 个月：按月聚合
     const monthlyMap = new Map<string, number>();
-    const now = new Date();
     for (let i = 11; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+      const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
       monthlyMap.set(key, 0);
     }
-    const twelveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+    const twelveMonthsAgo = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1);
     const monthlyRows = await c.env.MOMO_DB.prepare(
-      "SELECT substr(pub_date, 1, 7) as month_str, COUNT(*) as count FROM Comment WHERE pub_date >= ? GROUP BY month_str ORDER BY month_str ASC"
-    ).bind(twelveMonthsAgo.toISOString()).all<{ month_str: string; count: number }>();
+      "SELECT strftime('%Y-%m', pub_date / 1000, 'unixepoch') as month_str, COUNT(*) as count FROM Comment WHERE pub_date >= ? GROUP BY month_str ORDER BY month_str ASC"
+    ).bind(twelveMonthsAgo).all<{ month_str: string; count: number }>();
     for (const row of monthlyRows.results || []) {
       if (monthlyMap.has(row.month_str)) {
         monthlyMap.set(row.month_str, row.count);
@@ -61,16 +66,13 @@ export const statsOverview = async (c: Context<{ Bindings: Bindings }>) => {
     const daysBack = range - 1;
     const dateCountMap = new Map<string, number>();
     for (let i = daysBack; i >= 0; i--) {
-      const d = new Date();
-      d.setDate(d.getDate() - i);
-      const key = d.toISOString().slice(0, 10);
-      dateCountMap.set(key, 0);
+      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - i));
+      dateCountMap.set(d.toISOString().slice(0, 10), 0);
     }
-    const sd = new Date();
-    sd.setDate(sd.getDate() - daysBack);
+    const startOfWindow = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - daysBack);
     const recentRows = await c.env.MOMO_DB.prepare(
-      "SELECT substr(pub_date, 1, 10) as date_str, COUNT(*) as count FROM Comment WHERE pub_date >= ? GROUP BY date_str ORDER BY date_str ASC"
-    ).bind(sd.toISOString()).all<{ date_str: string; count: number }>();
+      "SELECT strftime('%Y-%m-%d', pub_date / 1000, 'unixepoch') as date_str, COUNT(*) as count FROM Comment WHERE pub_date >= ? GROUP BY date_str ORDER BY date_str ASC"
+    ).bind(startOfWindow).all<{ date_str: string; count: number }>();
 
     for (const row of recentRows.results || []) {
       if (dateCountMap.has(row.date_str)) {
@@ -85,13 +87,13 @@ export const statsOverview = async (c: Context<{ Bindings: Bindings }>) => {
   // 6. 热门评论者 Top 5
   const topRows = await c.env.MOMO_DB.prepare(
     "SELECT author, email, COUNT(*) as count, MAX(pub_date) as last_date FROM Comment GROUP BY author, email ORDER BY count DESC LIMIT 5"
-  ).all<{ author: string; email: string; count: number; last_date: string }>();
+  ).all<{ author: string; email: string; count: number; last_date: unknown }>();
 
   const topCommenters = (topRows.results || []).map(r => ({
     author: r.author,
     email: r.email,
     count: r.count,
-    lastCommentDate: r.last_date
+    lastCommentDate: toIsoString(r.last_date)
   }));
 
   return c.json({

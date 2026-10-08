@@ -1,10 +1,11 @@
 import { Context } from 'hono';
 import { UAParser } from 'ua-parser-js';
 import { Bindings } from '../../bindings';
-import { sendCommentNotification, sendCommentReplyNotification, sendVerificationEmail, checkEmailVerified, hasUnverifiedToken, saveVerificationToken } from '../../utils/email';
+import { sendCommentNotification, sendCommentReplyNotification, sendVerificationEmail, checkEmailVerified, hasUnverifiedToken, saveVerificationToken, isEmailServiceAvailable } from '../../utils/email';
 import { isEmailEnabled, getSetting } from '../../utils/settings';
 import { isVerifyEnabled, verifyTicket } from '../../utils/verify';
 import { parseMarkdown } from '../../utils/markdown';
+import { toMillis } from '../../utils/time';
 import {
   checkContent,
   sanitizeUrl,
@@ -95,11 +96,12 @@ export const postComment = async (c: Context<{ Bindings: Bindings }>) => {
   // 3. 检查评论频率控制
   const lastComment = await c.env.MOMO_DB.prepare(
     "SELECT pub_date FROM Comment WHERE ip_address = ? ORDER BY pub_date DESC LIMIT 1"
-  ).bind(ip).first<{ pub_date: string }>();
+  ).bind(ip).first<{ pub_date: unknown }>();
 
   if (lastComment) {
-    const lastTime = new Date(lastComment.pub_date).getTime();
-    if (!isNaN(lastTime) && Date.now() - lastTime < 60 * 1000) {
+    // pub_date 统一为毫秒整数；toMillis 同时兼容历史 ISO 字符串
+    const lastTime = toMillis(lastComment.pub_date);
+    if (lastTime !== null && Date.now() - lastTime < 60 * 1000) {
       return c.json({ code: 429, message: "Time limit exceeded. Please wait." }, 429);
     }
   }
@@ -153,42 +155,41 @@ export const postComment = async (c: Context<{ Bindings: Bindings }>) => {
   // 邮箱验证检查
   let needsVerification = false;
   const emailVerifyEnabled = await getSetting(c.env, "email_verify_enabled");
-  if (emailVerifyEnabled === "true" && !isAdminVerified) {
-    const smtpConfig = await getSetting(c.env, "smtp_host");
-    if (smtpConfig) {
-      const isVerified = await checkEmailVerified(c.env, data.email);
-      if (!isVerified) {
-        needsVerification = true;
-        status = "pending";
+  // 前置条件与 Node/Go 对齐：SMTP 三项配置齐全才置 pending，
+  // 否则会把评论卡在「待审核」却永远发不出验证邮件
+  if (emailVerifyEnabled === "true" && !isAdminVerified && (await isEmailServiceAvailable(c.env))) {
+    const isVerified = await checkEmailVerified(c.env, data.email);
+    if (!isVerified) {
+      needsVerification = true;
+      status = "pending";
 
-        if (!(await hasUnverifiedToken(c.env, data.email))) {
-          const token = crypto.randomUUID();
-          const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-          await saveVerificationToken(c.env, data.email, token, expiresAt, data.post_slug, postTitle);
+      if (!(await hasUnverifiedToken(c.env, data.email))) {
+        const token = crypto.randomUUID();
+        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+        await saveVerificationToken(c.env, data.email, token, expiresAt, data.post_slug, postTitle);
 
-          // 优先使用手动配置的验证地址，否则从请求头推断
-          let baseUrl = await getSetting(c.env, "verify_base_url");
-          if (!baseUrl) {
-            const origin = c.req.header("Origin") || c.req.header("Host") || "";
-            const protocol = origin.includes("localhost") || origin.includes("127.0.0.1") ? "http" : "https";
-            baseUrl = origin.startsWith("http") ? origin : `${protocol}://${origin}`;
-          }
-          const verifyUrl = `${baseUrl.replace(/\/+$/, "")}/api/verify-email/verify?token=${encodeURIComponent(token)}&email=${encodeURIComponent(data.email)}`;
-
-          c.executionCtx.waitUntil((async () => {
-            try {
-              await sendVerificationEmail(c.env, {
-                toEmail: data.email,
-                toName: author,
-                postTitle: postTitle,
-                postSlug: data.post_slug,
-                verifyUrl,
-              });
-            } catch (e) {
-              console.error("验证邮件发送失败:", e);
-            }
-          })());
+        // 优先使用手动配置的验证地址，否则从请求头推断
+        let baseUrl = await getSetting(c.env, "verify_base_url");
+        if (!baseUrl) {
+          const origin = c.req.header("Origin") || c.req.header("Host") || "";
+          const protocol = origin.includes("localhost") || origin.includes("127.0.0.1") ? "http" : "https";
+          baseUrl = origin.startsWith("http") ? origin : `${protocol}://${origin}`;
         }
+        const verifyUrl = `${baseUrl.replace(/\/+$/, "")}/api/verify-email/verify?token=${encodeURIComponent(token)}&email=${encodeURIComponent(data.email)}`;
+
+        c.executionCtx.waitUntil((async () => {
+          try {
+            await sendVerificationEmail(c.env, {
+              toEmail: data.email,
+              toName: author,
+              postTitle: postTitle,
+              postSlug: data.post_slug,
+              verifyUrl,
+            });
+          } catch (e) {
+            console.error("验证邮件发送失败:", e);
+          }
+        })());
       }
     }
   }
@@ -202,7 +203,8 @@ export const postComment = async (c: Context<{ Bindings: Bindings }>) => {
         parent_id, status
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
-      new Date().toISOString(),
+      // pub_date 统一为毫秒整数（与 Node/Go 一致，见 utils/migrations.ts）
+      Date.now(),
       data.post_slug,
       author,
       data.email,
@@ -213,7 +215,7 @@ export const postComment = async (c: Context<{ Bindings: Bindings }>) => {
       uaResult.device.model || uaResult.device.type || "Desktop",
       userAgent,
       content,
-      parseMarkdown(content),
+      await parseMarkdown(content),
       data.parent_id || null,
       status
     ).run();
