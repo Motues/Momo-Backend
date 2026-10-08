@@ -225,7 +225,6 @@ const initCharts = () => {
   if (trendChartRef.value) {
     if (trendChart) trendChart.dispose();
     trendChart = init(trendChartRef.value);
-    const isMonthly = stats.value.recentComments.length > 0 && stats.value.recentComments[0].date?.length === 7;
     const dates = stats.value.recentComments.map(d => {
       if (d.date?.length === 7) {
         const parts = d.date.split('-');

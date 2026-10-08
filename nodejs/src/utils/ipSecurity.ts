@@ -7,8 +7,10 @@ const blockedIPs = new Map<string, { blockedUntil: number }>();
 
 // 失败次数阈值
 const MAX_FAILED_ATTEMPTS = 5;
-// 黑名单持续时间（毫秒），默认1小时
-const BLOCK_DURATION = 60 * 60 * 1000;
+// 黑名单持续时间（毫秒），30 分钟
+// 与 Go（go/internal/pkg/utils/auth.go 的锁定常量）、Worker
+// （worker/src/api/admin/login.ts）以及 nodejs/README.md 的说明保持一致
+const BLOCK_DURATION = 30 * 60 * 1000;
 
 /**
  * 检查IP是否被阻止
@@ -77,21 +79,16 @@ export function recordSuccessfulLogin(ip: string): void {
 }
 
 /**
- * 检查IP是否接近被阻止状态（用于警告）
+ * 读取某 IP 当前的失败次数。
+ *
+ * 生产代码不调用它：这是给自动化测试观察内部计数用的访问器
+ * （见 nodejs/test/utils.ipSecurity.test.ts）。请勿因为「没有生产调用方」而删除，
+ * 否则「第 N 次失败才封禁」这类断言只能退化成黑盒判断。
+ *
  * @param ip IP地址
  * @returns 返回失败次数
  */
 export function getFailedAttemptsCount(ip: string): number {
   const attemptInfo = failedAttempts.get(ip);
   return attemptInfo ? attemptInfo.attempts : 0;
-}
-
-/**
- * 重置IP的失败尝试次数
- * @param ip IP地址
- */
-export function resetFailedAttempts(ip: string): void {
-  if (failedAttempts.has(ip)) {
-    failedAttempts.delete(ip);
-  }
 }

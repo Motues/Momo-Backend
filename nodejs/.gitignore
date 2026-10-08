@@ -11,6 +11,9 @@ public/
 # data
 data/
 
+# test coverage (vitest --coverage)
+coverage/
+
 # dependencies
 node_modules/
 

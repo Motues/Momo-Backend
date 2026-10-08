@@ -1,4 +1,4 @@
-import { InferSelectModel, InferInsertModel } from "drizzle-orm";
+import { InferSelectModel } from "drizzle-orm";
 import { comments } from "../orm/schema";
 
 /**

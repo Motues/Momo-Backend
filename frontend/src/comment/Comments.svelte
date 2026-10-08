@@ -315,10 +315,6 @@
     }
   }
 
-  async function handleCommentDelete(e: CustomEvent) {
-    await loadComments();
-  }
-
   function setReplyingTo(id: number | null) {
     replyingToId = id;
   }
@@ -438,7 +434,6 @@
               on:submit={async (e) => {
                 await submitComment(e.detail.parentId, e.detail);
               }}
-              on:delete={handleCommentDelete}
               replyingToId={replyingToId}
               replySubmittingId={replySubmittingId}
               on:userInfoChange={(e) => {

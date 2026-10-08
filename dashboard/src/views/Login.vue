@@ -159,12 +159,6 @@ const validatePwForm = () => {
   }
 }
 
-const pwFormValid = computed(() => {
-  return passwordForm.new_name && passwordForm.new_password
-    && passwordForm.new_password.length >= 4
-    && passwordForm.new_password === passwordForm.confirm_password
-})
-
 const resetForm = () => {
   form.name = ''
   form.password = ''

@@ -1,5 +1,5 @@
 import type { Context } from "hono";
-import { checkKey, generateTempKey } from "../../utils/security";
+import { generateTempKey } from "../../utils/security";
 import { checkAdminCredentials, isDefaultAdmin } from "../../utils/settings";
 import { getClientIP } from "../../utils/ip";
 import LogService from "../../utils/log";

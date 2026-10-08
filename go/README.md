@@ -75,7 +75,7 @@ PORT: 3000  # server port
 | `SMTP 端口` | SMTP 端口，默认为 465，**如果不需要邮件服务可以不填** |
 | `邮箱用户名` | SMTP 用户名，**如果不需要邮件服务可以不填** |
 | `邮箱密码` | SMTP 密码，**如果不需要邮件服务可以不填** |
-| `安全连接 (SSL/TLS)` | SMTP 是否使用 SSL，默认为 true |
+| `安全连接 (SSL/TLS)` | SMTP 是否使用 SSL。后台面板新建配置时默认勾选 `true`；若该设置从未保存过，后端按 `false` 处理 |
 
 ## Docker 部署
 
@@ -214,7 +214,7 @@ server {
     server_name api.example.com; # 这里修改为你的域名
 
     location / {
-        proxy_pass http://localhost:17172; # 这里修改为实际端口号
+        proxy_pass http://localhost:3000; # 这里修改为实际端口号
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';

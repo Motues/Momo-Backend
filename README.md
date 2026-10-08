@@ -123,6 +123,34 @@ docker run -d \
 * [更新文档](./doc/update.md) — 版本升级指南
 * [Momo 静态博客](https://github.com/Motues/Momo) — 配套博客主题
 
+## 测试
+
+三套后端、管理面板与前端组件都配有自动化测试。除 Go 使用标准库 `testing` 外，其余均使用 [Vitest](https://vitest.dev/)。
+
+```bash
+# 三套后端
+cd nodejs && pnpm test       # Hono + Drizzle：纯逻辑单测 + 真实 SQLite 上的接口集成测试
+cd worker && pnpm test       # vitest-pool-workers：纯逻辑单测 + 内存 D1 / KV 上的接口集成测试
+cd go     && go test ./...   # utils、repository、handler 三层
+
+# 前端与管理面板
+cd frontend  && pnpm test
+cd dashboard && pnpm test
+```
+
+* 覆盖率：Vitest 项目用 `pnpm test:coverage`，Go 用 `go test ./... -cover`
+* **三端算法口径由共享向量钉死**：无感验证的 IP 哈希、蜜罐字段名、HMAC 签名与前导 0 比特数，
+  在 `go/internal/pkg/utils/verify_consistency_test.go`、`nodejs/test/utils.verify.test.ts`、
+  `worker/test/unit/verifyCrypto.test.ts` 中使用完全相同的期望值，任何一端漂移都会立刻失败
+* `worker/test/stubs/nodemailer.ts` 是 nodemailer 的测试替身：真实 nodemailer 依赖
+  `node:http` / `node:https` / `node:net`，无法在 vitest-pool-workers 的模块加载器中解析，
+  因此测试里替换模块本身（可用它断言邮件内容与发送失败分支）
+* Node 端每个测试文件都会重建 `nodejs/data/.vitest/test.db`，不会触碰本地开发库 `data/dev.db`
+* Windows 提示：vitest-pool-workers 退出时偶尔清理不净 miniflare 临时目录（报 `EBUSY: resource busy or locked`），
+  这会让该次运行以非 0 退出；重新运行即可，属于平台的目录锁问题，不是用例失败
+* `nodejs/test/utils.ipSecurity.test.ts` 依赖 `getFailedAttemptsCount` 观察内部失败计数，
+  该函数没有生产调用方，**属于测试可见性接口，请勿当作死代码删除**
+
 ## 开发计划
 
 - [ ] 支持其他评论系统的数据迁移（Twikoo、Valine 等）

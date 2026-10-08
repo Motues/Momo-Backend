@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sort"
 	"strings"
 	"sync"
 
@@ -23,24 +24,60 @@ var (
 	settingsOnce sync.Once
 )
 
+// allowedSettings 是后台可读写设置键的**唯一数据源**（与 Node、Worker 三端一致）。
+//
+// 历史上 handler 层的 GetSettings/UpdateSettings 各自维护了一份副本，
+// 本文件还留了一份过期副本（缺 placeholder_*、admin_comment_key(_enabled)、
+// email_verify_enabled、verify_base_url、comment_verify_(enabled|difficulty)、trust_proxy），
+// 三处容易互相漂移。现在统一收敛到这里，handler 只通过
+// IsAllowedSetting / AllowedSettingKeys 访问。
+//
+// 新增设置项时只改这一处。
 var allowedSettings = map[string]bool{
-	"site_name":             true,
-	"admin_email":           true,
-	"admin_name":            true,
-	"smtp_host":             true,
-	"smtp_port":             true,
-	"email_user":            true,
-	"email_password":        true,
-	"email_secure":          true,
-	"allow_origin":          true,
-	"email_enabled":         true,
-	"reply_template":        true,
-	"notification_template": true,
-	"comment_auto_approve":  true,
-	"ip_blacklist":          true,
-	"email_blacklist":       true,
-	"blogger_badge_enabled": true,
-	"blogger_badge_text":    true,
+	"site_name":                 true,
+	"admin_email":               true,
+	"admin_name":                true,
+	"smtp_host":                 true,
+	"smtp_port":                 true,
+	"email_user":                true,
+	"email_password":            true,
+	"email_secure":              true,
+	"allow_origin":              true,
+	"email_enabled":             true,
+	"reply_template":            true,
+	"notification_template":     true,
+	"comment_auto_approve":      true,
+	"ip_blacklist":              true,
+	"email_blacklist":           true,
+	"blogger_badge_enabled":     true,
+	"blogger_badge_text":        true,
+	"placeholder_name":          true,
+	"placeholder_email":         true,
+	"placeholder_content":       true,
+	"placeholder_url":           true,
+	"admin_comment_key":         true,
+	"admin_comment_key_enabled": true,
+	"email_verify_enabled":      true,
+	"verify_base_url":           true,
+	"comment_verify_enabled":    true,
+	"comment_verify_difficulty": true,
+	"trust_proxy":               true,
+}
+
+// IsAllowedSetting 判断某个设置键是否允许通过后台接口读写。
+func IsAllowedSetting(key string) bool {
+	return allowedSettings[key]
+}
+
+// AllowedSettingKeys 返回全部允许的设置键。
+// 返回值已排序，保证接口输出稳定（不依赖 map 迭代顺序）。
+func AllowedSettingKeys() []string {
+	keys := make([]string, 0, len(allowedSettings))
+	for k := range allowedSettings {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func InitSettingsDB(db *sqlx.DB) {

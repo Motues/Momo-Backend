@@ -16,7 +16,15 @@
 		"not_found_handling": "single-page-application" // 关键：开启 SPA 路由支持
 	}
 	// 注意英文逗号
-	// 
+	//
+	// 下面两个绑定默认是注释状态：全新克隆时还不存在任何 D1 / KV 资源，
+	// 直接启用会因为 database_id / id 无效而让 `wrangler dev`、`wrangler deploy` 失败。
+	// 部署前请先创建资源，再把输出里的 id 填进占位符并取消注释：
+	//   wrangler d1 create MOMO_DB
+	//   wrangler kv namespace create MOMO_AUTH_KV
+	// 注意：取消注释后要给上面 `assets` 块的结尾 `}` 补一个英文逗号，否则 JSON 非法。
+	// 详见 README 的部署章节。
+	//
 	// "d1_databases": [
 	// 	{
 	// 		"binding": "MOMO_DB",

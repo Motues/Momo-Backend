@@ -76,36 +76,7 @@ func (h *CommentHandler) GetSettings(c *gin.Context) {
 		"admin_comment_key": true,
 	}
 
-	allowedSettings := map[string]bool{
-		"site_name":                 true,
-		"admin_email":               true,
-		"admin_name":                true,
-		"smtp_host":                 true,
-		"smtp_port":                 true,
-		"email_user":                true,
-		"email_password":            true,
-		"email_secure":              true,
-		"allow_origin":              true,
-		"email_enabled":             true,
-		"reply_template":            true,
-		"notification_template":     true,
-		"comment_auto_approve":      true,
-		"ip_blacklist":              true,
-		"email_blacklist":           true,
-		"blogger_badge_enabled":     true,
-		"blogger_badge_text":        true,
-		"placeholder_name":          true,
-		"placeholder_email":         true,
-		"placeholder_content":       true,
-		"placeholder_url":           true,
-		"admin_comment_key":         true,
-		"admin_comment_key_enabled": true,
-		"email_verify_enabled":      true,
-		"verify_base_url":           true,
-		"comment_verify_enabled":    true,
-		"comment_verify_difficulty": true,
-		"trust_proxy":               true,
-	}
+	// 白名单的唯一数据源在 utils/settings.go（IsAllowedSetting / AllowedSettingKeys）
 
 	// 按模块分组
 	settingsGroups := map[string][]string{
@@ -126,10 +97,7 @@ func (h *CommentHandler) GetSettings(c *gin.Context) {
 		}
 	}
 	if keys == nil {
-		keys = make([]string, 0, len(allowedSettings))
-		for k := range allowedSettings {
-			keys = append(keys, k)
-		}
+		keys = utils.AllowedSettingKeys()
 	}
 
 	filtered := make(map[string]string)
@@ -172,39 +140,8 @@ func (h *CommentHandler) UpdateSettings(c *gin.Context) {
 		return
 	}
 
-	allowedSettings := map[string]bool{
-		"site_name":                 true,
-		"admin_email":               true,
-		"admin_name":                true,
-		"smtp_host":                 true,
-		"smtp_port":                 true,
-		"email_user":                true,
-		"email_password":            true,
-		"email_secure":              true,
-		"allow_origin":              true,
-		"email_enabled":             true,
-		"reply_template":            true,
-		"notification_template":     true,
-		"comment_auto_approve":      true,
-		"ip_blacklist":              true,
-		"email_blacklist":           true,
-		"blogger_badge_enabled":     true,
-		"blogger_badge_text":        true,
-		"placeholder_name":          true,
-		"placeholder_email":         true,
-		"placeholder_content":       true,
-		"placeholder_url":           true,
-		"admin_comment_key":         true,
-		"admin_comment_key_enabled": true,
-		"email_verify_enabled":      true,
-		"verify_base_url":           true,
-		"comment_verify_enabled":    true,
-		"comment_verify_difficulty": true,
-		"trust_proxy":               true,
-	}
-
 	for key := range body {
-		if !allowedSettings[key] {
+		if !utils.IsAllowedSetting(key) {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"code":    400,
 				"message": "Setting \"" + key + "\" is not allowed",
