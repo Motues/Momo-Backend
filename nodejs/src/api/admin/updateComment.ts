@@ -69,6 +69,13 @@ export default async (c: Context): Promise<Response> => {
     return c.json({ code: 400, message: "Field length limit exceeded" }, 400);
   }
 
+  // 存在性校验：否则 updateComment 更新后查不到记录会抛异常，
+  // 被全局 onError 兜底成 500；语义上应为 404
+  const existing = await CommentService.getCommentById(Number(id));
+  if (!existing) {
+    return c.json({ code: 404, message: "Comment not found" }, 404);
+  }
+
   await CommentService.updateComment(id, fields);
 
   return c.json({ code: 200, message: "Comment updated" });

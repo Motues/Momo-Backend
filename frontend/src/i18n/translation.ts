@@ -30,13 +30,11 @@ function i18nit(language: string): (key: string, params?: Record<string, string 
 	 * Main translation function with parameter interpolation
 	 * @param key - Translation key to look up
 	 * @param params - Optional parameters for string interpolation (replaces {paramName} placeholders)
-	 * @returns Translated and interpolated string; 缺键时返回空串（而不是 key 本身）
+	 * @returns Translated and interpolated string; returns empty string if translation key is missing
 	 */
 	const t = (key: string, params?: Record<string, string | number>) => {
 		const value = fallback(key);
 		if (typeof value !== 'string') {
-			// 缺键返回空串而不是 key：这样调用处的 `t('x') || '中文兜底'` 才能生效；
-			// 同时用告警暴露缺键，避免界面上直接出现 comments.xxx 这种原始键名
 			console.warn(`[i18n] missing translation key: ${key} (${language})`);
 			return '';
 		}

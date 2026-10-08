@@ -139,6 +139,7 @@ class CommentService {
     }
 
     const updated = await this.getCommentById(id);
+    // 调用方（handler）已做过存在性校验，此处仅作为并发删除等竞态的兜底
     if (!updated) throw new Error("Comment not found after update");
     return updated;
   }
@@ -162,6 +163,7 @@ class CommentService {
       .run();
 
     const updated = await this.getCommentById(id);
+    // 调用方（handler）已做过存在性校验，此处仅作为并发删除等竞态的兜底
     if (!updated) throw new Error("Comment not found after update");
     return updated;
   }

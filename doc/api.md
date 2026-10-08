@@ -433,7 +433,7 @@
   - `email` — 邮件通知（SMTP 配置、邮箱验证、邮件模板）
   - `security` — 安全设置（CORS、评论密钥、IP/邮箱黑名单）
   - `account` — 账户信息（管理员名称）
-  - 不传则返回全部设置（向后兼容）
+  - 不传则返回全部设置（向后兼容）；未知取值（含 `toString` 等原型链成员名）同样回退为全部设置
 
 **响应（成功）**：
 `GET /admin/settings`（返回全部设置）
@@ -601,7 +601,7 @@
 >   开启后 `x-forwarded-for` 取最右一跳。该项也可由环境变量 `TRUST_PROXY`（Node）或
 >   `config.yaml` 中的 `TRUST_PROXY`（Go）强制指定，此时页面设置不生效，详见各后端 README
 
-> **邮件模板可用占位符**：
+> **邮件模板可用占位符**（三端一致：替换为 **HTML 转义后**的值，未匹配的 `{{...}}` 保持原样）：
 > - 回复模板：`{{toName}}` `{{replyAuthor}}` `{{postTitle}}` `{{parentComment}}` `{{replyContent}}` `{{postUrl}}`
 > - 通知模板：`{{postTitle}}` `{{commentAuthor}}` `{{commentContent}}` `{{postUrl}}`
 
@@ -763,6 +763,16 @@
 }
 ```
 
+```json
+{
+  "code": 404,
+  "message": "Comment not found"
+}
+```
+
+> Node.js 端对不存在的 `id` 返回 **404**（若在读取后被并发删除也会得到该响应）。
+> Go / Worker 端的 UPDATE 影响 0 行时仍返回 200，建议后续统一为 404。
+
 ### 修改评论内容 (PUT `/admin/comments/edit`)
 
 **请求体**：
@@ -801,6 +811,16 @@
   "message": "No fields to update"
 }
 ```
+
+```json
+{
+  "code": 404,
+  "message": "Comment not found"
+}
+```
+
+> Node.js 端对不存在的 `id` 返回 **404**（若在读取后被并发删除也会得到该响应）。
+> Go / Worker 端的 UPDATE 影响 0 行时仍返回 200，建议后续统一为 404。
 
 ### 获取所有评论 (GET `/admin/comments/list`)
 

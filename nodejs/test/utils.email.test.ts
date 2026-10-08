@@ -143,23 +143,40 @@ describe("utils/email — 已配置 SMTP（本地假服务器）", () => {
     expect(body).toContain("https://example.com/p?x=1&amp;y=2");
   });
 
-  it("自定义 notification_template 被原样使用（占位符不会替换，与 Go/Worker 不一致）", async () => {
+  it("自定义 notification_template 会替换并转义占位符（与 Go/Worker 一致）", async () => {
     await setSetting("notification_template", "T: {{commentAuthor}}|{{postTitle}}|{{postUrl}}");
     smtp.reset();
 
     await sendCommentNotification({
-      postTitle: "标题",
-      postUrl: "https://example.com",
+      postTitle: "标题 <b>x</b>",
+      postUrl: "https://example.com?a=1&b=2",
       commentAuthor: INJECTION,
       commentContent: "内容",
     });
 
     const body = decodeMessage(smtp.messages[0]);
-    // Node 端当前实现：模板直接作为最终 HTML，既不替换占位符也不转义
-    // Go/Worker 端会把 {{commentAuthor}} 等替换为转义后的值
-    expect(body).toBe("T: {{commentAuthor}}|{{postTitle}}|{{postUrl}}");
-    expect(body).not.toContain(INJECTION_ESCAPED);
+    // 与 doc/api.md 的模板占位符约定一致：替换为 HTML 转义后的值
+    expect(body).toBe(
+      "T: &lt;img src=x onerror=alert(1)&gt;|标题 &lt;b&gt;x&lt;/b&gt;|https://example.com?a=1&amp;b=2"
+    );
+    expect(body).not.toContain("{{");
+    // 注入内容被转义，不会出现可执行标签
     expect(body).not.toContain(INJECTION);
+    db.run(sql`DELETE FROM "Settings" WHERE "key" = 'notification_template'`);
+  });
+
+  it("自定义 notification_template 也支持 {{commentContent}}", async () => {
+    await setSetting("notification_template", "N: {{commentContent}}");
+    smtp.reset();
+
+    await sendCommentNotification({
+      postTitle: "标题",
+      postUrl: "https://example.com",
+      commentAuthor: "作者",
+      commentContent: "5 < 6 & 7 > 2",
+    });
+
+    expect(decodeMessage(smtp.messages[0])).toBe("N: 5 &lt; 6 &amp; 7 &gt; 2");
     db.run(sql`DELETE FROM "Settings" WHERE "key" = 'notification_template'`);
   });
 
@@ -186,8 +203,11 @@ describe("utils/email — 已配置 SMTP（本地假服务器）", () => {
     expect(body).toContain("https://example.com/?q=&quot;x&quot;");
   });
 
-  it("自定义 reply_template 同样被原样使用", async () => {
-    await setSetting("reply_template", "R: {{toName}}|{{replyContent}}");
+  it("自定义 reply_template 会替换并转义全部占位符", async () => {
+    await setSetting(
+      "reply_template",
+      "R: {{toName}}|{{replyAuthor}}|{{postTitle}}|{{parentComment}}|{{replyContent}}|{{postUrl}}"
+    );
     smtp.reset();
 
     await sendCommentReplyNotification({
@@ -197,10 +217,32 @@ describe("utils/email — 已配置 SMTP（本地假服务器）", () => {
       parentComment: "原评论",
       replyAuthor: "回复者",
       replyContent: "回复内容",
+      postUrl: "https://example.com/?q=\"x\"",
+    });
+
+    expect(decodeMessage(smtp.messages[0])).toBe(
+      "R: 收件人|回复者|标题|原评论|回复内容|https://example.com/?q=&quot;x&quot;"
+    );
+    db.run(sql`DELETE FROM "Settings" WHERE "key" = 'reply_template'`);
+  });
+
+  it("自定义 reply_template 中转义注入内容", async () => {
+    await setSetting("reply_template", "R: {{toName}}|{{replyContent}}");
+    smtp.reset();
+
+    await sendCommentReplyNotification({
+      toEmail: "parent@example.com",
+      toName: INJECTION,
+      postTitle: "标题",
+      parentComment: "原评论",
+      replyAuthor: "回复者",
+      replyContent: INJECTION,
       postUrl: "https://example.com",
     });
 
-    expect(decodeMessage(smtp.messages[0])).toBe("R: {{toName}}|{{replyContent}}");
+    const body = decodeMessage(smtp.messages[0]);
+    expect(body).toBe(`R: ${INJECTION_ESCAPED}|${INJECTION_ESCAPED}`);
+    expect(body).not.toContain(INJECTION);
     db.run(sql`DELETE FROM "Settings" WHERE "key" = 'reply_template'`);
   });
 

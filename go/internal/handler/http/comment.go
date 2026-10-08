@@ -427,11 +427,17 @@ func buildCommentTree(comments []*model.CommentResponse) []*model.CommentRespons
 }
 
 func slicePagination(total, page, limit int) (int, int) {
+	// 越界页必须先夹取再切片：
+	// page 来自查询参数且只做了下界校正（page < 1 → 1），未做上界限制。
+	// 当 page 极大时 (page-1)*limit 会整数溢出为负数，
+	// 既绕过下面的 start > total 分支，又让调用方以负下标切片而 panic（500）。
+	// 这里把 start 夹到 [0, total]，任何越界页都退化为空区间。
 	start := (page - 1) * limit
-	if start > total {
+	end := start + limit
+	// 上界溢出（start 为负）或下界溢出（limit 为负导致 end < start）都退化为空区间
+	if start < 0 || end < start || start > total {
 		return total, total
 	}
-	end := start + limit
 	if end > total {
 		end = total
 	}

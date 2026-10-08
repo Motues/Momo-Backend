@@ -101,29 +101,28 @@ describe('checkEmailVerified / hasUnverifiedToken', () => {
 });
 
 /**
- * 🐞 已确认的三端漂移（不修，仅钉住现状）：
+ * ✅ 已修复的三端漂移：
  *   - Node.js: gte(expires_at, new Date().toISOString())  → ISO 与 ISO 比较，正确
  *   - Go:      expires_at >= '2006-01-02T15:04:05.000Z'    → ISO 与 ISO 比较，正确
- *   - Worker:  expires_at >= datetime('now')               → ISO 与 'YYYY-MM-DD HH:MM:SS' 比较
- * SQLite 按 TEXT 字典序比较：第 11 个字符 'T'(0x54) > ' '(0x20)，
- * 因此**同一 UTC 日内已过期的令牌仍被判定为未过期**。
- * 后果：过期后到当天 24:00（UTC）之前，postComment 不会为该邮箱重新签发验证邮件，
- * 评论会一直停在 pending。
- * 位置：worker/src/utils/email.ts:229
+ *   - Worker:  expires_at >= strftime('%Y-%m-%dT%H:%M:%fZ','now') → ISO 与 ISO 比较
+ * 此前 Worker 用 datetime('now')（'YYYY-MM-DD HH:MM:SS'）与 ISO 串比较，
+ * SQLite 按 TEXT 字典序比较时第 11 个字符 'T'(0x54) > ' '(0x20)，
+ * 导致**同一 UTC 日内已过期的令牌仍被判定为未过期**。
+ * 位置：worker/src/utils/email.ts 的 hasUnverifiedToken
  */
-describe('hasUnverifiedToken 的过期判定（同一天过期的缺陷）', () => {
-	it('根因：ISO 字符串与 datetime(\'now\') 的字典序比较结果错误', async () => {
+describe('hasUnverifiedToken 的过期判定', () => {
+	it('根因对照：datetime(\'now\') 与 ISO 串的字典序比较结果错误', async () => {
 		const row = await testEnv.MOMO_DB.prepare(
-			"SELECT ('2026-01-01T11:00:00.000Z' >= datetime('2026-01-01 12:00:00')) AS same_day, " +
-				"('2025-12-31T11:00:00.000Z' >= datetime('2026-01-01 12:00:00')) AS earlier_day"
-		).first<{ same_day: number; earlier_day: number }>();
-		// 11:00 早于 12:00，本应为 0（已过期），实际因为 'T' > ' ' 得到 1
-		expect(row?.same_day).toBe(1);
-		// 日期不同时字典序恰好给出正确结果
-		expect(row?.earlier_day).toBe(0);
+			"SELECT ('2026-01-01T11:00:00.000Z' >= datetime('2026-01-01 12:00:00')) AS datetime_cmp, " +
+				"('2026-01-01T11:00:00.000Z' >= strftime('%Y-%m-%dT%H:%M:%fZ','2026-01-01 12:00:00')) AS iso_cmp"
+		).first<{ datetime_cmp: number; iso_cmp: number }>();
+		// datetime() 格式下：11:00 早于 12:00，本应为 0（已过期），实际因 'T' > ' ' 得到 1
+		expect(row?.datetime_cmp).toBe(1);
+		// strftime 的 ISO 格式下，字典序与时间序一致
+		expect(row?.iso_cmp).toBe(0);
 	});
 
-	it('同一 UTC 日内已过期的 ISO 令牌仍返回 true（缺陷现状）', async () => {
+	it('同一 UTC 日内已过期的 ISO 令牌返回 false', async () => {
 		const nowMs = Date.now();
 		const date = new Date(nowMs);
 		const dayStartMs = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
@@ -134,11 +133,10 @@ describe('hasUnverifiedToken 的过期判定（同一天过期的缺陷）', () 
 			verified: 0,
 			expires_at: new Date(pastMs).toISOString(),
 		});
-		// 期望 false（已过期），实际 true —— 这正是上面 SQL 演示的漂移
-		expect(await hasUnverifiedToken(env, 'a@example.com')).toBe(true);
+		expect(await hasUnverifiedToken(env, 'a@example.com')).toBe(false);
 	});
 
-	it('若 expires_at 改写为 SQLite datetime 格式，同一天过期即可被正确识别', async () => {
+	it('SQLite datetime 格式的过期时间同样被正确识别为已过期', async () => {
 		const pastMs = Date.now() - 3600 * 1000;
 		await seedVerification({
 			email: 'a@example.com',

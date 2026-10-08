@@ -26,6 +26,13 @@ export default async (c: Context): Promise<Response> => {
     );
   }
 
+  // 存在性校验：否则 updateCommentStatus 更新后查不到记录会抛异常，
+  // 被全局 onError 兜底成 500；语义上应为 404
+  const existing = await CommentService.getCommentById(commentId);
+  if (!existing) {
+    return c.json({ code: 404, message: "Comment not found" }, 404);
+  }
+
   await CommentService.updateCommentStatus(commentId, status);
 
   return c.json({ code: 200, message: `Comment status updated` });

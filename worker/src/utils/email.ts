@@ -223,10 +223,18 @@ export async function checkEmailVerified(env: Bindings, email: string): Promise<
 
 /**
  * 检查邮箱是否存在未过期的未验证令牌
+ *
+ * expires_at 由 saveVerificationToken 以 `new Date().toISOString()` 写入
+ * （形如 `2026-01-01T11:00:00.000Z`），SQLite 按 TEXT 字典序比较，
+ * 因此右侧必须是**同一格式**的 ISO 串：若用 datetime('now') 得到
+ * `2026-01-01 12:00:00`，第 11 个字符 'T'(0x54) > ' '(0x20)，
+ * 会让同一 UTC 日内已过期的令牌被判为未过期（与 Node/Go 的三端漂移）。
+ * 这里用 strftime 生成同格式的当前 UTC 时间，保证两侧同为 ISO 串。
  */
 export async function hasUnverifiedToken(env: Bindings, email: string): Promise<boolean> {
   const row = await env.MOMO_DB.prepare(
-    "SELECT COUNT(*) as count FROM EmailVerification WHERE email = ? AND verified = 0 AND expires_at >= datetime('now')"
+    "SELECT COUNT(*) as count FROM EmailVerification WHERE email = ? AND verified = 0 " +
+      "AND expires_at >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
   ).bind(email).first<{ count: number }>();
   return row ? row.count > 0 : false;
 }

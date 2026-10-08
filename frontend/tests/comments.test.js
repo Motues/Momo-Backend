@@ -607,15 +607,14 @@ describe('Comments —— 人机验证（SilentVerify 集成）', () => {
 		await waitFor(() => expect(container.querySelector('.verify-box')).toBeTruthy());
 	});
 
-	it('验证挑战返回 enabled:false 时发送按钮仍然被禁用（记录现状：票据 "" 是假值）', async () => {
+	it('验证挑战返回 enabled:false 时视为放行，发送按钮可用（票据 ""）', async () => {
 		fetchMock(challengeDisabled);
 		const { container } = renderComments();
 		await waitFor(() => expect(container.querySelector('.verify-box')).toBeTruthy());
 		await waitFor(() => expect(container.textContent).toContain('0 条评论'));
 		// SilentVerify 通过 onTicket('') 表示「后端已关闭验证，放行」，
-		// 但模板里的 !verifyTicket 把 '' 当成未通过，导致按钮永远禁用
-		await new Promise((r) => setTimeout(r, 50));
-		expect(sendButton(container).disabled).toBe(true);
+		// 因此按钮的禁用条件必须区分 null（未验证）与 ''（放行）
+		await waitFor(() => expect(sendButton(container).disabled).toBe(false));
 	});
 
 	it('拿到票据后发送按钮可用，且提交时携带 verify_ticket', async () => {

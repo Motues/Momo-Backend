@@ -6,6 +6,18 @@ function htmlEscape(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+/**
+ * 应用自定义邮件模板：把 {{key}} 替换为转义后的值。
+ * 与 Go 的 utils.applyTemplate、Worker 的 replace 链保持同一语义
+ * （占位符替换 + HTML 转义），否则管理员自定义模板会把字面量 {{...}} 发到收件箱。
+ */
+function applyTemplate(tpl: string, placeholders: Record<string, string>): string {
+  return Object.entries(placeholders).reduce(
+    (html, [key, value]) => html.replace(new RegExp(`\\{\\{${key}\\}\\}`, 'g'), htmlEscape(value)),
+    tpl
+  );
+}
+
 // 核心接口与通用发送函数
 export interface SmtpConfig {
   host: string;
@@ -120,7 +132,16 @@ export async function sendCommentReplyNotification({
 
   try {
     const template = await getTemplate("reply_template", "");
-    const htmlContent = template || `
+    const htmlContent = template
+      ? applyTemplate(template, {
+          toName,
+          replyAuthor,
+          postTitle,
+          parentComment,
+          replyContent,
+          postUrl,
+        })
+      : `
         <div style="background-color: #f4f7f9; padding: 20px 10px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
           <div style="max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 10px rgba(0,0,0,0.05); border: 1px solid #e1e4e8;">
 
@@ -203,7 +224,14 @@ export async function sendCommentNotification({
 
   try {
     const template = await getTemplate("notification_template", "");
-    const htmlContent = template || `
+    const htmlContent = template
+      ? applyTemplate(template, {
+          postTitle,
+          commentAuthor,
+          commentContent,
+          postUrl,
+        })
+      : `
         <div style="background-color: #f6f8fa; padding: 40px 20px; min-height: 100%; font-family: 'PingFang SC', 'Microsoft YaHei', Helvetica, Arial, sans-serif;">
           <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.05); overflow: hidden;">
 

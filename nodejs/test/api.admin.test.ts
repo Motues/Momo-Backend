@@ -307,12 +307,20 @@ describe("GET /admin/settings", () => {
     expect(body.data.ip_blacklist).toBeUndefined();
   });
 
-  it("type=toString 会因原型链查找触发 500（已知缺陷）", async () => {
-    // settings.ts:61 使用 `type in SETTINGS_GROUPS`，会命中 Object.prototype 上的成员，
-    // 导致 keys 不是数组、for...of 抛 TypeError；详见最终报告中的 bug 列表。
+  it("type 命中 Object.prototype 成员时回退全量白名单（而不是 500）", async () => {
+    // settings.ts 使用 `type in SETTINGS_GROUPS` 时会命中原型链上的成员
+    // （toString / constructor / valueOf ...），导致 keys 不是数组而抛 TypeError → 500。
+    // 修复为 hasOwnProperty 判断后，这类 type 视为未知分组 → 回退全量白名单。
     const token = await loginToken();
-    const res = await api("/admin/settings?type=toString", { token });
-    expect(res.status).toBe(500);
+    await setSetting("admin_email", "admin@example.com");
+
+    for (const type of ["toString", "constructor", "valueOf", "hasOwnProperty"]) {
+      const res = await api(`/admin/settings?type=${type}`, { token });
+      expect(res.status, type).toBe(200);
+      const body = await json(res);
+      expect(body.code, type).toBe(200);
+      expect(body.data.admin_email, type).toBe("admin@example.com");
+    }
   });
 
   it("未知 type 回退到全量白名单", async () => {
@@ -533,18 +541,19 @@ describe("PUT /admin/comments/status", () => {
     expect(statusOf(child)).toBe("pending");
   });
 
-  it("对不存在的 id 返回 500（未做存在性校验，已知缺陷）", async () => {
-    // CommentService.updateCommentStatus 在更新后查不到记录会抛 Error("Comment not found after update")，
-    // 该异常未被 handler 捕获，Hono 兜底成 500；理想行为应为 404。
+  it("对不存在的 id 返回 404（而不是 500）", async () => {
+    // updateCommentStatus 更新后查不到记录会抛异常，被全局 onError 兜底成 500；
+    // handler 现在先做存在性校验并返回 404。
     const token = await loginToken();
     const res = await api("/admin/comments/status?id=999999&status=approved", { method: "PUT", token });
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(404);
+    expect((await json(res)).message).toBe("Comment not found");
   });
 
-  it("负数 id 同样返回 500（未做存在性校验，已知缺陷）", async () => {
+  it("负数 id 同样返回 404", async () => {
     const token = await loginToken();
     const res = await api("/admin/comments/status?id=-1&status=approved", { method: "PUT", token });
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(404);
   });
 });
 
@@ -650,14 +659,15 @@ describe("PUT /admin/comments/edit", () => {
     expect(row.author).toBe("清理后");
   });
 
-  it("对不存在的 id 返回 500（未做存在性校验，已知缺陷）", async () => {
+  it("对不存在的 id 返回 404（而不是 500）", async () => {
     const token = await loginToken();
     const res = await api("/admin/comments/edit", {
       method: "PUT",
       token,
       body: { id: 999999, author: "x" },
     });
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(404);
+    expect((await json(res)).message).toBe("Comment not found");
   });
 });
 

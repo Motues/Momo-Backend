@@ -37,6 +37,7 @@
   // 无感验证（Turnstile 风格）：默认关闭，由后端 verify_enabled 决定是否渲染
   let verifyEnabled = false;
   let verifyHoneypot = '';
+  // null = 尚未通过验证（按钮禁用）；'' = 后端已关闭验证，放行；其他 = 有效票据
   let verifyTicket: string | null = null;
   let verifyComponent: SilentVerify;
 
@@ -407,7 +408,7 @@
         >
           {showPreview ? t('comments.write') : t('comments.preview')}
         </button>
-        <button type="submit" disabled={submitting || !isContentWithinLimit(content) || (verifyEnabled && !verifyTicket)}
+        <button type="submit" disabled={submitting || !isContentWithinLimit(content) || (verifyEnabled && verifyTicket === null)}
           class="rounded px-4 py-2 text-sm font-medium text-[var(--text-color)] border border-[var(--button-border-color)] hover:bg-[var(--button-hover-bg-color)] disabled:opacity-50">
           {submitting ? t('comments.sending') : t('comments.send')}
         </button>

@@ -958,11 +958,11 @@ func TestSlicePagination(t *testing.T) {
 		{"末页不满", 7, 2, 5, 5, 7},
 		{"越界页返回空区间", 10, 5, 5, 10, 10},
 		{"total 为 0", 0, 1, 5, 0, 0},
-		{"page 为 0（未校正）", 10, 0, 5, -5, 0},
+		// handler 层已把 page < 1 校正为 1，函数本身也把负 start 夹到 total
+		{"page 为 0（夹到空区间）", 10, 0, 5, 10, 10},
 		{"limit 为 0", 10, 1, 0, 0, 0},
-		// handler 层已把 limit 夹到 >= 1，因此负数不会到达这里；
-		// 记录函数本身的行为：end = start + limit 变成负数
-		{"limit 为负", 10, 1, -5, 0, -5},
+		// handler 层已把 limit 夹到 >= 1；函数本身对负 end 一并夹取
+		{"limit 为负", 10, 1, -5, 10, 10},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			start, end := slicePagination(tc.total, tc.page, tc.limit)
@@ -974,34 +974,35 @@ func TestSlicePagination(t *testing.T) {
 	}
 }
 
-// TestSlicePaginationIntegerOverflow 记录当前实现的越界行为：
-// (page-1)*limit 在 64 位平台上会溢出为负数，从而绕过 start > total 的保护分支，
-// 让调用方以负下标切片并 panic（HTTP 层由 gin.Recovery 兜底为 500）。
+// TestSlicePaginationIntegerOverflow 验证溢出保护：
+// (page-1)*limit 在 64 位平台上会溢出为负数，修复后必须被夹到 [0,total]，
+// 不能把负下标返回给调用方。
 func TestSlicePaginationIntegerOverflow(t *testing.T) {
 	const hugePage = 200_000_000_000_000_000
 	start, end := slicePagination(10, hugePage, 50)
-	if start >= 0 {
-		t.Fatalf("(page-1)*limit 应溢出为负数，实际 start=%d", start)
+	if start != 10 || end != 10 {
+		t.Fatalf("溢出页应返回空区间 (10,10)，实际 (%d,%d)", start, end)
 	}
-	if end >= 0 {
-		t.Errorf("溢出后 end 也应为负，实际 %d", end)
-	}
-	if start > 10 {
-		t.Errorf("溢出后的 start 不应满足 start > total，实际 %d", start)
+	if start < 0 || end < 0 {
+		t.Errorf("返回值不能为负，实际 (%d,%d)", start, end)
 	}
 }
 
-// TestGetCommentsHugePagePanics 记录真实缺陷：
-// GET /api/comments?page=<超大值>&limit=50 会让 slicePagination 整数溢出，
-// 产生负下标切片 panic，最终返回 HTTP 500（而非空列表）。
+// TestGetCommentsHugePagePanics 验证真实缺陷已修复：
+// GET /api/comments?page=<超大值>&limit=50 曾让 slicePagination 整数溢出，
+// 产生负下标切片 panic，最终返回 HTTP 500。修复后应返回 200 空列表。
 // 相关代码：go/internal/handler/http/comment.go 的 slicePagination 与 GetComments。
 func TestGetCommentsHugePagePanics(t *testing.T) {
 	resetState(t)
 	seedComment(t, &model.Comment{PostSlug: "/p", Author: "a", Email: "a@x.com", ContentText: "t", ContentHTML: "<p>t</p>", Status: "approved", PubDate: 1000})
 
 	w := callJSON(t, "GET", "/api/comments?post_slug=/p&page=200000000000000000&limit=50", "")
-	if w.Code != 500 {
-		t.Fatalf("当前实现应因整数溢出 panic 并返回 500，实际 %d（body=%s）", w.Code, w.Body.String())
+	requireStatus(t, w, 200)
+
+	var payload commentsPayload
+	decodeInto(t, w, &payload)
+	if len(payload.Data.Comments) != 0 {
+		t.Errorf("越界页应返回空列表，实际 %d 条", len(payload.Data.Comments))
 	}
 }
 

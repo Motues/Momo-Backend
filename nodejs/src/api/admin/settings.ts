@@ -57,8 +57,11 @@ export async function getSettings(c: Context): Promise<Response> {
   const type = c.req.query("type");
 
   // 确定要返回的键列表
+  // 必须用 hasOwnProperty 判断：`type in SETTINGS_GROUPS` 会命中 Object.prototype
+  // 上的成员（toString / constructor / valueOf ...），使 keys 变成函数而非数组，
+  // 下面的 for...of 随即抛 TypeError 并返回 500。
   let keys: string[];
-  if (type && type in SETTINGS_GROUPS) {
+  if (type && Object.prototype.hasOwnProperty.call(SETTINGS_GROUPS, type)) {
     keys = SETTINGS_GROUPS[type];
   } else {
     keys = ALLOWED_SETTINGS;
