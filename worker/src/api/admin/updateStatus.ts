@@ -27,7 +27,7 @@ export const updateStatus = async (c: Context<{ Bindings: Bindings }>) => {
   //  - approved / rejected：只改本条
   const shouldCascade = status === 'deleted' || status === 'pending';
 
-  const { success } = shouldCascade
+  const { success, meta } = shouldCascade
     ? await c.env.MOMO_DB.prepare(`
         WITH RECURSIVE comment_tree AS (
           SELECT id FROM Comment WHERE id = ?
@@ -46,6 +46,15 @@ export const updateStatus = async (c: Context<{ Bindings: Bindings }>) => {
       code: 500,
       message: "Update failed" 
     }, 500);
+  }
+
+  // 影响 0 行说明评论不存在：与 Node/Go 统一返回 404，
+  // 否则前端会把「记录已被删除」当成更新成功
+  if (!meta || !meta.changes) {
+    return c.json({
+      code: 404,
+      message: "Comment not found"
+    }, 404);
   }
 
   return c.json({

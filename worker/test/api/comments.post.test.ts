@@ -314,6 +314,21 @@ describe('POST /api/comments —— 同 IP 频率限制', () => {
 		expect((await postComment({ post_slug: '/posts/a' }, '198.51.100.7')).status).toBe(200);
 		expect((await postComment({ post_slug: '/posts/b' }, '198.51.100.7')).status).toBe(429);
 	});
+
+	it('管理员邮箱不限流：60 秒内可连续提交', async () => {
+		await seedSettings({ admin_email: 'admin@example.com' });
+		const ip = '198.51.100.8';
+
+		expect((await postComment({ email: 'admin@example.com' }, ip)).status).toBe(200);
+		expect((await postComment({ email: 'admin@example.com' }, ip)).status).toBe(200);
+	});
+
+	it('普通邮箱仍受限流约束（未配置 admin_email 时也不能免限流）', async () => {
+		const ip = '198.51.100.9';
+
+		expect((await postComment({ email: 'admin@example.com' }, ip)).status).toBe(200);
+		expect((await postComment({ email: 'admin@example.com' }, ip)).status).toBe(429);
+	});
 });
 
 describe('POST /api/comments —— IP 黑名单', () => {

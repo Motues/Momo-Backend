@@ -77,16 +77,23 @@ func (h *CommentHandler) PostComment(c *gin.Context) {
 		deviceStr = "Desktop"
 	}
 
-	// 2. 检查评论频率控制 (60秒冷却)
+	// 2. 管理员身份判定（只依赖 admin_email）：
+	// 必须早于限流与黑名单检查，因为管理员邮箱不受 60 秒评论冷却限制。
+	adminEmail := utils.GetSetting("admin_email")
+	isAdminEmail := adminEmail != "" && req.Email == adminEmail
+
+	// 3. 检查评论频率控制 (60秒冷却，管理员邮箱不限流)
 	clientIP := utils.GetClientIP(c)
-	lastComment, err := h.Repo.GetLastCommentByIP(c.Request.Context(), clientIP)
-	if err == nil && lastComment != nil && lastComment.PubDate > 0 {
-		if time.Now().UnixMilli()-lastComment.PubDate < 60000 {
-			c.JSON(http.StatusTooManyRequests, gin.H{
-				"code":    429,
-				"message": "Time limit exceeded. Please wait.",
-			})
-			return
+	if !isAdminEmail {
+		lastComment, err := h.Repo.GetLastCommentByIP(c.Request.Context(), clientIP)
+		if err == nil && lastComment != nil && lastComment.PubDate > 0 {
+			if time.Now().UnixMilli()-lastComment.PubDate < 60000 {
+				c.JSON(http.StatusTooManyRequests, gin.H{
+					"code":    429,
+					"message": "Time limit exceeded. Please wait.",
+				})
+				return
+			}
 		}
 	}
 
@@ -108,12 +115,11 @@ func (h *CommentHandler) PostComment(c *gin.Context) {
 		return
 	}
 
-	// 管理员评论密钥验证
-	adminEmail := utils.GetSetting("admin_email")
+	// 管理员评论密钥验证（adminEmail 已在上方读取）
 	adminCommentKey := utils.GetSetting("admin_comment_key")
 	adminCommentKeyEnabled := utils.GetSetting("admin_comment_key_enabled")
 	isAdminVerified := false
-	if req.Email == adminEmail && adminCommentKey != "" && adminCommentKeyEnabled == "true" {
+	if isAdminEmail && adminCommentKey != "" && adminCommentKeyEnabled == "true" {
 		if req.AdminKey == adminCommentKey {
 			isAdminVerified = true
 		} else {

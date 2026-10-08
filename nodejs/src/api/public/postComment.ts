@@ -57,8 +57,13 @@ export default async (c: Context): Promise<Response> => {
       );
     }
 
-    // 检查评论时间
-    if (!(await canPostComment(ip))) {
+    // 管理员身份判定（只依赖 admin_email）：
+    // 必须早于限流与黑名单检查，因为管理员邮箱不受 60 秒评论冷却限制。
+    const adminEmail = (await getSetting("admin_email")) || "";
+    const isAdminEmail = !!adminEmail && data.email === adminEmail;
+
+    // 检查评论时间（管理员邮箱不限流）
+    if (!isAdminEmail && !(await canPostComment(ip))) {
       return c.json({ code: 429, message: "Time limit exceeded" }, 429);
     }
 
@@ -72,13 +77,12 @@ export default async (c: Context): Promise<Response> => {
       return c.json({ code: 403, message: "Your email has been blocked" }, 403);
     }
 
-    // 管理员评论密钥验证
-    const adminEmail = (await getSetting("admin_email")) || "";
+    // 管理员评论密钥验证（adminEmail 已在上方读取）
     const adminCommentKey = (await getSetting("admin_comment_key")) || "";
     const adminCommentKeyEnabled =
       (await getSetting("admin_comment_key_enabled")) || "false";
     let isAdminVerified = false;
-    if (data.email === adminEmail && adminCommentKey && adminCommentKeyEnabled === "true") {
+    if (isAdminEmail && adminCommentKey && adminCommentKeyEnabled === "true") {
       if (data.admin_key === adminCommentKey) {
         isAdminVerified = true;
       } else {

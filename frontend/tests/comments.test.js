@@ -574,6 +574,49 @@ describe('Comments —— 提交评论', () => {
 		await waitFor(() => expect(fetch.calls.filter((c) => c.method === 'GET').length).toBe(2));
 		expect(new URL(fetch.calls.at(-1).url).searchParams.get('page')).toBe('1');
 	});
+
+	it('提交后的刷新是静默的：不切回「正在加载评论...」，只更新列表', async () => {
+		stubAlert();
+		let resolveRefresh;
+		const fetch = fetchMock(async (url, init) => {
+			if (init?.method === 'POST') return jsonResponse({ code: 200, message: 'ok' });
+			if (fetch.calls.filter((c) => c.method === 'GET').length > 1) {
+				// 挂住刷新请求，好在刷新窗口内检查 DOM
+				return new Promise((resolve) => {
+					resolveRefresh = () => resolve(jsonResponse(listBody([makeComment()])));
+				});
+			}
+			return jsonResponse(listBody([]));
+		});
+		const { container } = renderComments();
+		await waitFor(() => expect(container.textContent).toContain('0 条评论'));
+
+		await submitMainForm(container);
+		await waitFor(() => expect(resolveRefresh).toBeTruthy());
+		// 静默刷新：期间不能出现整块加载态
+		expect(container.textContent).not.toContain('正在加载评论...');
+
+		resolveRefresh();
+		await waitFor(() => expect(container.textContent).toContain('1 条评论'));
+	});
+
+	it('提交后的静默刷新失败时保留已渲染的列表，不顶成错误提示', async () => {
+		stubAlert();
+		const fetch = fetchMock(async (url, init) => {
+			if (init?.method === 'POST') return jsonResponse({ code: 200, message: 'ok' });
+			if (fetch.calls.filter((c) => c.method === 'GET').length > 1) {
+				return jsonResponse({}, { ok: false, status: 500 });
+			}
+			return jsonResponse(listBody([]));
+		});
+		const { container } = renderComments();
+		await waitFor(() => expect(container.textContent).toContain('0 条评论'));
+
+		await submitMainForm(container);
+		await waitFor(() => expect(fetch.calls.filter((c) => c.method === 'GET').length).toBe(2));
+		expect(container.textContent).toContain('0 条评论');
+		expect(container.textContent).not.toContain('加载失败');
+	});
 });
 
 describe('Comments —— 人机验证（SilentVerify 集成）', () => {

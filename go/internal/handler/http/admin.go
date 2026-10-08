@@ -1,7 +1,9 @@
 package http
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"momo-backend-go/internal/model"
 	"momo-backend-go/internal/pkg/utils"
@@ -13,6 +15,20 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// commentExists 判断评论是否存在。
+// 参数错误（如 id 非法）由调用方提前拦截，此处只用于存在性校验。
+func (h *CommentHandler) commentExists(c *gin.Context, id int64) (bool, error) {
+	_, err := h.Repo.GetByID(c.Request.Context(), id)
+	if err == nil {
+		return true, nil
+	}
+	// 记录不存在：sql.ErrNoRows（modernc/sqlite 亦为此 sentinel）
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return false, err
+}
 
 // Login 优化后的登录逻辑
 func (h *CommentHandler) Login(c *gin.Context) {
@@ -392,6 +408,18 @@ func (h *CommentHandler) UpdateCommentStatus(c *gin.Context) {
 		return
 	}
 
+	// 存在性校验：与 Node/Worker 统一返回 404，
+	// 否则影响 0 行的 UPDATE 会被当成更新成功
+	exists, err := h.commentExists(c, id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "Failed to update comment status"})
+		return
+	}
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"code": 404, "message": "Comment not found"})
+		return
+	}
+
 	if err := h.Repo.UpdateStatus(c.Request.Context(), id, status); err != nil {
 		// HTTP 状态码与响应体 code 必须一致（C8）
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -469,6 +497,17 @@ func (h *CommentHandler) UpdateComment(c *gin.Context) {
 	}
 	if v, ok := fields["url"].(string); ok && len(v) > MaxURLLen {
 		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "Field length limit exceeded"})
+		return
+	}
+
+	// 存在性校验：与 Node/Worker 统一返回 404
+	exists, err := h.commentExists(c, req.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "Update failed"})
+		return
+	}
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"code": 404, "message": "Comment not found"})
 		return
 	}
 

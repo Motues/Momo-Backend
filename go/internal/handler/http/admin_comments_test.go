@@ -301,10 +301,14 @@ func TestUpdateCommentStatusNonexistentID(t *testing.T) {
 	resetState(t)
 	token := adminToken(t)
 
-	// 不存在的 id 不报错（影响 0 行）
+	// 不存在的 id：三端统一返回 404（与 Node/Worker 一致）
 	for _, id := range []int64{0, -1, 999999} {
 		w := callWithToken(t, "PUT", fmt.Sprintf("/admin/comments/status?id=%d&status=approved", id), "", token)
-		requireStatus(t, w, 200)
+		requireStatus(t, w, 404)
+		requireBodyCode(t, w, 404)
+		if m := decodeJSON(t, w); m["message"] != "Comment not found" {
+			t.Errorf("message 期望 Comment not found，实际 %v", m["message"])
+		}
 	}
 }
 
@@ -521,7 +525,11 @@ func TestUpdateCommentNonexistentID(t *testing.T) {
 	resetState(t)
 	token := adminToken(t)
 
-	// 不存在的 id：更新影响 0 行，接口返回成功
+	// 不存在的 id：三端统一返回 404（与 Node/Worker 一致）
 	w := callWithToken(t, "PUT", "/admin/comments/edit", `{"id":999999,"author":"x"}`, token)
-	requireStatus(t, w, 200)
+	requireStatus(t, w, 404)
+	requireBodyCode(t, w, 404)
+	if m := decodeJSON(t, w); m["message"] != "Comment not found" {
+		t.Errorf("message 期望 Comment not found，实际 %v", m["message"])
+	}
 }

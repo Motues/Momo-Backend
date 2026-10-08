@@ -120,7 +120,7 @@ pm2 start dist/app.js --name momo-backend
         <div style="padding: 30px;">
             <h2 style="margin-top: 0; color: #333; font-size: 18px;">Hi {{toName}}，</h2>
             <p style="color: #555; line-height: 1.6;">
-              <strong>{{replyAuthor}}</strong> 回复了你在 <span style="color: #007acc;">《{{postTitle}}》</span> 中的评论：
+              <strong>{{replyAuthor}}</strong> 回复了您在 <span style="color: #007acc;">《{{postTitle}}》</span> 中的评论：
             </p>
             <div style="margin: 20px 0; padding: 12px 16px; border-left: 4px solid #dfe3e8; background-color: #fcfcfc; color: #555; font-size: 14px;">
               {{parentComment}}
@@ -158,9 +158,9 @@ pm2 start dist/app.js --name momo-backend
     <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.05); overflow: hidden;">
         <div style="height: 4px; background: linear-gradient(90deg, #007acc, #00c6ff);"></div>
         	<div style="padding: 32px;">
-            <h2 style="margin: 0 0 16px 0; color: #1a1a1a; font-size: 20px; line-height: 1.4;">有人在你的文章下发表了评论</h2>
+            <h2 style="margin: 0 0 16px 0; color: #1a1a1a; font-size: 20px; line-height: 1.4;">有人在您的文章下发表了评论</h2>
             <p style="color: #555; font-size: 15px; margin-bottom: 24px; line-height: 1.6;">
-              	<strong style="color: #007acc;">{{commentAuthor}}</strong> 评论了你的文章 <b style="color: #1a1a1a;">《{{postTitle}}》</b>：
+              	<strong style="color: #007acc;">{{commentAuthor}}</strong> 评论了您的文章 <b style="color: #1a1a1a;">《{{postTitle}}》</b>：
             </p>
             <div style="background-color: #f9fafb; border-radius: 8px; padding: 20px; border: 1px dashed #e1e4e8; margin-bottom: 32px;">
               	<div style="color: #444; font-size: 15px; line-height: 1.8; word-break: break-all;">

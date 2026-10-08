@@ -135,9 +135,11 @@ describe('PUT /admin/comments/status', () => {
 		expect((await api(`/admin/comments/status?id=${id}&status=APPROVED`, { method: 'PUT', headers: authed() })).status).toBe(400);
 	});
 
-	it('不存在的 id 也返回 200（UPDATE 影响 0 行）', async () => {
+	it('不存在的 id 返回 404（与 Node/Go 一致）', async () => {
 		const res = await api('/admin/comments/status?id=99999&status=approved', { method: 'PUT', headers: authed() });
-		expect(res.status).toBe(200);
+		expect(res.status).toBe(404);
+		expect(res.body.code).toBe(404);
+		expect(res.body.message).toBe('Comment not found');
 	});
 
 	it('deleted 会级联到全部子孙评论', async () => {
@@ -208,8 +210,11 @@ describe('PUT /admin/comments/edit', () => {
 		expect(res.body.message).toBe('No fields to update');
 	});
 
-	it('id 不存在但给了 content_text 时返回 200（重新渲染后 sets 非空）', async () => {
-		expect((await edit({ id: 99999, content_text: 'x' })).status).toBe(200);
+	it('id 不存在但给了 content_text 时返回 404（与 Node/Go 一致）', async () => {
+		const res = await edit({ id: 99999, content_text: 'x' });
+		expect(res.status).toBe(404);
+		expect(res.body.code).toBe(404);
+		expect(res.body.message).toBe('Comment not found');
 	});
 
 	it('字段类型不是字符串返回 400', async () => {

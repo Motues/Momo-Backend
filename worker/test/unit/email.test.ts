@@ -246,7 +246,7 @@ describe('sendCommentNotification（站长通知）', () => {
 		expect(sentMails).toHaveLength(1);
 		expect(sentMails[0].to).toBe('admin@example.com');
 		expect(sentMails[0].from).toBe('Momo Blog 评论通知 <noreply@example.com>');
-		expect(sentMails[0].subject).toBe('你在 Momo Blog 上有了新评论');
+		expect(sentMails[0].subject).toBe('您在 Momo Blog 上有了新评论');
 		expect(sentMails[0].html).toContain('Alice');
 		expect(sentMails[0].html).toContain('评论内容');
 		expect(sentMails[0].html).toContain('文章标题');
@@ -291,7 +291,7 @@ describe('sendCommentReplyNotification（回复通知）', () => {
 		await sendCommentReplyNotification(env, params);
 		expect(sentMails).toHaveLength(1);
 		expect(sentMails[0].to).toBe('parent@example.com');
-		expect(sentMails[0].subject).toBe('你在 Momo Blog 上的评论有了新回复');
+		expect(sentMails[0].subject).toBe('您在 Momo Blog 上的评论有了新回复');
 		expect(sentMails[0].html).toContain('父评论');
 		expect(sentMails[0].html).toContain('回复内容');
 	});
@@ -329,7 +329,7 @@ describe('sendVerificationEmail', () => {
 		await sendVerificationEmail(env, params);
 		expect(sentMails).toHaveLength(1);
 		expect(sentMails[0].to).toBe('newbie@example.com');
-		expect(sentMails[0].subject).toBe('请验证你在 Momo Blog 上的评论邮箱');
+		expect(sentMails[0].subject).toBe('请验证您在 Momo Blog 上的评论邮箱');
 		expect(sentMails[0].html).toContain('token=abc&amp;email=x');
 		expect(sentMails[0].html).toContain('24 小时内有效');
 	});

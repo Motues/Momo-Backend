@@ -74,13 +74,21 @@ export const updateComment = async (c: Context<{ Bindings: Bindings }>) => {
 
   values.push(id);
   const query = `UPDATE Comment SET ${sets.join(', ')} WHERE id = ?`;
-  const { success } = await c.env.MOMO_DB.prepare(query).bind(...values).run();
+  const { success, meta } = await c.env.MOMO_DB.prepare(query).bind(...values).run();
 
   if (!success) {
     return c.json({
       code: 500,
       message: "Update failed"
     }, 500);
+  }
+
+  // 影响 0 行说明评论不存在：与 Node/Go 统一返回 404
+  if (!meta || !meta.changes) {
+    return c.json({
+      code: 404,
+      message: "Comment not found"
+    }, 404);
   }
 
   return c.json({

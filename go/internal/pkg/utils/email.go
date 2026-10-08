@@ -123,7 +123,7 @@ func (s *EmailService) SendCommentReplyNotification(
 		    <div style="padding: 30px;">
 		      <h2 style="margin-top: 0; color: #333; font-size: 18px;">Hi %s，</h2>
 		      <p style="color: #555; line-height: 1.6;">
-		        <strong>%s</strong> 回复了你在 <span style="color: #007acc;">《%s》</span> 中的评论：
+		        <strong>%s</strong> 回复了您在 <span style="color: #007acc;">《%s》</span> 中的评论：
 		      </p>
 		      <div style="margin: 20px 0; padding: 12px 16px; border-left: 4px solid #dfe3e8; background-color: #fcfcfc; color: #555; font-size: 14px;">
 		        %s
@@ -146,7 +146,7 @@ func (s *EmailService) SendCommentReplyNotification(
 	m := gomail.NewMessage()
 	m.SetHeader("From", m.FormatAddress(s.fromEmail, fmt.Sprintf("%s 评论通知", s.siteName)))
 	m.SetHeader("To", toEmail)
-	m.SetHeader("Subject", fmt.Sprintf("你在 %s 上的评论有了新回复", s.siteName))
+	m.SetHeader("Subject", fmt.Sprintf("您在 %s 上的评论有了新回复", s.siteName))
 	m.SetBody("text/html", htmlContent)
 
 	return s.dialer.DialAndSend(m)
@@ -179,9 +179,9 @@ func (s *EmailService) SendCommentNotification(
 		  <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.05); overflow: hidden;">
 		    <div style="height: 4px; background: linear-gradient(90deg, #007acc, #00c6ff);"></div>
 		    <div style="padding: 32px;">
-		      <h2 style="margin: 0 0 16px 0; color: #1a1a1a; font-size: 20px; line-height: 1.4;">有人在你的文章下发表了评论</h2>
+		      <h2 style="margin: 0 0 16px 0; color: #1a1a1a; font-size: 20px; line-height: 1.4;">有人在您的文章下发表了评论</h2>
 		      <p style="color: #555; font-size: 15px; margin-bottom: 24px; line-height: 1.6;">
-		        <strong style="color: #007acc;">%s</strong> 评论了你的文章
+		        <strong style="color: #007acc;">%s</strong> 评论了您的文章
 		        <b style="color: #1a1a1a;">《%s》</b>：
 		      </p>
 		      <div style="background-color: #f9fafb; border-radius: 8px; padding: 20px; border: 1px dashed #e1e4e8; margin-bottom: 32px;">
@@ -201,7 +201,7 @@ func (s *EmailService) SendCommentNotification(
 	m := gomail.NewMessage()
 	m.SetHeader("From", m.FormatAddress(s.fromEmail, fmt.Sprintf("%s 评论通知", s.siteName)))
 	m.SetHeader("To", s.adminMail)
-	m.SetHeader("Subject", fmt.Sprintf("你在 %s 上有新的评论", s.siteName))
+	m.SetHeader("Subject", fmt.Sprintf("您在 %s 上有新的评论", s.siteName))
 	m.SetBody("text/html", htmlContent)
 
 	return s.dialer.DialAndSend(m)
@@ -215,26 +215,26 @@ func (s *EmailService) SendVerificationEmail(toEmail, toName, postTitle, postSlu
 
 	htmlContent := fmt.Sprintf(`
       <div style="font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 30px; border: 1px solid #e1e4e8; border-radius: 8px;">
-        <h2 style="color: #333; margin-top: 0;">验证你的邮箱地址</h2>
+        <h2 style="color: #333; margin-top: 0;">验证您的邮箱地址</h2>
         <p style="color: #555; line-height: 1.6;">
           Hi %s，<br><br>
-          你在 <strong>%s</strong> 的文章
+          您在 <strong>%s</strong> 的文章
           <strong>《%s》</strong> 中提交了评论。
         </p>
         <p style="color: #555; line-height: 1.6;">
-          请访问以下链接验证你的邮箱（或复制到浏览器打开）：
+          请访问以下链接验证您的邮箱（或复制到浏览器打开）：
         </p>
         <p style="margin: 24px 0; padding: 12px; background: #f5f5f5; border-radius: 4px; word-break: break-all; font-size: 14px; color: #0066cc;">
           %s
         </p>
-        <p style="color: #999; font-size: 13px;">此链接 24 小时内有效。如果你没有提交评论，请忽略此邮件。</p>
+        <p style="color: #999; font-size: 13px;">此链接 24 小时内有效。如果您没有提交评论，请忽略此邮件。</p>
         <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
         <p style="color: #999; font-size: 12px;">此邮件由系统自动发送，请勿直接回复。</p>
       </div>`, html.EscapeString(toName), html.EscapeString(s.siteName), html.EscapeString(postTitle), html.EscapeString(verifyURL))
 	m := gomail.NewMessage()
 	m.SetHeader("From", m.FormatAddress(s.fromEmail, fmt.Sprintf("%s 评论通知", s.siteName)))
 	m.SetHeader("To", toEmail)
-	m.SetHeader("Subject", fmt.Sprintf("请验证你在 %s 上的评论邮箱", s.siteName))
+	m.SetHeader("Subject", fmt.Sprintf("请验证您在 %s 上的评论邮箱", s.siteName))
 	m.SetBody("text/html", htmlContent)
 
 	return s.dialer.DialAndSend(m)

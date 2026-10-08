@@ -310,6 +310,29 @@ describe("POST /api/comments — 限流与黑名单", () => {
     expect((await postComment(validBody({ post_slug: "/posts/rl-b" }), uniqueIp())).status).toBe(200);
   });
 
+  it("管理员邮箱不限流：同一 IP 60 秒内可连续提交", async () => {
+    await setSetting("admin_email", "admin@example.com");
+    const ip = uniqueIp();
+
+    expect(
+      (await postComment(validBody({ post_slug: "/posts/admin-rl", email: "admin@example.com" }), ip)).status
+    ).toBe(200);
+    expect(
+      (await postComment(validBody({ post_slug: "/posts/admin-rl", email: "admin@example.com" }), ip)).status
+    ).toBe(200);
+  });
+
+  it("未配置 admin_email 时普通邮箱仍受限流约束", async () => {
+    const ip = uniqueIp();
+
+    expect(
+      (await postComment(validBody({ post_slug: "/posts/plain-rl", email: "admin@example.com" }), ip)).status
+    ).toBe(200);
+    expect(
+      (await postComment(validBody({ post_slug: "/posts/plain-rl", email: "admin@example.com" }), ip)).status
+    ).toBe(429);
+  });
+
   it("IP 在黑名单中返回 403", async () => {
     const ip = uniqueIp();
     await setSetting("ip_blacklist", JSON.stringify([ip]));

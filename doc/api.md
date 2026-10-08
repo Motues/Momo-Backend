@@ -52,7 +52,7 @@
 | 401 | 未授权 | 未携带 Token 或 Token 失效 |
 | 403 | 禁止访问 | IP 被封禁、IP/邮箱在黑名单中、登录失败次数过多 |
 | 404 | 资源不存在 | 资源不存在场景 |
-| 429 | 请求过于频繁 | 评论频率超过限制（同一 IP 60 秒一条）、公开评论列表请求过于频繁 |
+| 429 | 请求过于频繁 | 评论频率超过限制（同一 IP 60 秒一条，`admin_email` 不受限）、公开评论列表请求过于频繁 |
 | 500 | 服务器内部错误 | 未捕获异常、数据库错误等 |
 
 ## 用户接口
@@ -126,6 +126,9 @@
 
 > 当 `comment_verify_enabled` 设为 `"true"` 时，必须携带有效的 `verify_ticket`，否则返回上面的 `VERIFY_REQUIRED`。
 > 使用管理员评论密钥验证通过的博主评论不受此限制。
+
+> **评论频率限制**：同一 IP 60 秒内只能提交一条评论，超出返回 `429`。
+> **例外**：`email` 等于 `admin_email` 的评论（管理员本人）不受该 60 秒冷却限制。
 
 > 当 `comment_auto_approve` 设为 `"false"` 时，评论提交后状态为 `"pending"`，需在管理后台审核通过后才会公开显示。
 
@@ -575,7 +578,7 @@
   "allow_origin": "https://myblog.com",
   "email_enabled": "true",
   "email_verify_enabled": "false",
-  "reply_template": "<div>Hi {{toName}}，<br>{{replyAuthor}} 回复了你：{{replyContent}}</div>",
+  "reply_template": "<div>Hi {{toName}}，<br>{{replyAuthor}} 回复了您：{{replyContent}}</div>",
   "notification_template": "<div>{{commentAuthor}} 评论了 {{postTitle}}：{{commentContent}}</div>",
   "comment_auto_approve": "false",
   "ip_blacklist": "[\"192.168.1.100\",\"10.0.0.0/8\"]",
@@ -770,8 +773,8 @@
 }
 ```
 
-> Node.js 端对不存在的 `id` 返回 **404**（若在读取后被并发删除也会得到该响应）。
-> Go / Worker 端的 UPDATE 影响 0 行时仍返回 200，建议后续统一为 404。
+> **三端一致**：`id` 不存在时统一返回 **404**（若在读取后被并发删除也会得到该响应）。
+> `deleted` / `pending` 的级联更新同样以「目标评论是否存在」为准，不存在即 404。
 
 ### 修改评论内容 (PUT `/admin/comments/edit`)
 
@@ -819,8 +822,7 @@
 }
 ```
 
-> Node.js 端对不存在的 `id` 返回 **404**（若在读取后被并发删除也会得到该响应）。
-> Go / Worker 端的 UPDATE 影响 0 行时仍返回 200，建议后续统一为 404。
+> **三端一致**：`id` 不存在时统一返回 **404**（若在读取后被并发删除也会得到该响应）。
 
 ### 获取所有评论 (GET `/admin/comments/list`)
 

@@ -403,6 +403,28 @@ func TestPostCommentRateLimit(t *testing.T) {
 		w := callFromIP(t, "POST", "/api/comments", postCommentBody("/p", "a", "a@b.com", "内容"), ip+":1234")
 		requireStatus(t, w, 200)
 	})
+
+	t.Run("管理员邮箱不限流：同一 IP 60 秒内可连续提交", func(t *testing.T) {
+		resetState(t)
+		setSetting(t, "admin_email", "admin@example.com")
+		addr := nextRemoteAddr()
+
+		requireStatus(t, callFromIP(t, "POST", "/api/comments",
+			postCommentBody("/p", "博主", "admin@example.com", "第一条"), addr), 200)
+		requireStatus(t, callFromIP(t, "POST", "/api/comments",
+			postCommentBody("/p", "博主", "admin@example.com", "第二条"), addr), 200)
+	})
+
+	t.Run("未配置 admin_email 时普通邮箱仍受限流约束", func(t *testing.T) {
+		resetState(t)
+		addr := nextRemoteAddr()
+
+		requireStatus(t, callFromIP(t, "POST", "/api/comments",
+			postCommentBody("/p", "a", "admin@example.com", "第一条"), addr), 200)
+		w := callFromIP(t, "POST", "/api/comments",
+			postCommentBody("/p", "a", "admin@example.com", "第二条"), addr)
+		requireStatus(t, w, 429)
+	})
 }
 
 // ---------------------------------------------------------------------------

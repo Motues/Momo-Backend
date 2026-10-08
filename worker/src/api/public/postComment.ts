@@ -93,16 +93,23 @@ export const postComment = async (c: Context<{ Bindings: Bindings }>) => {
   // Worker 始终使用 Cloudflare 提供的该请求头。
   const ip = c.req.header('cf-connecting-ip') || "127.0.0.1";
 
-  // 3. 检查评论频率控制
-  const lastComment = await c.env.MOMO_DB.prepare(
-    "SELECT pub_date FROM Comment WHERE ip_address = ? ORDER BY pub_date DESC LIMIT 1"
-  ).bind(ip).first<{ pub_date: unknown }>();
+  // 3. 管理员身份判定（只依赖 admin_email）：
+  // 必须早于限流与黑名单检查，因为管理员邮箱不受 60 秒评论冷却限制。
+  const adminEmail = await getSetting(c.env, "admin_email") || "";
+  const isAdminEmail = !!adminEmail && data.email === adminEmail;
 
-  if (lastComment) {
-    // pub_date 统一为毫秒整数；toMillis 同时兼容历史 ISO 字符串
-    const lastTime = toMillis(lastComment.pub_date);
-    if (lastTime !== null && Date.now() - lastTime < 60 * 1000) {
-      return c.json({ code: 429, message: "Time limit exceeded. Please wait." }, 429);
+  // 4. 检查评论频率控制（管理员邮箱不限流）
+  if (!isAdminEmail) {
+    const lastComment = await c.env.MOMO_DB.prepare(
+      "SELECT pub_date FROM Comment WHERE ip_address = ? ORDER BY pub_date DESC LIMIT 1"
+    ).bind(ip).first<{ pub_date: unknown }>();
+
+    if (lastComment) {
+      // pub_date 统一为毫秒整数；toMillis 同时兼容历史 ISO 字符串
+      const lastTime = toMillis(lastComment.pub_date);
+      if (lastTime !== null && Date.now() - lastTime < 60 * 1000) {
+        return c.json({ code: 429, message: "Time limit exceeded. Please wait." }, 429);
+      }
     }
   }
 
@@ -116,12 +123,11 @@ export const postComment = async (c: Context<{ Bindings: Bindings }>) => {
     return c.json({ code: 403, message: "Your email has been blocked" }, 403);
   }
 
-  // 5. 管理员评论密钥验证
-  const adminEmail = await getSetting(c.env, "admin_email") || "";
+  // 5. 管理员评论密钥验证（adminEmail 已在上方读取）
   const adminCommentKey = await getSetting(c.env, "admin_comment_key") || "";
   const adminCommentKeyEnabled = await getSetting(c.env, "admin_comment_key_enabled") || "false";
   let isAdminVerified = false;
-  if (data.email === adminEmail && adminCommentKey && adminCommentKeyEnabled === "true") {
+  if (isAdminEmail && adminCommentKey && adminCommentKeyEnabled === "true") {
     if (data.admin_key === adminCommentKey) {
       isAdminVerified = true;
     } else {

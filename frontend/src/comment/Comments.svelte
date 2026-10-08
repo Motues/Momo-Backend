@@ -160,12 +160,15 @@
    * 拉取评论。
    * @param loadMore 是否为「加载更多」（决定使用 loadingMore 还是 loading 状态）
    * @param targetPage 目标页码（默认当前页）；成功后才会推进 page，保证失败可重试
+   * @param silent 静默刷新：不切换 loading 状态（列表不会整块被「正在加载评论...」顶掉），
+   *               仅在请求成功后替换列表数据。提交评论后的刷新走这条路径。
    * @returns 是否成功
    */
-  async function loadComments(loadMore = false, targetPage: number = page): Promise<boolean> {
+  async function loadComments(loadMore = false, targetPage: number = page, silent = false): Promise<boolean> {
+    const showLoading = !silent;
     if (loadMore) {
       loadingMore = true;
-    } else {
+    } else if (showLoading) {
       loading = true;
     }
     try {
@@ -198,12 +201,13 @@
       page = targetPage;
       return true;
     } catch (err: any) {
-      error = err?.message || t('comments.loadFailed');
+      // 静默刷新失败时保留已渲染的列表与原有错误态，不把界面切成错误页
+      if (!silent) error = err?.message || t('comments.loadFailed');
       return false;
     } finally {
       if (loadMore) {
         loadingMore = false;
-      } else {
+      } else if (showLoading) {
         loading = false;
       }
     }
@@ -304,7 +308,8 @@
         notify(data?.message || t('comments.submitSuccess'));
       }
 
-      await loadComments(false, 1);
+      // 只刷新评论列表（静默），不整块切回「正在加载评论...」，也不影响已展开的回复
+      await loadComments(false, 1, true);
     } catch (err) {
       notify(t('comments.submitFailed'));
     } finally {
