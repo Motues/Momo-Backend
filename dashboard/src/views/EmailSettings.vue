@@ -24,10 +24,10 @@
           <h2 class="text-lg font-semibold text-gray-800 flex items-center gap-2">
             <i class="fa-solid fa-envelope text-blue-500"></i> SMTP 服务器
           </h2>
-          <label class="relative inline-flex items-center cursor-pointer">
+          <label class="relative shrink-0 ms-4 inline-flex items-center cursor-pointer">
             <input type="checkbox" v-model="form.email_enabled" class="sr-only peer" true-value="true" false-value="false">
-            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-            <span class="ms-3 text-sm font-medium text-gray-700">
+            <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+            <span class="ms-3 text-sm font-medium whitespace-nowrap text-gray-700">
               {{ form.email_enabled === 'true' ? '已开启' : '已关闭' }}
             </span>
           </label>
@@ -56,11 +56,11 @@
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">安全连接 (SSL/TLS)</label>
-            <select v-model="form.email_secure"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm bg-white">
-              <option value="true">是 (端口 465)</option>
-              <option value="false">否 (端口 587)</option>
-            </select>
+            <SelectMenu v-model="form.email_secure" class="w-full" title="SMTP 安全连接方式"
+              :options="[
+                { label: '是 (端口 465)', value: 'true' },
+                { label: '否 (端口 587)', value: 'false' },
+              ]" />
           </div>
         </div>
 
@@ -85,10 +85,10 @@
             <p class="text-sm font-medium text-gray-700">启用邮箱验证</p>
             <p class="text-xs text-gray-400 mt-1">开启后，未验证邮箱的评论将先保存为待审核状态，验证后自动发布</p>
           </div>
-          <label class="relative inline-flex items-center cursor-pointer">
+          <label class="relative shrink-0 ms-4 inline-flex items-center cursor-pointer">
             <input type="checkbox" v-model="form.email_verify_enabled" class="sr-only peer" true-value="true" false-value="false">
-            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-            <span class="ms-3 text-sm font-medium text-gray-700">
+            <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+            <span class="ms-3 text-sm font-medium whitespace-nowrap text-gray-700">
               {{ form.email_verify_enabled === 'true' ? '已启用' : '已禁用' }}
             </span>
           </label>
@@ -153,6 +153,7 @@ import { useRouter, onBeforeRouteLeave } from 'vue-router'
 import request from '../utils/request'
 import toast from '../utils/toast'
 import AdminLayout from '../components/AdminLayout.vue'
+import SelectMenu from '../components/SelectMenu.vue'
 
 const router = useRouter()
 const apiUrl = ref(localStorage.getItem('apiUrl') || window.location.origin)

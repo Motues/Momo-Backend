@@ -64,7 +64,7 @@
 
         <!-- Desktop: table layout -->
         <div class="hidden md:block overflow-x-auto">
-          <table class="w-full text-left border-collapse">
+          <table class="data-table w-full text-left">
             <thead>
               <tr class="border-b bg-gray-50 border-gray-200">
                 <th class="px-5 py-3 text-xs font-semibold uppercase text-gray-500">内容</th>
@@ -80,15 +80,17 @@
               <tr v-for="item in comments" :key="item.id" @click="openDetail(item)"
                 class="transition-colors cursor-pointer hover:bg-blue-50/40">
                 <td class="px-5 py-3">
-                  <p class="text-sm line-clamp-2 max-w-xs leading-relaxed text-gray-600">{{ item.contentText }}</p>
+                  <p class="text-sm line-clamp-2 whitespace-normal max-w-xs leading-relaxed text-gray-600">{{ item.contentText }}</p>
                 </td>
-                <td class="px-5 py-3 text-xs text-gray-500 max-w-[120px] truncate">{{ item.postSlug }}</td>
+                <td class="px-5 py-3">
+                  <span class="block text-xs text-gray-500 max-w-[140px] truncate" :title="item.postSlug">{{ item.postSlug }}</span>
+                </td>
                 <td class="px-5 py-3 text-xs font-mono text-gray-500">{{ item.ipAddress }}</td>
                 <td class="px-5 py-3 text-xs text-gray-500">
-                  <span v-if="item.os" class="block">{{ item.os }}</span>
-                  <span v-if="item.browser" class="block text-[10px] text-gray-400">{{ item.browser }}</span>
+                  <span v-if="item.os" class="block max-w-[140px] truncate" :title="item.os">{{ item.os }}</span>
+                  <span v-if="item.browser" class="block text-[10px] text-gray-400 max-w-[140px] truncate" :title="item.browser">{{ item.browser }}</span>
                 </td>
-                <td class="px-5 py-3 text-xs text-gray-500 whitespace-nowrap">{{ formatDate(item.pubDate) }}</td>
+                <td class="px-5 py-3 text-xs text-gray-500">{{ formatDate(item.pubDate) }}</td>
                 <td class="px-5 py-3">
                   <span :class="statusClass(item.status)" class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
                     {{ item.status }}

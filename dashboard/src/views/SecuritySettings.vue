@@ -63,10 +63,10 @@
             <p class="text-sm font-medium text-gray-700">信任反向代理下发的 IP 头</p>
             <p class="text-xs text-gray-400 mt-1">开启后 X-Forwarded-For 取最右一跳，客户端伪造的前置条目不会生效</p>
           </div>
-          <label class="relative inline-flex items-center cursor-pointer">
+          <label class="relative shrink-0 ms-4 inline-flex items-center cursor-pointer">
             <input type="checkbox" v-model="trustProxy" class="sr-only peer">
-            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-sky-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-sky-600"></div>
-            <span class="ms-3 text-sm font-medium text-gray-700">
+            <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-sky-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-sky-600"></div>
+            <span class="ms-3 text-sm font-medium whitespace-nowrap text-gray-700">
               {{ trustProxy ? '已开启' : '已关闭' }}
             </span>
           </label>
@@ -91,10 +91,10 @@
               <p class="text-sm font-medium text-gray-700">启用评论密钥</p>
               <p class="text-xs text-gray-400 mt-1">开启后前台发表管理员评论时需要输入密钥验证</p>
             </div>
-            <label class="relative inline-flex items-center cursor-pointer">
+            <label class="relative shrink-0 ms-4 inline-flex items-center cursor-pointer">
               <input type="checkbox" v-model="adminCommentKeyEnabled" class="sr-only peer">
-              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
-              <span class="ms-3 text-sm font-medium text-gray-700">
+              <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
+              <span class="ms-3 text-sm font-medium whitespace-nowrap text-gray-700">
                 {{ adminCommentKeyEnabled ? '已启用' : '已禁用' }}
               </span>
             </label>
@@ -123,22 +123,22 @@
               <p class="text-sm font-medium text-gray-700">启用无感验证</p>
               <p class="text-xs text-gray-400 mt-1">开启后提交评论必须携带验证凭证，博主使用管理员密钥时自动放行</p>
             </div>
-            <label class="relative inline-flex items-center cursor-pointer">
+            <label class="relative shrink-0 ms-4 inline-flex items-center cursor-pointer">
               <input type="checkbox" v-model="commentVerifyEnabled" class="sr-only peer">
-              <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-emerald-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
-              <span class="ms-3 text-sm font-medium text-gray-700">
+              <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-emerald-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+              <span class="ms-3 text-sm font-medium whitespace-nowrap text-gray-700">
                 {{ commentVerifyEnabled ? '已启用' : '已禁用' }}
               </span>
             </label>
           </div>
           <div v-if="commentVerifyEnabled" class="max-w-md">
             <label class="block text-sm font-medium text-gray-700 mb-1">验证强度</label>
-            <select v-model="commentVerifyDifficulty"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-sm">
-              <option value="250000">低（约 25 万次计算：桌面不到 0.3 秒，低端手机约 1–2 秒）</option>
-              <option value="1000000">中（约 100 万次计算，推荐：桌面约 1 秒，低端手机 3–6 秒）</option>
-              <option value="4000000">高（约 400 万次计算：桌面约 4 秒，低端手机可能 15 秒以上）</option>
-            </select>
+            <SelectMenu v-model="commentVerifyDifficulty" class="w-full" accent="emerald" title="算力证明强度"
+              :options="[
+                { label: '低（约 25 万次计算：桌面不到 0.3 秒，低端手机约 1–2 秒）', value: '250000' },
+                { label: '中（约 100 万次计算，推荐：桌面约 1 秒，低端手机 3–6 秒）', value: '1000000' },
+                { label: '高（约 400 万次计算：桌面约 4 秒，低端手机可能 15 秒以上）', value: '4000000' },
+              ]" />
             <p class="text-xs text-gray-400 mt-1">
               数值为访客需要完成的哈希计算总次数（会分摊到 4 个子挑战并行求解）。强度越高越能拦住机器人，
               但等待时间也越长；手机性能通常只有桌面的 1/5 到 1/10，请按主要访客的设备选择。
@@ -155,10 +155,10 @@
                   与算力证明互补：一个证明「付出了算力」，一个证明「计算真的发生在浏览器里」。默认关闭。
                 </p>
               </div>
-              <label class="relative inline-flex items-center cursor-pointer">
+              <label class="relative shrink-0 ms-4 inline-flex items-center cursor-pointer">
                 <input type="checkbox" v-model="commentVerifyInstrEnabled" class="sr-only peer">
-                <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-emerald-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
-                <span class="ms-3 text-sm font-medium text-gray-700">
+                <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-emerald-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                <span class="ms-3 text-sm font-medium whitespace-nowrap text-gray-700">
                   {{ commentVerifyInstrEnabled ? '已启用' : '已禁用' }}
                 </span>
               </label>
@@ -174,10 +174,10 @@
                   真正让批量滥用变贵的是第一层的算力证明。
                 </p>
               </div>
-              <label class="relative inline-flex items-center cursor-pointer">
+              <label class="relative shrink-0 ms-4 inline-flex items-center cursor-pointer">
                 <input type="checkbox" v-model="commentVerifyBlockAutomated" class="sr-only peer">
-                <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-emerald-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
-                <span class="ms-3 text-sm font-medium text-gray-700">
+                <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-emerald-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                <span class="ms-3 text-sm font-medium whitespace-nowrap text-gray-700">
                   {{ commentVerifyBlockAutomated ? '已开启' : '仅记录' }}
                 </span>
               </label>
@@ -267,6 +267,7 @@ import { useRouter, onBeforeRouteLeave } from 'vue-router'
 import request from '../utils/request'
 import toast from '../utils/toast'
 import AdminLayout from '../components/AdminLayout.vue'
+import SelectMenu from '../components/SelectMenu.vue'
 
 const router = useRouter()
 const apiUrl = ref(localStorage.getItem('apiUrl') || window.location.origin)

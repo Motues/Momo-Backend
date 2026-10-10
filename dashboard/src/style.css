@@ -1,1 +1,28 @@
 @import "tailwindcss";
+
+/*
+ * 数据表格通用样式（data-table）
+ *
+ * 设计目标：
+ *  1. 列宽由浏览器按内容自动分配（table-layout: auto），不做任何固定比例切分，
+ *     内容多的列自然变宽，内容少的列保持紧凑。
+ *  2. 单元格默认禁止换行，避免内容被相邻列挤压成多行、行高参差不齐。
+ *  3. 确实放不下的超长文本（邮箱、文章标识、评论内容等）在单元格内部用
+ *     `truncate` / `line-clamp-*` 自行省略；给内部元素设置 `max-w-[...]`
+ *     即可限定该列的宽度上限，表格超宽时由外层 overflow-x-auto 兜底滚动。
+ *
+ * 放在 components 层，因此 Tailwind 的 utilities（如 whitespace-normal）
+ * 可以按需覆盖这里的默认值。
+ */
+@layer components {
+  .data-table {
+    table-layout: auto;
+    border-collapse: collapse;
+  }
+
+  .data-table > thead > tr > th,
+  .data-table > tbody > tr > td {
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+}

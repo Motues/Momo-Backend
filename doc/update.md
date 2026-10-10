@@ -49,15 +49,24 @@ pnpm run deploy
 无需执行任何 SQL。`comment_verify_difficulty` 的旧值会在读取时自动迁移（≤26 视为 v1 的「前导 0 比特数」，
 按 `2^值` 换算，上限 2^20），不需要手工改配置。
 
-⚠️ **这是一次破坏性变更**：人机验证协议从 v1 升到 v2，前端组件与后端必须**同时升级**。
+1.5.1 把人机验证从单层 SHA-256 工作量证明换成**两层**方案（注意：**包版本是 1.5.1，而协议版本号是 v2**，两者独立）：
 
-- 第一层工作量证明由 SHA-256 换成 HashWX（需要浏览器支持 WebAssembly；**不再有纯 JS 降级路径**）。
-- 答案字段由单个 `nonce` 变成 `nonces` 数组，票据版本升到 `v: 2`，已签发的挑战与票据在升级瞬间全部失效（访客刷新页面即可重新验证）。
-- 旧前端连新后端会在验证时失败，后端返回 `reason: "PROTOCOL_OUTDATED"`；新前端连旧后端会提示「验证服务版本过旧，请联系博主升级」。
-- 引入第三方组件 HashWX（`hashwx.wasm`，**LGPL-3.0**）。分发产物时请保留各端 `vendor/hashwx/` 目录下的许可证文本；详情见 `frontend/THIRD_PARTY_NOTICES.md` 与各端 `vendor/hashwx/README.md`。
-- 第一层实现需要用到的构建改动：Node.js 的 `tsconfig.json` 目标提升到 ES2022（BigInt 必需）；Go 端新增 `wazero` 依赖。
+| 层 | 内容 | 说明 |
+|---|---|---|
+| 第一层 | **HashWX** 工作量证明 | 每次挑战生成一次性函数，GPU 相对 CPU 的吞吐优势从 SHA-256 的约 150 倍降到约 2 倍 |
+| 第二层 | **Instrumentation 环境质询** | 服务端下发随机程序，要求浏览器真实执行并回传环境特征；默认关闭 |
 
-协议细节见 [api.md](./api.md) 的「人机验证（无感验证 · 协议 v2）」，升级须知见根目录 README 的「升级到 1.5.1」。
+**升级须知**：
+
+- 前端组件与后端**必须同时升级**，协议不互通：旧前端连新后端会在验证时失败（后端返回 `reason: "PROTOCOL_OUTDATED"`）；新前端连旧后端会显示「验证服务版本过旧，请联系博主升级」。前端版本对应关系见 [frontend/README.md](./frontend/README.md)。
+- 难度设置项的语义从「前导 0 比特数」变为「访客需要完成的哈希计算总次数」。**旧值会自动迁移**（≤26 的值按 `2^值` 换算，上限 2^20），无需手工改配置。
+- 第一层需要浏览器支持 WebAssembly（iOS 15+ 及现代桌面浏览器）；**不再提供纯 JS 降级路径**，不支持的浏览器会明确提示「浏览器版本过低，不支持验证」。
+- 已签发的挑战与票据在升级瞬间全部失效，访客刷新页面即可重新验证。
+- 第二层新增两个设置项（默认关闭）：`comment_verify_instr_enabled`、`comment_verify_block_automated`。建议先只记录日志观察一段时间，确认没有误伤后再考虑开启拦截。
+- 分发产物时请保留各端 `vendor/hashwx/` 目录（含 **LGPL-3.0** 许可证全文），它们随 Node / Go / Worker / 前端四处各自保留一份；前端 npm 包另附 `THIRD_PARTY_NOTICES.md`。
+- **三端（Node.js / Go / Cloudflare Worker）与前端组件都已同步到协议 v2**。Go 端为此新增了 `wazero` 依赖（纯 Go 的 WebAssembly 运行时，不影响 `CGO_ENABLED=0` 构建）；Worker 端因 workerd 禁止运行时编译 WASM，改为由 wrangler 静态导入 `.wasm`。
+- 跨语言口径由共享固定向量保证：Node / Go / Worker / 前端的测试都读取 `doc/vectors/` 下的同一份文件并各自复算，详见 [doc/vectors/README.md](./doc/vectors/README.md)。
+- 协议细节（派生公式、操作码表、环境判定规则、报文示例、v1/v2 对照）见 [doc/api.md](./doc/api.md) 的「人机验证（无感验证 · 协议 v2）」。
 
 ### `v1.3.0` 版本
 

@@ -40,6 +40,19 @@ export const createTestRouter = async (initialPath = '/') => {
 export const findButtonByText = (wrapper, text) =>
 	wrapper.findAll('button').find((button) => button.text().replace(/\s+/g, '') === text);
 
+/**
+ * 自定义下拉框（SelectMenu）交互：点开触发器后点选文案匹配的选项。
+ * 原生 <select> 已被自绘组件取代，因此不能再使用 setValue。
+ */
+export const pickSelectOption = async (wrapper, labelText, triggerSelector = '[role="combobox"]') => {
+	const trigger = wrapper.find(triggerSelector);
+	await trigger.trigger('click');
+	const option = wrapper.findAll('[role="option"]').find((item) => item.text().includes(labelText));
+	if (!option) throw new Error(`未找到下拉选项：${labelText}`);
+	await option.trigger('click');
+	return option;
+};
+
 /** 生成一条评论数据 */
 export const makeComment = (overrides = {}) => ({
 	id: 1,

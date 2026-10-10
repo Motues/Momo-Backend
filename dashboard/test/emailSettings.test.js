@@ -14,7 +14,7 @@ vi.mock('../src/utils/request.js', () => ({ default: requestMock }));
 vi.mock('../src/utils/toast.js', () => ({ default: toastMock }));
 
 import EmailSettings from '../src/views/EmailSettings.vue';
-import { createTestRouter, AdminLayoutStub } from './support/harness.js';
+import { createTestRouter, AdminLayoutStub, pickSelectOption } from './support/harness.js';
 
 const DEFAULT_FORM = {
 	smtp_host: '',
@@ -138,7 +138,7 @@ describe('EmailSettings - 开关与选项', () => {
 
 	it('SSL 下拉框可切换为 "false"', async () => {
 		await mountSettings();
-		await wrapper.find('select').setValue('false');
+		await pickSelectOption(wrapper, '否 (端口 587)');
 		expect(wrapper.vm.form.email_secure).toBe('false');
 	});
 });

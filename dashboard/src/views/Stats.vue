@@ -62,7 +62,7 @@
         <!-- Status Distribution -->
         <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
           <h3 class="text-sm font-semibold text-gray-700 mb-4">评论状态分布</h3>
-          <div ref="statusChartRef" style="height: 260px"></div>
+          <DonutChart :data="statusSlices" :height="260" />
         </div>
 
         <!-- Trend Chart with Range Selector -->
@@ -80,7 +80,7 @@
               </button>
             </div>
           </div>
-          <div ref="trendChartRef" style="height: 260px"></div>
+          <LineAreaChart :labels="trendLabels" :values="trendValues" :raw-labels="trendRawLabels" :height="260" />
         </div>
       </div>
 
@@ -90,7 +90,7 @@
           <h3 class="text-sm font-semibold text-gray-700">热门评论者 Top 5</h3>
         </div>
         <div class="overflow-x-auto">
-          <table class="w-full text-left border-collapse">
+          <table class="data-table w-full text-left">
             <thead>
               <tr class="border-b bg-gray-50 border-gray-200">
                 <th class="px-5 py-3 text-xs font-semibold uppercase text-gray-500">#</th>
@@ -106,9 +106,11 @@
                 class="hover:bg-blue-50/40 transition-colors cursor-pointer">
                 <td class="px-5 py-3 text-sm text-gray-500">{{ index + 1 }}</td>
                 <td class="px-5 py-3">
-                  <span class="text-sm font-medium text-gray-800">{{ item.author }}</span>
+                  <span class="block text-sm font-medium text-gray-800 max-w-[160px] truncate" :title="item.author">{{ item.author }}</span>
                 </td>
-                <td class="px-5 py-3 text-sm text-gray-500">{{ item.email }}</td>
+                <td class="px-5 py-3">
+                  <span class="block text-sm text-gray-500 max-w-[220px] truncate" :title="item.email">{{ item.email }}</span>
+                </td>
                 <td class="px-5 py-3">
                   <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">{{ item.count }}</span>
                 </td>
@@ -126,17 +128,13 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick, onUnmounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { init, use } from 'echarts/core';
-import { PieChart, LineChart } from 'echarts/charts';
-import { TooltipComponent, GridComponent } from 'echarts/components';
-import { CanvasRenderer } from 'echarts/renderers';
 import toast from '../utils/toast';
 import request from '../utils/request';
 import AdminLayout from '../components/AdminLayout.vue';
-
-use([PieChart, LineChart, TooltipComponent, GridComponent, CanvasRenderer]);
+import DonutChart from '../components/charts/DonutChart.vue';
+import LineAreaChart from '../components/charts/LineAreaChart.vue';
 
 const router = useRouter();
 const loading = ref(false);
@@ -159,10 +157,33 @@ const stats = ref({
   topCommenters: []
 });
 
-const statusChartRef = ref(null);
-const trendChartRef = ref(null);
-let statusChart = null;
-let trendChart = null;
+/** 环形图数据：与 echarts 版本保持同一套配色与顺序 */
+const statusSlices = computed(() => {
+  const sd = stats.value.statusDistribution;
+  return [
+    { name: '已通过', value: Number(sd.approved) || 0, color: '#10b981' },
+    { name: '待审核', value: Number(sd.pending) || 0, color: '#f59e0b' },
+    { name: '已删除', value: Number(sd.deleted) || 0, color: '#ef4444' },
+  ];
+});
+
+/** X 轴展示标签：日粒度取 MM-DD，月粒度取「M月 / YY年」 */
+const trendLabels = computed(() =>
+  (stats.value.recentComments || []).map((item) => {
+    if (item.date?.length === 7) {
+      const parts = item.date.split('-');
+      const month = parseInt(parts[1]);
+      if (month === 1) return `${parts[0].slice(2)}年`;
+      return `${month}月`;
+    }
+    return item.date?.slice(5) || '';
+  }),
+);
+
+/** 悬浮提示使用的原始日期 */
+const trendRawLabels = computed(() => (stats.value.recentComments || []).map((item) => item.date ?? ''));
+
+const trendValues = computed(() => (stats.value.recentComments || []).map((item) => item.count ?? 0));
 
 const switchRange = async (range) => {
   selectedRange.value = range;
@@ -189,88 +210,9 @@ const fetchStats = async (silent = false) => {
       };
     }
     if (!silent) loading.value = false;
-    await nextTick();
-    initCharts();
   } catch (error) {
     if (!silent) loading.value = false;
     if (!silent) toast.error('加载统计数据失败');
-  }
-};
-
-const initCharts = () => {
-  // Status distribution pie chart
-  if (statusChartRef.value) {
-    if (statusChart) statusChart.dispose();
-    statusChart = init(statusChartRef.value);
-    const sd = stats.value.statusDistribution;
-    statusChart.setOption({
-      tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
-      color: ['#10b981', '#f59e0b', '#ef4444'],
-      series: [{
-        type: 'pie',
-        radius: ['45%', '70%'],
-        avoidLabelOverlap: true,
-        itemStyle: { borderRadius: 6, borderColor: '#fff', borderWidth: 2 },
-        label: { show: true, formatter: '{b}\n{d}%', fontSize: 11 },
-        data: [
-          { value: sd.approved, name: '已通过' },
-          { value: sd.pending, name: '待审核' },
-          { value: sd.deleted, name: '已删除' }
-        ]
-      }]
-    });
-  }
-
-  // Trend line chart
-  if (trendChartRef.value) {
-    if (trendChart) trendChart.dispose();
-    trendChart = init(trendChartRef.value);
-    const dates = stats.value.recentComments.map(d => {
-      if (d.date?.length === 7) {
-        const parts = d.date.split('-');
-        const month = parseInt(parts[1]);
-        if (month === 1) return `${parts[0].slice(2)}年`;
-        return `${month}月`;
-      }
-      return d.date?.slice(5) || '';
-    });
-    const counts = stats.value.recentComments.map(d => d.count ?? 0);
-    trendChart.setOption({
-      tooltip: {
-        trigger: 'axis',
-        formatter: (params) => {
-          const idx = params[0].dataIndex;
-          const raw = stats.value.recentComments[idx].date;
-          return `${raw}<br/>评论数: ${counts[idx]}`;
-        }
-      },
-      xAxis: {
-        type: 'category',
-        data: dates,
-        axisLabel: { fontSize: 11, rotate: dates.length > 14 ? 45 : 0 }
-      },
-      yAxis: { type: 'value', minInterval: 1 },
-      grid: { left: 40, right: 20, top: 30, bottom: 40 },
-      series: [{
-        type: 'line',
-        data: counts,
-        smooth: true,
-        symbol: 'circle',
-        symbolSize: 6,
-        lineStyle: { color: '#3b82f6', width: 2 },
-        itemStyle: { color: '#3b82f6' },
-        areaStyle: {
-          color: {
-            type: 'linear',
-            x: 0, y: 0, x2: 0, y2: 1,
-            colorStops: [
-              { offset: 0, color: 'rgba(59,130,246,0.25)' },
-              { offset: 1, color: 'rgba(59,130,246,0.02)' }
-            ]
-          }
-        }
-      }]
-    });
   }
 };
 
@@ -301,10 +243,5 @@ const logout = () => {
 
 onMounted(() => {
   fetchStats();
-});
-
-onUnmounted(() => {
-  if (statusChart) statusChart.dispose();
-  if (trendChart) trendChart.dispose();
 });
 </script>

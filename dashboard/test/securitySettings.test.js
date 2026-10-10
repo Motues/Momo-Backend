@@ -14,7 +14,7 @@ vi.mock('../src/utils/request.js', () => ({ default: requestMock }));
 vi.mock('../src/utils/toast.js', () => ({ default: toastMock }));
 
 import SecuritySettings from '../src/views/SecuritySettings.vue';
-import { createTestRouter, AdminLayoutStub } from './support/harness.js';
+import { createTestRouter, AdminLayoutStub, pickSelectOption } from './support/harness.js';
 
 const ORIGIN_INPUT = 'input[placeholder="https://example.com"]';
 const IP_INPUT = 'input[placeholder="192.168.1.1 或 10.0.0.0/8"]';
@@ -340,20 +340,20 @@ describe('SecuritySettings - 管理员密钥与人机验证', () => {
 
 	it('默认不展示验证强度下拉框', async () => {
 		await mountSettings();
-		expect(wrapper.find('select').exists()).toBe(false);
+		expect(wrapper.find('[role="combobox"]').exists()).toBe(false);
 	});
 
 	it('启用无感验证后展示强度下拉框', async () => {
 		await mountSettings();
 		await checkboxByLabel('启用无感验证').setValue(true);
-		expect(wrapper.find('select').exists()).toBe(true);
+		expect(wrapper.find('[role="combobox"]').exists()).toBe(true);
 		expect(wrapper.vm.commentVerifyEnabled).toBe(true);
 	});
 
 	it('验证强度可选高并写入模型', async () => {
 		await mountSettings();
 		await checkboxByLabel('启用无感验证').setValue(true);
-		await wrapper.find('select').setValue('4000000');
+		await pickSelectOption(wrapper, '高（约 400 万次计算');
 		expect(wrapper.vm.commentVerifyDifficulty).toBe('4000000');
 	});
 

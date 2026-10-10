@@ -2,19 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import { nextTick } from 'vue';
 
-/* ---------- 依赖 mock：echarts 与 request/toast ---------- */
-const chartMock = vi.hoisted(() => {
-	const instances = [];
-	return {
-		instances,
-		init: vi.fn(() => {
-			const instance = { setOption: vi.fn(), dispose: vi.fn() };
-			instances.push(instance);
-			return instance;
-		}),
-	};
-});
-
+/* ---------- 依赖 mock：request / toast ---------- */
 const requestMock = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn() }));
 const toastMock = vi.hoisted(() => ({
 	success: vi.fn(),
@@ -23,14 +11,12 @@ const toastMock = vi.hoisted(() => ({
 	info: vi.fn(),
 }));
 
-vi.mock('echarts/core', () => ({ use: vi.fn(), init: chartMock.init }));
-vi.mock('echarts/charts', () => ({ PieChart: {}, LineChart: {} }));
-vi.mock('echarts/components', () => ({ TooltipComponent: {}, GridComponent: {} }));
-vi.mock('echarts/renderers', () => ({ CanvasRenderer: {} }));
 vi.mock('../src/utils/request.js', () => ({ default: requestMock }));
 vi.mock('../src/utils/toast.js', () => ({ default: toastMock }));
 
 import Stats from '../src/views/Stats.vue';
+import DonutChart from '../src/components/charts/DonutChart.vue';
+import LineAreaChart from '../src/components/charts/LineAreaChart.vue';
 import { createTestRouter, AdminLayoutStub } from './support/harness.js';
 
 const DEFAULT_DATA = {
@@ -45,6 +31,20 @@ const DEFAULT_DATA = {
 	topCommenters: [
 		{ author: '张三', email: 'z@example.com', count: 7, lastCommentDate: '2024-05-06T07:08:09.000Z' },
 	],
+};
+
+/** 组件内 SVG 的定位器：图表已改为自绘 SVG，不再有 echarts 实例 */
+const DONUT_SVG = 'svg[aria-label="评论状态分布环形图"]';
+const LINE_SVG = 'svg[aria-label="评论趋势折线图"]';
+
+/** SVG 中标签/刻度文本（不包含 hover 内联提示） */
+const svgTexts = (wrapper, selector) => wrapper.findAll(`${selector} text`).map((node) => node.text());
+const xAxisTexts = (wrapper) => wrapper.findAll(`${LINE_SVG} .axis-label-x`).map((node) => node.text());
+const yAxisTexts = (wrapper) => wrapper.findAll(`${LINE_SVG} .axis-label-y`).map((node) => node.text());
+
+/** 图表绘制区的横向像素中心：用于模拟鼠标悬浮 */
+const hoverPlot = async (wrapper, clientX) => {
+	await wrapper.find(LINE_SVG).trigger('mousemove', { clientX, clientY: 120 });
 };
 
 let router;
@@ -62,19 +62,10 @@ const mountStats = async (data = DEFAULT_DATA) => {
 	return wrapper;
 };
 
-const optionsOfType = (type) =>
-	chartMock.instances
-		.filter((instance) => instance.setOption.mock.calls.some((call) => call[0]?.series?.[0]?.type === type))
-		.map((instance) => instance.setOption.mock.calls.find((call) => call[0]?.series?.[0]?.type === type)[0]);
-
-const lastOptionOfType = (type) => optionsOfType(type).at(-1);
-
 const cardByText = (text) => wrapper.findAll('div.cursor-pointer').find((card) => card.text().includes(text));
 
 beforeEach(() => {
 	localStorage.clear();
-	chartMock.instances.length = 0;
-	chartMock.init.mockClear();
 	Object.values(requestMock).forEach((fn) => fn.mockClear());
 	Object.values(toastMock).forEach((fn) => fn.mockClear());
 });
@@ -119,18 +110,16 @@ describe('Stats - 数据加载', () => {
 
 	it('statusDistribution 缺失字段补 0', async () => {
 		await mountStats({ ...DEFAULT_DATA, statusDistribution: { approved: 2 } });
-		const option = lastOptionOfType('pie');
-		expect(option.series[0].data.map((d) => [d.name, d.value])).toEqual([
-			['已通过', 2],
-			['待审核', 0],
-			['已删除', 0],
-		]);
+		// 只有「已通过」有数据，其余两个状态值为 0，不绘制扇区也不显示标签
+		const labels = svgTexts(wrapper, DONUT_SVG);
+		expect(labels).toEqual(['已通过', '100%']);
+		expect(wrapper.findAll(`${DONUT_SVG} path`)).toHaveLength(1);
 	});
 
-	it('响应缺少 statusDistribution 时三个状态全为 0', async () => {
+	it('响应缺少 statusDistribution 时展示空数据占位', async () => {
 		await mountStats({ totalComments: 1 });
-		const option = lastOptionOfType('pie');
-		expect(option.series[0].data.map((d) => d.value)).toEqual([0, 0, 0]);
+		expect(svgTexts(wrapper, DONUT_SVG)).toContain('暂无数据');
+		expect(wrapper.findAll(`${DONUT_SVG} path`)).toHaveLength(0);
 	});
 
 	it('响应缺少 topCommenters 时展示「暂无数据」', async () => {
@@ -202,6 +191,11 @@ describe('Stats - 热门评论者表格', () => {
 			path: '/user-comments',
 			query: { author: '张三', email: 'z@example.com' },
 		});
+	});
+
+	it('表格使用自适应列宽的 data-table 样式', async () => {
+		await mountStats();
+		expect(wrapper.find('table').classes()).toContain('data-table');
 	});
 });
 
@@ -278,26 +272,38 @@ describe('Stats - 趋势范围切换', () => {
 	});
 });
 
-describe('Stats - 图表数据聚合', () => {
-	it('饼图系列包含三个状态与配色', async () => {
+describe('Stats - 图表渲染', () => {
+	it('同时渲染环形图与折线图两个自绘图表', async () => {
 		await mountStats();
-		const option = lastOptionOfType('pie');
-		expect(option.series[0].type).toBe('pie');
-		expect(option.color).toEqual(['#10b981', '#f59e0b', '#ef4444']);
-		expect(option.tooltip.formatter).toBe('{b}: {c} ({d}%)');
+		expect(wrapper.findComponent(DonutChart).exists()).toBe(true);
+		expect(wrapper.findComponent(LineAreaChart).exists()).toBe(true);
+		expect(wrapper.findAll('svg[role="img"]')).toHaveLength(2);
 	});
 
-	it('饼图数值来自 statusDistribution', async () => {
+	it('环形图按状态顺序使用绿色/琥珀色/红色', async () => {
+		await mountStats();
+		const fills = wrapper.findAll(`${DONUT_SVG} path`).map((path) => path.attributes('fill'));
+		expect(fills).toEqual(['#10b981', '#f59e0b', '#ef4444']);
+	});
+
+	it('环形图数值来自 statusDistribution 并换算为占比', async () => {
 		await mountStats({ ...DEFAULT_DATA, statusDistribution: { approved: 1, pending: 2, deleted: 3 } });
-		const option = lastOptionOfType('pie');
-		expect(option.series[0].data.map((d) => d.value)).toEqual([1, 2, 3]);
+		expect(svgTexts(wrapper, DONUT_SVG)).toEqual(['已通过', '16.7%', '待审核', '33.3%', '已删除', '50%']);
+	});
+
+	it('悬浮扇区时提示名称、数值与占比', async () => {
+		await mountStats();
+		expect(wrapper.find('.chart-tooltip').exists()).toBe(false);
+		await wrapper.findAll(`${DONUT_SVG} path`)[0].trigger('mousemove', { clientX: 120, clientY: 120 });
+		const tooltip = wrapper.find('.chart-tooltip');
+		expect(tooltip.text()).toContain('已通过');
+		expect(tooltip.text()).toContain('8');
+		expect(tooltip.text()).toContain('66.7%');
 	});
 
 	it('折线图按日粒度展示 MM-DD 标签', async () => {
 		await mountStats();
-		const option = lastOptionOfType('line');
-		expect(option.xAxis.data).toEqual(['05-06', '05-07']);
-		expect(option.series[0].data).toEqual([3, 0]);
+		expect(xAxisTexts(wrapper)).toEqual(['05-06', '05-07']);
 	});
 
 	it('折线图按月粒度展示「24年」与「6月」', async () => {
@@ -308,61 +314,73 @@ describe('Stats - 图表数据聚合', () => {
 				{ date: '2024-06', count: 5 },
 			],
 		});
-		const option = lastOptionOfType('line');
-		expect(option.xAxis.data).toEqual(['24年', '6月']);
+		expect(xAxisTexts(wrapper)).toEqual(['24年', '6月']);
 	});
 
 	it('月度数据缺少 count 时按 0 处理', async () => {
 		await mountStats({ ...DEFAULT_DATA, recentComments: [{ date: '2024-06' }] });
-		expect(lastOptionOfType('line').series[0].data).toEqual([0]);
+		const points = wrapper.findAll(`${LINE_SVG} .data-point`);
+		expect(points).toHaveLength(1);
+		// 值为 0 时应落在 X 轴基线（高度 260 - 底部留白 34 = 226）
+		expect(points[0].attributes('cy')).toBe('226');
 	});
 
 	it('日期缺失时标签回落为空字符串', async () => {
 		await mountStats({ ...DEFAULT_DATA, recentComments: [{ count: 1 }] });
-		expect(lastOptionOfType('line').xAxis.data).toEqual(['']);
+		expect(xAxisTexts(wrapper)).toEqual(['']);
 	});
 
 	it('数据点超过 14 个时 X 轴标签旋转 45 度', async () => {
 		const many = Array.from({ length: 15 }, (_, i) => ({ date: `2024-05-${String(i + 1).padStart(2, '0')}`, count: i }));
 		await mountStats({ ...DEFAULT_DATA, recentComments: many });
-		expect(lastOptionOfType('line').xAxis.axisLabel.rotate).toBe(45);
+		const labels = wrapper.findAll(`${LINE_SVG} .axis-label-x`);
+		expect(labels.length).toBeGreaterThan(0);
+		labels.forEach((label) => expect(label.attributes('transform')).toContain('rotate(-45'));
 	});
 
 	it('数据点不超过 14 个时不旋转', async () => {
 		await mountStats();
-		expect(lastOptionOfType('line').xAxis.axisLabel.rotate).toBe(0);
+		wrapper.findAll(`${LINE_SVG} .axis-label-x`).forEach((label) => {
+			expect(label.attributes('transform') || '').not.toContain('rotate');
+		});
 	});
 
-	it('折线图 tooltip 使用原始日期与评论数', async () => {
+	it('折线图悬浮时展示原始日期与评论数', async () => {
 		await mountStats();
-		const option = lastOptionOfType('line');
-		expect(option.tooltip.formatter([{ dataIndex: 1 }])).toBe('2024-05-07<br/>评论数: 0');
+		// 共 2 个数据点，绘制区从 40px 起、宽 424px，最右侧对应第 2 个点
+		await hoverPlot(wrapper, 464);
+		const tooltip = wrapper.find('.chart-tooltip');
+		expect(tooltip.text()).toContain('2024-05-07');
+		expect(tooltip.text()).toContain('评论数: 0');
 	});
 
-	it('折线图 Y 轴最小间隔为 1', async () => {
+	it('折线图 Y 轴按整数间隔取值（minInterval 1）', async () => {
 		await mountStats();
-		expect(lastOptionOfType('line').yAxis.minInterval).toBe(1);
+		expect(yAxisTexts(wrapper)).toEqual(['0', '1', '2', '3']);
 	});
 
-	it('两个图表都会被初始化', async () => {
+	it('渲染平滑折线、渐变面积与数据点', async () => {
 		await mountStats();
-		expect(chartMock.init).toHaveBeenCalledTimes(2);
+		expect(wrapper.find(`${LINE_SVG} .line-path`).attributes('d')).toContain('C');
+		expect(wrapper.find(`${LINE_SVG} .area-path`).attributes('fill')).toContain('url(#line-area-gradient');
+		expect(wrapper.findAll(`${LINE_SVG} .data-point`)).toHaveLength(2);
 	});
 
-	it('刷新时先销毁旧图表实例', async () => {
+	it('趋势数据为空时展示「暂无数据」且不画线', async () => {
+		await mountStats({ ...DEFAULT_DATA, recentComments: [] });
+		expect(svgTexts(wrapper, LINE_SVG)).toContain('暂无数据');
+		expect(wrapper.find(`${LINE_SVG} .line-path`).exists()).toBe(false);
+	});
+
+	it('切换范围后图表数据随之刷新', async () => {
 		await mountStats();
-		const firstInstances = chartMock.instances.slice();
-		await wrapper.findAll('button').find((b) => b.text() === '14天').trigger('click');
+		requestMock.get.mockResolvedValue({
+			code: 200,
+			data: { ...DEFAULT_DATA, recentComments: [{ date: '2024-06-01', count: 9 }] },
+		});
+		await wrapper.findAll('button').find((b) => b.text() === '1个月').trigger('click');
 		await flushPromises();
-		firstInstances.forEach((instance) => expect(instance.dispose).toHaveBeenCalled());
-	});
-
-	it('卸载组件时销毁图表实例', async () => {
-		await mountStats();
-		const instances = chartMock.instances.slice();
-		wrapper.unmount();
-		wrapper = undefined;
-		instances.forEach((instance) => expect(instance.dispose).toHaveBeenCalled());
+		expect(xAxisTexts(wrapper)).toEqual(['06-01']);
 	});
 });
 

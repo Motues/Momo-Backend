@@ -6,9 +6,9 @@ export default defineConfig({
 	test: {
 		environment: 'happy-dom',
 		include: ['test/**/*.test.js'],
-		// 路由表用动态 import 加载每个页面组件；Stats / Dashboard / Users 会连带
-		// 编译体积很大的 echarts，首次 transform 在负载高时可能超过默认的 5s，
-		// 表现为「Test timed out」而非断言失败。这里给足编译时间。
+		// 路由表用动态 import 加载每个页面组件，页面数量多时首次 transform 在负载高
+		// 的情况下可能超过默认的 5s，表现为「Test timed out」而非断言失败。
+		// 这里给足编译时间。
 		testTimeout: 30000,
 		hookTimeout: 30000,
 		coverage: {

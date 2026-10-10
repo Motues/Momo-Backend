@@ -50,10 +50,10 @@
 
     <!-- 桌面端：表格布局 -->
     <div class="hidden md:block overflow-x-auto">
-      <table class="w-full text-left border-collapse">
+      <table class="data-table w-full text-left">
         <thead>
           <tr class="border-b bg-gray-50 border-gray-200">
-            <th class="px-6 py-4 text-xs font-semibold uppercase w-48 text-gray-500">作者</th>
+            <th class="px-6 py-4 text-xs font-semibold uppercase text-gray-500">作者</th>
             <th class="px-6 py-4 text-xs font-semibold uppercase text-gray-500">评论内容</th>
             <th class="px-6 py-4 text-xs font-semibold uppercase text-gray-500">状态</th>
             <th class="px-6 py-4 text-xs font-semibold uppercase text-right text-gray-500">管理</th>
@@ -63,7 +63,7 @@
           <tr v-for="item in data" :key="item.id" @click="openDetail(item)" 
             class="transition-colors cursor-pointer hover:bg-blue-50/40">
             <td class="px-6 py-4">
-              <div class="flex flex-col">
+              <div class="flex flex-col items-start">
                 <span class="font-bold text-sm max-w-[180px] truncate text-gray-800">{{ item.author }}</span>
                 <span class="text-xs max-w-[180px] truncate text-gray-400">{{ item.email }}</span>
                 <span class="text-[10px] mt-1 font-mono text-gray-400">{{ item.ipAddress }}</span>
@@ -71,7 +71,7 @@
             </td>
             <td class="px-6 py-4">
               <div class="max-w-md">
-                <p class="text-sm line-clamp-2 leading-relaxed text-gray-600">{{ item.contentText }}</p>
+                <p class="text-sm line-clamp-2 whitespace-normal leading-relaxed text-gray-600">{{ item.contentText }}</p>
                 <div class="flex items-center mt-1 space-x-2 text-[10px] text-gray-400">
                   <i class="fa-regular fa-clock"></i>
                   <span>{{ formatDate(item.pubDate) }}</span>
