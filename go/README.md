@@ -52,7 +52,7 @@ PORT: 3000  # server port
 >
 > - 关闭时（默认）后端只使用 TCP 连接对端地址，
 >   伪造 `CF-Connecting-IP` / `X-Real-IP` / `X-Forwarded-For` 无法绕过
->   IP 黑名单、登录失败锁定与评论频率限制。
+>   IP 黑名单、登录失败锁定、评论频率限制与公开评论列表限流（同一 IP 每分钟 120 次）。
 > - **部署在 Nginx / Cloudflare 之后时必须开启**，否则所有请求会被识别为代理 IP。
 >   开启后 `X-Forwarded-For` 取**最右一跳**，客户端伪造的前置条目不会生效。
 

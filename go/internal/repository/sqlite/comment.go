@@ -513,6 +513,21 @@ func (r *commentRepo) GetLastCommentByIP(ctx context.Context, ip string) (*model
 	return &c, nil
 }
 
+// HasRecentDuplicate 判断同一 IP 在时间窗内是否提交过完全相同的正文（审核自动化的「重复」规则）。
+//
+// 不区分状态：被判为垃圾或被删除的评论同样计入 —— 否则刷屏者只要被删一次
+// 就能把同一段内容无限重发。
+func (r *commentRepo) HasRecentDuplicate(ctx context.Context, ip, contentText string, sinceMillis int64) (bool, error) {
+	var count int64
+	err := r.db.GetContext(ctx, &count,
+		"SELECT COUNT(*) FROM Comment WHERE ip_address = ? AND content_text = ? AND pub_date >= ?",
+		ip, contentText, sinceMillis)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 // CheckEmailVerified 检查邮箱是否已验证
 func (r *commentRepo) CheckEmailVerified(ctx context.Context, email string) (bool, error) {
 	var count int64

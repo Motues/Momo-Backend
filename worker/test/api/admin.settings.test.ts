@@ -59,9 +59,22 @@ describe('GET /admin/settings', () => {
 	});
 
 	it('type=basic 只返回已配置的基础分组键', async () => {
-		await seedSettings({ site_name: 'Momo', allow_origin: 'https://a.com', smtp_host: 'h' });
+		await seedSettings({
+			site_name: 'Momo',
+			allow_origin: 'https://a.com',
+			smtp_host: 'h',
+			// 审核自动化四项规则都属于基础分组
+			comment_spam_keywords: '["加微信"]',
+			comment_spam_max_links: '5',
+			comment_spam_min_length: '0',
+			comment_spam_duplicate_window: '60',
+		});
 		const res = await api('/admin/settings?type=basic', { headers: authed() });
 		expect(res.body.data.site_name).toBe('Momo');
+		expect(res.body.data.comment_spam_keywords).toBe('["加微信"]');
+		expect(res.body.data.comment_spam_max_links).toBe('5');
+		expect(res.body.data.comment_spam_min_length).toBe('0');
+		expect(res.body.data.comment_spam_duplicate_window).toBe('60');
 		// 分组外的键不下发；分组内未配置的键也不会凭空出现
 		expect(res.body.data.allow_origin).toBeUndefined();
 		expect(res.body.data.smtp_host).toBeUndefined();
@@ -219,6 +232,74 @@ describe('PUT /admin/settings', () => {
 		});
 		expect(res.status).toBe(200);
 		expect(await rawSetting('ip_blacklist')).toBe('');
+	});
+
+	it('审核自动化规则：非法值整批拒绝', async () => {
+		const cases: [string, string, string][] = [
+			[
+				'comment_spam_keywords',
+				'{oops',
+				'comment_spam_keywords must be a JSON array of at most 200 non-empty strings',
+			],
+			[
+				'comment_spam_keywords',
+				'["a",1]',
+				'comment_spam_keywords must be a JSON array of at most 200 non-empty strings',
+			],
+			['comment_spam_max_links', '51', 'comment_spam_max_links must be an integer between 0 and 50'],
+			['comment_spam_max_links', 'abc', 'comment_spam_max_links must be an integer between 0 and 50'],
+			['comment_spam_min_length', '2001', 'comment_spam_min_length must be an integer between 0 and 2000'],
+			[
+				'comment_spam_duplicate_window',
+				'10081',
+				'comment_spam_duplicate_window must be an integer between 0 and 10080',
+			],
+		];
+
+		for (const [key, value, message] of cases) {
+			const res = await api('/admin/settings', {
+				method: 'PUT',
+				headers: authed(),
+				body: { site_name: '不应写入', [key]: value },
+			});
+			expect(res.status, `${key}=${value}`).toBe(400);
+			expect(res.body.message, `${key}=${value}`).toBe(message);
+			// 校验在写入之前完成：整批都不落地
+			expect(await rawSetting(key), `${key}=${value}`).toBeNull();
+			expect(await rawSetting('site_name'), `${key}=${value}`).toBeNull();
+		}
+	});
+
+	it('审核自动化规则：合法值写入并可读回', async () => {
+		const res = await api('/admin/settings', {
+			method: 'PUT',
+			headers: authed(),
+			body: {
+				comment_spam_keywords: '["加微信","casino"]',
+				comment_spam_max_links: '5',
+				comment_spam_min_length: '0',
+				comment_spam_duplicate_window: '60',
+			},
+		});
+		expect(res.status).toBe(200);
+		expect(await rawSetting('comment_spam_keywords')).toBe('["加微信","casino"]');
+		expect(await rawSetting('comment_spam_max_links')).toBe('5');
+		expect(await rawSetting('comment_spam_min_length')).toBe('0');
+		expect(await rawSetting('comment_spam_duplicate_window')).toBe('60');
+
+		const basic = await api('/admin/settings?type=basic', { headers: authed() });
+		expect(basic.body.data.comment_spam_max_links).toBe('5');
+		expect(basic.body.data.comment_spam_keywords).toBe('["加微信","casino"]');
+	});
+
+	it('审核自动化的空串阈值允许写入（表示使用默认值）', async () => {
+		const res = await api('/admin/settings', {
+			method: 'PUT',
+			headers: authed(),
+			body: { comment_spam_max_links: '', comment_spam_min_length: '', comment_spam_duplicate_window: '' },
+		});
+		expect(res.status).toBe(200);
+		expect(await rawSetting('comment_spam_max_links')).toBe('');
 	});
 
 	it('email_blacklist 不做格式校验（保持与 Node/Go 一致）', async () => {

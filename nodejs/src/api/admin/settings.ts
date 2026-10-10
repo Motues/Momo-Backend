@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import { getAllSettings, setSetting } from "../../utils/settings";
 import { sendTestEmail } from "../../utils/email";
 import { checkKey, extractToken, isValidIpBlacklistJson } from "../../utils/security";
+import { validateSpamSettings } from "../../utils/spam";
 import { applyTrustProxySetting, hasTrustProxyEnvOverride } from "../../utils/ip";
 import LogService from "../../utils/log";
 
@@ -15,6 +16,11 @@ const ALLOWED_SETTINGS = [
   "allow_origin", "email_enabled",
   "reply_template", "notification_template",
   "comment_auto_approve",
+  // 审核自动化（垃圾规则）：与 comment_auto_approve 合并为一个开关
+  "comment_spam_keywords",
+  "comment_spam_max_links",
+  "comment_spam_min_length",
+  "comment_spam_duplicate_window",
   "ip_blacklist",
   "email_blacklist",
   "blogger_badge_enabled",
@@ -39,7 +45,7 @@ const ALLOWED_SETTINGS = [
 
 // 按模块分组的设置键
 const SETTINGS_GROUPS: Record<string, string[]> = {
-  basic: ["site_name", "admin_email", "comment_auto_approve", "blogger_badge_enabled", "blogger_badge_text", "placeholder_name", "placeholder_email", "placeholder_content", "placeholder_url"],
+  basic: ["site_name", "admin_email", "comment_auto_approve", "comment_spam_keywords", "comment_spam_max_links", "comment_spam_min_length", "comment_spam_duplicate_window", "blogger_badge_enabled", "blogger_badge_text", "placeholder_name", "placeholder_email", "placeholder_content", "placeholder_url"],
   email: ["smtp_host", "smtp_port", "email_user", "email_password", "email_secure", "email_enabled", "email_verify_enabled", "verify_base_url", "reply_template", "notification_template"],
   security: ["allow_origin", "admin_comment_key", "admin_comment_key_enabled", "ip_blacklist", "email_blacklist", "comment_verify_enabled", "comment_verify_difficulty", "comment_verify_instr_enabled", "comment_verify_block_automated", "comment_verify_retention_days", "comment_verify_log_challenge", "trust_proxy"],
   account: ["admin_name"],
@@ -112,6 +118,13 @@ export async function updateSettings(c: Context): Promise<Response> {
       { code: 400, message: "ip_blacklist must be a JSON array of valid IP or CIDR strings" },
       400
     );
+  }
+
+  // 审核自动化规则同样必须在入口校验：一个非数字阈值或坏掉的关键词数组
+  // 会让规则静默失效，甚至把全站评论都判为垃圾
+  const spamError = validateSpamSettings(body);
+  if (spamError) {
+    return c.json({ code: 400, message: spamError }, 400);
   }
 
   const smtpChanged =

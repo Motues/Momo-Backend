@@ -5,6 +5,7 @@ import CommentService from "../../orm/commentService";
 import { CreateCommentInput } from "../../type/prisma";
 import { sendCommentReplyNotification, sendCommentNotification, isEmailServiceAvailable, checkEmailVerified, saveVerificationToken, hasUnverifiedToken, sendVerificationEmail } from "../../utils/email";
 import { canPostComment, checkContent, countCodePoints, MAX_POST_SLUG, sanitizePostSlug, sanitizeHtml, sanitizeUrl, checkIpBlacklist, checkEmailBlacklist, getCommentStatus } from "../../utils/security";
+import { checkCommentSpam } from "../../utils/spam";
 import { getSetting } from "../../utils/settings";
 import { isVerifyEnabled, verifyTicket } from "../../utils/verify";
 import { parseMarkdown } from "../../utils/markdown";
@@ -122,6 +123,28 @@ export default async (c: Context): Promise<Response> => {
     const postUrl = sanitizeUrl(data.post_url);
     const uaParser = new UAParser(c.req.header("user-agent") ?? "");
     const uaResult = uaParser.getResult();
+
+    // 审核自动化：只有在「本来会直接通过」时才跑垃圾规则 ——
+    // comment_auto_approve = "false" 时全部评论都要人工审核，规则判定没有意义；
+    // 博主（管理员密钥已验证）的评论直接通过，不受规则影响。
+    let status = isAdminVerified ? "approved" : await getCommentStatus();
+    if (!isAdminVerified && status === "approved") {
+      const spamReason = await checkCommentSpam({
+        content,
+        author,
+        url,
+        ip,
+      });
+      if (spamReason) {
+        status = "pending";
+        LogService.info("评论被审核自动化判为垃圾，已转入待审核", {
+          reason: spamReason,
+          post_slug: data.post_slug,
+          email: data.email,
+        });
+      }
+    }
+
     const commentData: CreateCommentInput = {
       pub_date: Date.now(),
       post_slug: data.post_slug,
@@ -136,7 +159,7 @@ export default async (c: Context): Promise<Response> => {
       content_text: content,
       content_html: sanitizeHtml(await parseMarkdown(content)),
       parent_id: data.parent_id ?? null,
-      status: isAdminVerified ? "approved" : await getCommentStatus(),
+      status,
     };
 
     // 邮箱验证检查

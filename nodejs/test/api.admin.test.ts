@@ -21,6 +21,10 @@ const RESET_KEYS = [
   "allow_origin",
   "ip_blacklist",
   "comment_auto_approve",
+  "comment_spam_keywords",
+  "comment_spam_max_links",
+  "comment_spam_min_length",
+  "comment_spam_duplicate_window",
   "admin_email",
   "admin_comment_key",
   "admin_comment_key_enabled",
@@ -291,6 +295,10 @@ describe("GET /admin/settings", () => {
       "site_name",
       "admin_email",
       "comment_auto_approve",
+      "comment_spam_keywords",
+      "comment_spam_max_links",
+      "comment_spam_min_length",
+      "comment_spam_duplicate_window",
       "blogger_badge_enabled",
       "blogger_badge_text",
       "placeholder_name",
@@ -409,6 +417,65 @@ describe("PUT /admin/settings", () => {
     });
     expect(good.status).toBe(200);
     expect(await getSetting("ip_blacklist")).toBe('["1.2.3.4","10.0.0.0/8"]');
+  });
+
+  it("审核自动化规则校验：非法值整批拒绝", async () => {
+    const token = await loginToken();
+
+    for (const [key, value] of [
+      ["comment_spam_keywords", "{oops"],
+      ["comment_spam_keywords", '["a",1]'],
+      ["comment_spam_max_links", "51"],
+      ["comment_spam_max_links", "abc"],
+      ["comment_spam_max_links", "-1"],
+      ["comment_spam_min_length", "2001"],
+      ["comment_spam_duplicate_window", "10081"],
+    ] as [string, string][]) {
+      const res = await api("/admin/settings", {
+        method: "PUT",
+        token,
+        body: { site_name: "不应写入", [key]: value },
+      });
+      expect(res.status, `${key}=${value}`).toBe(400);
+      expect((await json(res)).message, `${key}=${value}`).toContain(key);
+      // 校验在写入之前完成：整批都不落地
+      expect(await getSetting(key), `${key}=${value}`).toBeNull();
+      expect(await getSetting("site_name"), `${key}=${value}`).toBeNull();
+    }
+  });
+
+  it("审核自动化规则校验：合法值写入并可读回", async () => {
+    const token = await loginToken();
+    const res = await api("/admin/settings", {
+      method: "PUT",
+      token,
+      body: {
+        comment_spam_keywords: JSON.stringify(["加微信", "casino"]),
+        comment_spam_max_links: "5",
+        comment_spam_min_length: "0",
+        comment_spam_duplicate_window: "60",
+      },
+    });
+    expect(res.status).toBe(200);
+    expect(await getSetting("comment_spam_keywords")).toBe('["加微信","casino"]');
+    expect(await getSetting("comment_spam_max_links")).toBe("5");
+    expect(await getSetting("comment_spam_min_length")).toBe("0");
+    expect(await getSetting("comment_spam_duplicate_window")).toBe("60");
+
+    const body = await json(await api("/admin/settings?type=basic", { token }));
+    expect(body.data.comment_spam_max_links).toBe("5");
+    expect(body.data.comment_spam_keywords).toBe('["加微信","casino"]');
+  });
+
+  it("审核自动化的空串阈值允许写入（表示使用默认值）", async () => {
+    const token = await loginToken();
+    const res = await api("/admin/settings", {
+      method: "PUT",
+      token,
+      body: { comment_spam_max_links: "", comment_spam_min_length: "", comment_spam_duplicate_window: "" },
+    });
+    expect(res.status).toBe(200);
+    expect(await getSetting("comment_spam_max_links")).toBe("");
   });
 
   it("传入 trust_proxy 立即生效（不等缓存过期）", async () => {

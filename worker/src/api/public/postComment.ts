@@ -4,6 +4,7 @@ import { Bindings } from '../../bindings';
 import { sendCommentNotification, sendCommentReplyNotification, sendVerificationEmail, checkEmailVerified, hasUnverifiedToken, saveVerificationToken, isEmailServiceAvailable } from '../../utils/email';
 import { isEmailEnabled, getSetting } from '../../utils/settings';
 import { isVerifyEnabled, verifyTicket } from '../../utils/verify';
+import { checkCommentSpam } from '../../utils/spam';
 import { parseMarkdown } from '../../utils/markdown';
 import { toMillis } from '../../utils/time';
 import {
@@ -165,7 +166,18 @@ export const postComment = async (c: Context<{ Bindings: Bindings }>) => {
   const postUrl = sanitizeUrl(data.post_url);
   const uaParser = new UAParser(userAgent);
   const uaResult = uaParser.getResult();
+
+  // 审核自动化：只有在「本来会直接通过」时才跑垃圾规则 ——
+  // comment_auto_approve = "false" 时全部评论都要人工审核，规则判定没有意义；
+  // 博主（管理员密钥已验证）的评论直接通过，不受规则影响。
   let status = isAdminVerified ? "approved" : await getCommentStatus(c.env);
+  if (!isAdminVerified && status === "approved") {
+    const spamReason = await checkCommentSpam(c.env, { content, author, url, ip });
+    if (spamReason) {
+      status = "pending";
+      console.log("评论被审核自动化判为垃圾，已转入待审核:", spamReason, data.post_slug);
+    }
+  }
 
   // 邮箱验证检查
   let needsVerification = false;

@@ -3,6 +3,7 @@ import { Bindings } from '../../bindings';
 import { setSetting } from '../../utils/settings';
 import { checkContent, sanitizeUrl, isValidIpBlacklistJson, MAX_CONTENT, MAX_AUTHOR, MAX_EMAIL, MAX_URL, MAX_POST_SLUG } from '../../utils/security';
 import { parseMarkdown, sanitizeHtml } from '../../utils/markdown';
+import { validateSpamSettings } from '../../utils/spam';
 import { toMillis } from '../../utils/time';
 
 // 导入时不允许用空值覆盖已有值的敏感字段
@@ -86,6 +87,10 @@ export const importSettings = async (c: Context<{ Bindings: Bindings }>) => {
     "allow_origin", "email_enabled",
     "reply_template", "notification_template",
     "comment_auto_approve",
+    "comment_spam_keywords",
+    "comment_spam_max_links",
+    "comment_spam_min_length",
+    "comment_spam_duplicate_window",
     "ip_blacklist",
     "email_blacklist",
     "blogger_badge_enabled",
@@ -109,6 +114,12 @@ export const importSettings = async (c: Context<{ Bindings: Bindings }>) => {
 
   if ("ip_blacklist" in body && !isValidIpBlacklistJson(String(body.ip_blacklist ?? ""))) {
     return c.json({ code: 400, message: "ip_blacklist must be a JSON array of valid IP or CIDR strings" }, 400);
+  }
+
+  // 导入文件可能来自不可信来源：审核自动化规则同样要在入口校验
+  const spamError = validateSpamSettings(body);
+  if (spamError) {
+    return c.json({ code: 400, message: spamError }, 400);
   }
 
   const updated: string[] = [];

@@ -22,6 +22,8 @@ type CommentRepository interface {
 	ListAll(ctx context.Context) ([]*model.Comment, error)
 	// Rate limiting
 	GetLastCommentByIP(ctx context.Context, ip string) (*model.Comment, error)
+	// 审核自动化：同一 IP 在时间窗内是否提交过完全相同的正文
+	HasRecentDuplicate(ctx context.Context, ip, contentText string, sinceMillis int64) (bool, error)
 
 	// Email verification
 	CheckEmailVerified(ctx context.Context, email string) (bool, error)

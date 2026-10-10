@@ -1,0 +1,202 @@
+{
+  "_comment": "评论审核自动化（垃圾规则）的跨语言固定向量。Node / Go / Worker 三端读取同一份 fixture 并各自复算 evaluateSpamRules / countLinks / parseSpamKeywords / parseSpamNumber 与后台设置校验。任何一端改了链接统计口径、长度单位（码点 vs 码元 vs 字节）、阈值语义（0 = 不启用）或规则优先级，都会立刻在这里暴露。四项阈值的默认值刻意全部为 0（不启用），升级后行为与旧版本一致。规则语义见 doc/api.md。",
+  "defaults": {
+    "maxLinks": 0,
+    "minLength": 0,
+    "duplicateWindowMinutes": 0
+  },
+  "limits": {
+    "maxKeywords": 200,
+    "maxKeywordLength": 100,
+    "maxLinks": 50,
+    "maxMinLength": 2000,
+    "maxDuplicateWindowMinutes": 10080
+  },
+  "parseKeywords": [
+    { "name": "未配置", "raw": "", "want": [] },
+    { "name": "只有空白", "raw": "   ", "want": [] },
+    { "name": "空数组", "raw": "[]", "want": [] },
+    { "name": "普通数组", "raw": "[\"加微信\",\"casino\"]", "want": ["加微信", "casino"] },
+    { "name": "去首尾空白并转小写", "raw": "[\"  SPAM  \",\"XSS\"]", "want": ["spam", "xss"] },
+    { "name": "丢弃空串与纯空白", "raw": "[\"ok\",\"\",\"   \"]", "want": ["ok"] },
+    { "name": "丢弃非字符串元素", "raw": "[\"ok\",42,null,true,{\"a\":1}]", "want": ["ok"] },
+    { "name": "非法 JSON 时该规则不生效", "raw": "{oops", "want": [] },
+    { "name": "非数组时该规则不生效", "raw": "{\"a\":1}", "want": [] }
+  ],
+  "parseNumber": [
+    { "name": "未配置用默认值", "raw": "", "fallback": 3, "max": 50, "want": 3 },
+    { "name": "只有空白用默认值", "raw": "   ", "fallback": 3, "max": 50, "want": 3 },
+    { "name": "正常数字", "raw": "10", "fallback": 3, "max": 50, "want": 10 },
+    { "name": "0 表示不启用该规则", "raw": "0", "fallback": 3, "max": 50, "want": 0 },
+    { "name": "超过上限按上限夹取", "raw": "999", "fallback": 3, "max": 50, "want": 50 },
+    { "name": "负数用默认值", "raw": "-1", "fallback": 3, "max": 50, "want": 3 },
+    { "name": "小数用默认值", "raw": "1.5", "fallback": 3, "max": 50, "want": 3 },
+    { "name": "带单位用默认值", "raw": "10m", "fallback": 5, "max": 2000, "want": 5 },
+    { "name": "恰好等于上限", "raw": "2000", "fallback": 5, "max": 2000, "want": 2000 },
+    { "name": "时间窗恰好等于上限", "raw": "10080", "fallback": 10, "max": 10080, "want": 10080 }
+  ],
+  "countLinks": [
+    { "name": "空文本", "text": "", "want": 0 },
+    { "name": "无链接", "text": "这是一条普通评论", "want": 0 },
+    { "name": "单个 http", "text": "看 http://a.com", "want": 1 },
+    { "name": "单个 https", "text": "看 https://a.com", "want": 1 },
+    { "name": "带路径与查询串只算一次", "text": "看 http://a.com/path?x=1#f", "want": 1 },
+    { "name": "多个带协议链接", "text": "https://a.com 和 http://b.com", "want": 2 },
+    { "name": "裸 www", "text": "看 www.a.com", "want": 1 },
+    { "name": "多个裸 www", "text": "www.a.com 与 www.b.com", "want": 2 },
+    { "name": "https://www. 只算一次", "text": "https://www.a.com", "want": 1 },
+    { "name": "Markdown 链接", "text": "[点这里](https://a.com)", "want": 1 },
+    { "name": "混合形式", "text": "https://a.com 与 www.b.com", "want": 2 },
+    { "name": "大小写不敏感", "text": "HTTPS://A.COM 与 WWW.B.COM", "want": 2 },
+    { "name": "四个链接", "text": "https://a.com https://b.com https://c.com https://d.com", "want": 4 },
+    { "name": "二十个链接", "text": "https://a.com https://a.com https://a.com https://a.com https://a.com https://a.com https://a.com https://a.com https://a.com https://a.com https://a.com https://a.com https://a.com https://a.com https://a.com https://a.com https://a.com https://a.com https://a.com https://a.com", "want": 20 }
+  ],
+  "evaluate": [
+    {
+      "name": "全部规则关闭时不判垃圾",
+      "content": "好", "author": "a", "url": "",
+      "keywords": [], "maxLinks": 0, "minLength": 0,
+      "wantReason": null
+    },
+    {
+      "name": "关键词命中正文",
+      "content": "请加微信 123", "author": "a", "url": "",
+      "keywords": ["加微信", "casino"], "maxLinks": 0, "minLength": 0,
+      "wantReason": "keyword:加微信"
+    },
+    {
+      "name": "关键词命中昵称",
+      "content": "这是一条正常的评论", "author": "casino 代理", "url": "",
+      "keywords": ["加微信", "casino"], "maxLinks": 0, "minLength": 0,
+      "wantReason": "keyword:casino"
+    },
+    {
+      "name": "关键词命中个人网址",
+      "content": "这是一条正常的评论", "author": "a", "url": "https://casino.example.com",
+      "keywords": ["加微信", "casino"], "maxLinks": 0, "minLength": 0,
+      "wantReason": "keyword:casino"
+    },
+    {
+      "name": "关键词不区分大小写",
+      "content": "Visit CASINO now", "author": "a", "url": "",
+      "keywords": ["casino"], "maxLinks": 0, "minLength": 0,
+      "wantReason": "keyword:casino"
+    },
+    {
+      "name": "未命中任何关键词",
+      "content": "这是一条正常的评论", "author": "a", "url": "https://example.com",
+      "keywords": ["加微信", "casino"], "maxLinks": 0, "minLength": 0,
+      "wantReason": null
+    },
+    {
+      "name": "链接数超过阈值",
+      "content": "https://a.com https://b.com https://c.com https://d.com", "author": "a", "url": "",
+      "keywords": [], "maxLinks": 3, "minLength": 0,
+      "wantReason": "too_many_links:4"
+    },
+    {
+      "name": "链接数等于阈值时放行",
+      "content": "https://a.com https://b.com https://c.com", "author": "a", "url": "",
+      "keywords": [], "maxLinks": 3, "minLength": 0,
+      "wantReason": null
+    },
+    {
+      "name": "个人网址字段计入链接数",
+      "content": "https://a.com https://b.com https://c.com", "author": "a", "url": "https://me.example.com",
+      "keywords": [], "maxLinks": 3, "minLength": 0,
+      "wantReason": "too_many_links:4"
+    },
+    {
+      "name": "个人网址字段单独也能触发（阈值 1）",
+      "content": "www.a.com", "author": "a", "url": "https://x.example.com",
+      "keywords": [], "maxLinks": 1, "minLength": 0,
+      "wantReason": "too_many_links:2"
+    },
+    {
+      "name": "链接阈值为 0 表示不限制",
+      "content": "https://a.com https://b.com https://c.com https://d.com https://e.com", "author": "a", "url": "https://f.com",
+      "keywords": [], "maxLinks": 0, "minLength": 0,
+      "wantReason": null
+    },
+    {
+      "name": "正文短于阈值",
+      "content": "内容", "author": "a", "url": "",
+      "keywords": [], "maxLinks": 0, "minLength": 5,
+      "wantReason": "too_short:2"
+    },
+    {
+      "name": "正文恰好等于阈值时放行",
+      "content": "你好世界啊", "author": "a", "url": "",
+      "keywords": [], "maxLinks": 0, "minLength": 5,
+      "wantReason": null
+    },
+    {
+      "name": "长度阈值 0 表示不限制",
+      "content": "顶", "author": "a", "url": "",
+      "keywords": [], "maxLinks": 0, "minLength": 0,
+      "wantReason": null
+    },
+    {
+      "name": "首尾空白不计入长度",
+      "content": "  内容  ", "author": "a", "url": "",
+      "keywords": [], "maxLinks": 0, "minLength": 3,
+      "wantReason": "too_short:2"
+    },
+    {
+      "name": "长度按 Unicode 码点计算（emoji 算一个）",
+      "content": "👍👍👍", "author": "a", "url": "",
+      "keywords": [], "maxLinks": 0, "minLength": 3,
+      "wantReason": null
+    },
+    {
+      "name": "代理对字符不被按码元多算",
+      "content": "𝄞𝄞", "author": "a", "url": "",
+      "keywords": [], "maxLinks": 0, "minLength": 3,
+      "wantReason": "too_short:2"
+    },
+    {
+      "name": "关键词优先于链接数",
+      "content": "加微信 https://a.com https://b.com https://c.com https://d.com", "author": "a", "url": "",
+      "keywords": ["加微信"], "maxLinks": 3, "minLength": 0,
+      "wantReason": "keyword:加微信"
+    },
+    {
+      "name": "链接数优先于长度",
+      "content": "www.a.cn www.b.cn", "author": "a", "url": "",
+      "keywords": [], "maxLinks": 1, "minLength": 30,
+      "wantReason": "too_many_links:2"
+    },
+    {
+      "name": "中文关键词与英文关键词混用",
+      "content": "这是一条正常的评论", "author": "a", "url": "https://example.com",
+      "keywords": ["加微信", "SEX"], "maxLinks": 3, "minLength": 5,
+      "wantReason": null
+    }
+  ],
+  "validate": [
+    { "name": "关键词为空串（未设置）", "key": "comment_spam_keywords", "value": "", "wantError": false },
+    { "name": "关键词为空数组", "key": "comment_spam_keywords", "value": "[]", "wantError": false },
+    { "name": "关键词正常", "key": "comment_spam_keywords", "value": "[\"a\",\"b\"]", "wantError": false },
+    { "name": "关键词非法 JSON", "key": "comment_spam_keywords", "value": "{oops", "wantError": true },
+    { "name": "关键词不是数组", "key": "comment_spam_keywords", "value": "{\"a\":1}", "wantError": true },
+    { "name": "关键词包含空串", "key": "comment_spam_keywords", "value": "[\"a\",\"\"]", "wantError": true },
+    { "name": "关键词包含纯空白", "key": "comment_spam_keywords", "value": "[\"a\",\"  \"]", "wantError": true },
+    { "name": "关键词包含非字符串", "key": "comment_spam_keywords", "value": "[\"a\",1]", "wantError": true },
+    { "name": "链接阈值正常", "key": "comment_spam_max_links", "value": "3", "wantError": false },
+    { "name": "链接阈值为 0", "key": "comment_spam_max_links", "value": "0", "wantError": false },
+    { "name": "链接阈值为空串（用默认值）", "key": "comment_spam_max_links", "value": "", "wantError": false },
+    { "name": "链接阈值等于上限", "key": "comment_spam_max_links", "value": "50", "wantError": false },
+    { "name": "链接阈值超上限", "key": "comment_spam_max_links", "value": "51", "wantError": true },
+    { "name": "链接阈值非数字", "key": "comment_spam_max_links", "value": "abc", "wantError": true },
+    { "name": "链接阈值为负", "key": "comment_spam_max_links", "value": "-1", "wantError": true },
+    { "name": "链接阈值为小数", "key": "comment_spam_max_links", "value": "1.5", "wantError": true },
+    { "name": "最短长度正常", "key": "comment_spam_min_length", "value": "5", "wantError": false },
+    { "name": "最短长度等于上限", "key": "comment_spam_min_length", "value": "2000", "wantError": false },
+    { "name": "最短长度超上限", "key": "comment_spam_min_length", "value": "2001", "wantError": true },
+    { "name": "重复窗口正常", "key": "comment_spam_duplicate_window", "value": "10", "wantError": false },
+    { "name": "重复窗口等于上限", "key": "comment_spam_duplicate_window", "value": "10080", "wantError": false },
+    { "name": "重复窗口带尾随空格", "key": "comment_spam_duplicate_window", "value": "10080 ", "wantError": false },
+    { "name": "重复窗口超上限", "key": "comment_spam_duplicate_window", "value": "10081", "wantError": true },
+    { "name": "无关的键不校验", "key": "site_name", "value": "随便", "wantError": false }
+  ]
+}

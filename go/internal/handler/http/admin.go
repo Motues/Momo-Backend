@@ -96,7 +96,7 @@ func (h *CommentHandler) GetSettings(c *gin.Context) {
 
 	// 按模块分组
 	settingsGroups := map[string][]string{
-		"basic":    {"site_name", "admin_email", "comment_auto_approve", "blogger_badge_enabled", "blogger_badge_text", "placeholder_name", "placeholder_email", "placeholder_content", "placeholder_url"},
+		"basic":    {"site_name", "admin_email", "comment_auto_approve", "comment_spam_keywords", "comment_spam_max_links", "comment_spam_min_length", "comment_spam_duplicate_window", "blogger_badge_enabled", "blogger_badge_text", "placeholder_name", "placeholder_email", "placeholder_content", "placeholder_url"},
 		"email":    {"smtp_host", "smtp_port", "email_user", "email_password", "email_secure", "email_enabled", "email_verify_enabled", "verify_base_url", "reply_template", "notification_template"},
 		"security": {"allow_origin", "admin_comment_key", "admin_comment_key_enabled", "ip_blacklist", "email_blacklist", "comment_verify_enabled", "comment_verify_difficulty", "comment_verify_instr_enabled", "comment_verify_block_automated", "comment_verify_retention_days", "comment_verify_log_challenge", "trust_proxy"},
 		"account":  {"admin_name"},
@@ -172,6 +172,13 @@ func (h *CommentHandler) UpdateSettings(c *gin.Context) {
 			"code":    400,
 			"message": "ip_blacklist must be a JSON array of valid IP or CIDR strings",
 		})
+		return
+	}
+
+	// 审核自动化规则同样必须在入口校验：一个非数字阈值或坏掉的关键词数组
+	// 会让规则静默失效，甚至把全站评论都判为垃圾
+	if msg := validateSpamSettingsInBody(body); msg != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": msg})
 		return
 	}
 
@@ -784,6 +791,21 @@ func (h *CommentHandler) GetUserComments(c *gin.Context) {
 	})
 }
 
+// validateSpamSettingsInBody 校验请求体中的审核自动化规则设置。
+//
+// 返回首个错误信息，全部通过返回空串。与 Node / Worker 同名校验逻辑一致。
+func validateSpamSettingsInBody(body map[string]string) string {
+	for key, value := range body {
+		if !utils.IsSpamSettingKey(key) {
+			continue
+		}
+		if msg := utils.ValidateSpamSetting(key, value); msg != "" {
+			return msg
+		}
+	}
+	return ""
+}
+
 // ExportSettings 导出系统设置（含 admin_name 与置空后的 email_password/admin_comment_key，不含 admin_password）
 func (h *CommentHandler) ExportSettings(c *gin.Context) {
 	all := utils.GetAllSettings()
@@ -811,6 +833,10 @@ func (h *CommentHandler) ExportSettings(c *gin.Context) {
 		"email_verify_enabled":           true,
 		"verify_base_url":                true,
 		"comment_auto_approve":           true,
+		"comment_spam_keywords":          true,
+		"comment_spam_max_links":         true,
+		"comment_spam_min_length":        true,
+		"comment_spam_duplicate_window":  true,
 		"admin_comment_key_enabled":      true,
 		"comment_verify_enabled":         true,
 		"comment_verify_difficulty":      true,
@@ -1024,6 +1050,10 @@ func (h *CommentHandler) ImportSettings(c *gin.Context) {
 		"email_verify_enabled":           true,
 		"verify_base_url":                true,
 		"comment_auto_approve":           true,
+		"comment_spam_keywords":          true,
+		"comment_spam_max_links":         true,
+		"comment_spam_min_length":        true,
+		"comment_spam_duplicate_window":  true,
 		"admin_comment_key_enabled":      true,
 		"comment_verify_enabled":         true,
 		"comment_verify_difficulty":      true,
@@ -1042,6 +1072,12 @@ func (h *CommentHandler) ImportSettings(c *gin.Context) {
 			"code":    400,
 			"message": "ip_blacklist must be a JSON array of valid IP or CIDR strings",
 		})
+		return
+	}
+
+	// 审核自动化规则同样必须在入口校验（导入文件可能来自不可信来源）
+	if msg := validateSpamSettingsInBody(body); msg != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": msg})
 		return
 	}
 

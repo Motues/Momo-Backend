@@ -20,6 +20,11 @@ const DEFAULT_FORM = {
 	site_name: '',
 	admin_email: '',
 	comment_auto_approve: 'true',
+	// 审核自动化规则：默认全部为 0（不启用），与后端默认值一致
+	comment_spam_max_links: '0',
+	comment_spam_min_length: '0',
+	comment_spam_duplicate_window: '0',
+	comment_spam_keywords: '[]',
 	blogger_badge_enabled: 'false',
 	blogger_badge_text: '',
 	placeholder_name: '',
@@ -265,6 +270,131 @@ describe('BasicSettings - 保存', () => {
 		await flushPromises();
 		expect(toastMock.success).not.toHaveBeenCalled();
 		expect(wrapper.text()).not.toContain('保存成功');
+	});
+});
+
+describe('BasicSettings - 审核自动化规则', () => {
+	const numberInputs = () => wrapper.findAll('input[type="number"]');
+
+	it('开启自动通过时展示规则区，关闭后隐藏', async () => {
+		await mountSettings();
+		expect(wrapper.text()).toContain('审核自动化规则');
+		await switchToggle(0, false);
+		expect(wrapper.text()).not.toContain('审核自动化规则');
+	});
+
+	it('未配置时四项阈值均为 0（不启用任何规则）', async () => {
+		await mountSettings({ code: 200, data: {} });
+		expect(wrapper.vm.form.comment_spam_max_links).toBe('0');
+		expect(wrapper.vm.form.comment_spam_min_length).toBe('0');
+		expect(wrapper.vm.form.comment_spam_duplicate_window).toBe('0');
+		expect(wrapper.vm.spamKeywords).toEqual([]);
+	});
+
+	it('规则区展示建议值占位符', async () => {
+		await mountSettings();
+		const placeholders = numberInputs().map((input) => input.attributes('placeholder'));
+		expect(placeholders).toEqual(['建议 3', '建议 5', '建议 10']);
+	});
+
+	it('加载已保存的阈值与关键词', async () => {
+		await mountSettings({
+			code: 200,
+			data: {
+				comment_spam_max_links: '5',
+				comment_spam_min_length: '0',
+				comment_spam_duplicate_window: '60',
+				comment_spam_keywords: '["加微信","casino"]',
+			},
+		});
+		expect(wrapper.vm.form.comment_spam_max_links).toBe('5');
+		expect(wrapper.vm.form.comment_spam_min_length).toBe('0');
+		expect(wrapper.vm.form.comment_spam_duplicate_window).toBe('60');
+		expect(wrapper.vm.spamKeywords).toEqual(['加微信', 'casino']);
+		expect(wrapper.text()).toContain('加微信');
+	});
+
+	it('关键词配置损坏时按空列表处理', async () => {
+		await mountSettings({ code: 200, data: { comment_spam_keywords: '{oops' } });
+		expect(wrapper.vm.spamKeywords).toEqual([]);
+	});
+
+	it('添加与删除关键词', async () => {
+		await mountSettings();
+		await wrapper.find('input[placeholder="例如：加微信"]').setValue('博彩');
+		await wrapper.findAll('button').find((button) => button.text() === '添加').trigger('click');
+		expect(wrapper.vm.spamKeywords).toEqual(['博彩']);
+
+		// 点击标签上的 × 删除
+		await wrapper.find('span.bg-blue-50 button').trigger('click');
+		expect(wrapper.vm.spamKeywords).toEqual([]);
+	});
+
+	it('相同关键词不会重复添加，空白关键词被忽略', async () => {
+		await mountSettings();
+		await wrapper.find('input[placeholder="例如：加微信"]').setValue('spam');
+		await wrapper.findAll('button').find((button) => button.text() === '添加').trigger('click');
+		await wrapper.find('input[placeholder="例如：加微信"]').setValue('spam');
+		await wrapper.findAll('button').find((button) => button.text() === '添加').trigger('click');
+		expect(wrapper.vm.spamKeywords).toEqual(['spam']);
+
+		await wrapper.find('input[placeholder="例如：加微信"]').setValue('   ');
+		expect(wrapper.findAll('button').find((button) => button.text() === '添加').attributes('disabled')).toBeDefined();
+	});
+
+	it('保存时提交关键词 JSON 与归一化后的阈值', async () => {
+		await mountSettings();
+		await wrapper.find('input[placeholder="例如：加微信"]').setValue('加微信');
+		await wrapper.findAll('button').find((button) => button.text() === '添加').trigger('click');
+		await numberInputs()[0].setValue('10');
+		await numberInputs()[1].setValue('0');
+		await numberInputs()[2].setValue('0');
+		await saveButton().trigger('click');
+		await flushPromises();
+
+		const payload = requestMock.put.mock.calls[0][1];
+		expect(payload.comment_spam_keywords).toBe('["加微信"]');
+		expect(payload.comment_spam_max_links).toBe('10');
+		expect(payload.comment_spam_min_length).toBe('0');
+		expect(payload.comment_spam_duplicate_window).toBe('0');
+	});
+
+	it('阈值超出上限时按上限夹取', async () => {
+		await mountSettings();
+		await numberInputs()[0].setValue('999');
+		await numberInputs()[1].setValue('99999');
+		await numberInputs()[2].setValue('999999');
+		await saveButton().trigger('click');
+		await flushPromises();
+
+		const payload = requestMock.put.mock.calls[0][1];
+		expect(payload.comment_spam_max_links).toBe('50');
+		expect(payload.comment_spam_min_length).toBe('2000');
+		expect(payload.comment_spam_duplicate_window).toBe('10080');
+		// 归一化结果写回表单，页面显示与实际落库一致
+		expect(wrapper.vm.form.comment_spam_max_links).toBe('50');
+		expect(wrapper.vm.form.comment_spam_min_length).toBe('2000');
+		expect(wrapper.vm.form.comment_spam_duplicate_window).toBe('10080');
+	});
+
+	it('阈值非法（负数/空）时退回默认值 0', async () => {
+		await mountSettings();
+		await numberInputs()[0].setValue('');
+		await numberInputs()[1].setValue('-3');
+		await saveButton().trigger('click');
+		await flushPromises();
+
+		const payload = requestMock.put.mock.calls[0][1];
+		expect(payload.comment_spam_max_links).toBe('0');
+		expect(payload.comment_spam_min_length).toBe('0');
+	});
+
+	it('修改规则会标记为未保存', async () => {
+		await mountSettings();
+		expect(wrapper.vm.isDirty).toBe(false);
+		await wrapper.find('input[placeholder="例如：加微信"]').setValue('spam');
+		await wrapper.findAll('button').find((button) => button.text() === '添加').trigger('click');
+		expect(wrapper.vm.isDirty).toBe(true);
 	});
 });
 

@@ -85,6 +85,8 @@ func TestGetSettingsTypeGroups(t *testing.T) {
 		"allow_origin": "https://a.com", "admin_comment_key": "k", "admin_comment_key_enabled": "true",
 		"ip_blacklist": `[]`, "email_blacklist": `[]`,
 		"comment_verify_enabled": "true", "comment_verify_difficulty": "12", "trust_proxy": "false",
+		"comment_spam_keywords": `["加微信"]`, "comment_spam_max_links": "5",
+		"comment_spam_min_length": "0", "comment_spam_duplicate_window": "60",
 		"admin_name": "boss",
 	} {
 		setSetting(t, key, value)
@@ -101,6 +103,8 @@ func TestGetSettingsTypeGroups(t *testing.T) {
 			typeParam: "basic",
 			mustHave: []string{
 				"site_name", "admin_email", "comment_auto_approve",
+				"comment_spam_keywords", "comment_spam_max_links",
+				"comment_spam_min_length", "comment_spam_duplicate_window",
 				"blogger_badge_enabled", "blogger_badge_text",
 				"placeholder_name", "placeholder_email", "placeholder_content", "placeholder_url",
 			},
@@ -255,6 +259,112 @@ func TestUpdateSettingsRoundTrip(t *testing.T) {
 	decodeInto(t, callWithToken(t, "GET", "/admin/settings", "", token), &payload)
 	if payload.Data["site_name"] != "新站名" {
 		t.Errorf("GET 应返回刚保存的值，实际 %q", payload.Data["site_name"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// PUT /admin/settings —— 审核自动化（垃圾规则）校验
+// ---------------------------------------------------------------------------
+
+func TestUpdateSettingsRejectsInvalidSpamRules(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+	}{
+		{"关键词非法 JSON", `{"site_name":"不应写入","comment_spam_keywords":"{oops"}`,
+			"comment_spam_keywords must be a JSON array of at most 200 non-empty strings"},
+		{"关键词含非字符串", `{"site_name":"不应写入","comment_spam_keywords":"[\"a\",1]"}`,
+			"comment_spam_keywords must be a JSON array of at most 200 non-empty strings"},
+		{"链接阈值超上限", `{"site_name":"不应写入","comment_spam_max_links":"51"}`,
+			"comment_spam_max_links must be an integer between 0 and 50"},
+		{"链接阈值非数字", `{"site_name":"不应写入","comment_spam_max_links":"abc"}`,
+			"comment_spam_max_links must be an integer between 0 and 50"},
+		{"链接阈值为负", `{"site_name":"不应写入","comment_spam_max_links":"-1"}`,
+			"comment_spam_max_links must be an integer between 0 and 50"},
+		{"最短长度超上限", `{"site_name":"不应写入","comment_spam_min_length":"2001"}`,
+			"comment_spam_min_length must be an integer between 0 and 2000"},
+		{"重复窗口超上限", `{"site_name":"不应写入","comment_spam_duplicate_window":"10081"}`,
+			"comment_spam_duplicate_window must be an integer between 0 and 10080"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetState(t)
+			token := adminToken(t)
+
+			w := callWithToken(t, "PUT", "/admin/settings", tc.body, token)
+			requireStatus(t, w, 400)
+
+			m := decodeJSON(t, w)
+			if got, _ := m["message"].(string); got != tc.want {
+				t.Errorf("错误信息期望 %q，实际 %q", tc.want, got)
+			}
+
+			// 校验发生在写入之前：同一批里的其它键也不应落库
+			if got := utils.GetSetting("site_name"); got != "" {
+				t.Errorf("校验失败时不应写入任何设置，site_name 实际 %q", got)
+			}
+		})
+	}
+}
+
+func TestUpdateSettingsAcceptsValidSpamRules(t *testing.T) {
+	resetState(t)
+	token := adminToken(t)
+
+	body := `{"comment_spam_keywords":"[\"加微信\",\"casino\"]","comment_spam_max_links":"5",` +
+		`"comment_spam_min_length":"0","comment_spam_duplicate_window":"60"}`
+	w := callWithToken(t, "PUT", "/admin/settings", body, token)
+	requireStatus(t, w, 200)
+
+	for key, want := range map[string]string{
+		"comment_spam_keywords":         `["加微信","casino"]`,
+		"comment_spam_max_links":        "5",
+		"comment_spam_min_length":       "0",
+		"comment_spam_duplicate_window": "60",
+	} {
+		if got := utils.GetSetting(key); got != want {
+			t.Errorf("设置 %s 期望 %q，实际 %q", key, want, got)
+		}
+	}
+
+	// 基础分组应能读回这四项规则
+	var payload settingsPayload
+	decodeInto(t, callWithToken(t, "GET", "/admin/settings?type=basic", "", token), &payload)
+	if got := payload.Data["comment_spam_max_links"]; got != "5" {
+		t.Errorf("basic 分组应返回 comment_spam_max_links，实际 %q", got)
+	}
+
+	// 空串表示“未设置，用默认值”，允许写入
+	empty := `{"comment_spam_max_links":"","comment_spam_min_length":"","comment_spam_duplicate_window":""}`
+	requireStatus(t, callWithToken(t, "PUT", "/admin/settings", empty, token), 200)
+	if got := utils.GetSetting("comment_spam_max_links"); got != "" {
+		t.Errorf("空串阈值应被写入（表示使用默认值），实际 %q", got)
+	}
+}
+
+func TestImportSettingsRejectsInvalidSpamRules(t *testing.T) {
+	resetState(t)
+	token := adminToken(t)
+
+	bad := `{"site_name":"不应写入","comment_spam_min_length":"abc"}`
+	w := callWithToken(t, "POST", "/admin/data/import/settings", bad, token)
+	requireStatus(t, w, 400)
+
+	m := decodeJSON(t, w)
+	if got, _ := m["message"].(string); got != "comment_spam_min_length must be an integer between 0 and 2000" {
+		t.Errorf("导入校验错误信息不正确: %q", got)
+	}
+	if got := utils.GetSetting("site_name"); got != "" {
+		t.Errorf("导入校验失败时不应写入任何设置，site_name 实际 %q", got)
+	}
+
+	good := `{"comment_spam_keywords":"[\"加微信\"]","comment_spam_max_links":"5"}`
+	requireStatus(t, callWithToken(t, "POST", "/admin/data/import/settings", good, token), 200)
+	if got := utils.GetSetting("comment_spam_max_links"); got != "5" {
+		t.Errorf("合法规则应被导入，实际 %q", got)
+	}
+	if got := utils.GetSetting("comment_spam_keywords"); got != `["加微信"]` {
+		t.Errorf("合法关键词应被导入，实际 %q", got)
 	}
 }
 

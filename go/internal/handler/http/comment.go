@@ -231,7 +231,17 @@ func (h *CommentHandler) PostComment(c *gin.Context) {
 			if needsVerification {
 				return "pending"
 			}
-			return utils.GetCommentStatus()
+			// 审核自动化：只有在「本来会直接通过」时才跑垃圾规则 ——
+			// comment_auto_approve = "false" 时全部评论都要人工审核，规则判定没有意义
+			base := utils.GetCommentStatus()
+			if base != "approved" {
+				return base
+			}
+			if reason := spamReason(h, c, clientIP, sanitizedContent, sanitizedAuthor, sanitizedURL); reason != "" {
+				log.Printf("[INFO] 评论被审核自动化判为垃圾，已转入待审核: %s (post_slug=%s)", reason, req.PostSlug)
+				return "pending"
+			}
+			return "approved"
 		}(),
 	}
 
@@ -298,7 +308,24 @@ func (h *CommentHandler) PostComment(c *gin.Context) {
 	})
 }
 
+// 公开评论列表限流：缓解批量遍历 post_slug 采集博主邮箱哈希等爬取行为
+// （与 Node 的 getCommentBySlug.ts、Worker 的 getComments.ts 逐项一致：
+// 同一 IP 每 60 秒最多 120 次，超出返回 429）
+const (
+	commentsGetRateLimit  = 120
+	commentsGetRateWindow = time.Minute
+)
+
 func (h *CommentHandler) GetComments(c *gin.Context) {
+	clientIP := utils.GetClientIP(c)
+	if !utils.AllowRequest("comments:get:"+clientIP, commentsGetRateLimit, commentsGetRateWindow) {
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"code":    429,
+			"message": "Too many requests. Please slow down.",
+		})
+		return
+	}
+
 	slug := c.Query("post_slug")
 	if slug == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": "post_slug is required"})
@@ -419,6 +446,32 @@ func (h *CommentHandler) GetComments(c *gin.Context) {
 }
 
 func ptrString(s string) *string { return &s }
+
+// spamReason 判定已净化后的评论是否命中垃圾规则（含「同 IP 重复内容」）。
+//
+// 返回命中原因，未命中返回空串。规则配置损坏或重复检测查询失败时保持放行并写日志：
+// 一条坏配置不能让全站评论都卡在待审核。
+func spamReason(h *CommentHandler, c *gin.Context, ip, content, author, url string) string {
+	keywords, maxLinks, minLength, window := utils.GetCommentSpamSettings()
+
+	if reason := utils.EvaluateSpamRules(content, author, url, keywords, maxLinks, minLength); reason != "" {
+		return reason
+	}
+
+	if window > 0 {
+		since := time.Now().UnixMilli() - int64(window)*60*1000
+		duplicated, err := h.Repo.HasRecentDuplicate(c.Request.Context(), ip, content, since)
+		if err != nil {
+			log.Printf("[WARN] 重复评论检测失败，已跳过该规则: %v", err)
+			return ""
+		}
+		if duplicated {
+			return "duplicate:" + strconv.Itoa(window) + "m"
+		}
+	}
+
+	return ""
+}
 
 func buildCommentTree(comments []*model.CommentResponse) []*model.CommentResponse {
 	nodes := make(map[int64]*model.CommentResponse)

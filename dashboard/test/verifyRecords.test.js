@@ -1,6 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 
+// 趋势横坐标与区间文本都按浏览器本地时区换算，断言因此依赖进程时区：
+// 固定成 Asia/Shanghai（UTC+8），保证在任何机器上跑出的结果一致。
+process.env.TZ = 'Asia/Shanghai';
+
 /* ---------- 依赖 mock ---------- */
 const requestMock = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn() }));
 const toastMock = vi.hoisted(() => ({
@@ -14,6 +18,7 @@ vi.mock('../src/utils/request.js', () => ({ default: requestMock }));
 vi.mock('../src/utils/toast.js', () => ({ default: toastMock }));
 
 import VerifyRecords from '../src/views/VerifyRecords.vue';
+import MultiLineChart from '../src/components/charts/MultiLineChart.vue';
 import { createTestRouter, AdminLayoutStub } from './support/harness.js';
 
 /**
@@ -175,9 +180,10 @@ describe('VerifyRecords - 加载与指标卡', () => {
 		expect(wrapper.text()).toContain('—');
 	});
 
-	it('日期区间按 UTC 展示为 from ~ to', async () => {
+	it('日期区间按浏览器本地时区展示为 from ~ to', async () => {
 		await mountPage();
-		expect(wrapper.text()).toContain('2026-03-28 ~ 2026-04-26');
+		// from 2026-03-28T00:00Z → 本地 2026-03-28 08:00；to 2026-04-26T23:59:59.999Z → 本地 2026-04-27 07:59
+		expect(wrapper.text()).toContain('2026-03-28 ~ 2026-04-27');
 	});
 });
 
@@ -189,6 +195,39 @@ describe('VerifyRecords - 趋势与 Top 榜单', () => {
 		expect(paths.map((path) => path.attributes('data-series'))).toEqual(['签发', '通过', '失败']);
 		expect(wrapper.text()).toContain('签发');
 		expect(wrapper.text()).toContain('通过');
+	});
+
+	it('趋势横坐标按浏览器本地时区展示（后端分桶键为 UTC）', async () => {
+		await mountPage();
+		const labels = wrapper.findAll('.axis-label-x').map((node) => node.text());
+		// UTC 日桶 2026-04-25 / 2026-04-26 在 UTC+8 下分别是本地 04-25 08:00 与 04-26 08:00
+		expect(labels).toEqual(['04-25', '04-26']);
+	});
+
+	it('小时粒度的横坐标与悬浮提示都按本地时区换算', async () => {
+		await mountPage({
+			overview: makeOverview({
+				range: {
+					days: 1,
+					offset: 0,
+					from: '2026-04-25T16:00:00.000Z',
+					to: '2026-04-26T15:59:59.999Z',
+					bucket: 'hour',
+				},
+				trend: [
+					{ date: '2026-04-25T16', challenges: 5, verified: 4, failed: 1 },
+					{ date: '2026-04-25T20', challenges: 2, verified: 2, failed: 0 },
+				],
+			}),
+		});
+
+		// UTC 16:00 → 本地次日 00:00；UTC 20:00 → 本地次日 04:00
+		const labels = wrapper.findAll('.axis-label-x').map((node) => node.text());
+		expect(labels).toEqual(['00:00', '04:00']);
+		expect(wrapper.findComponent(MultiLineChart).props('rawLabels')).toEqual([
+			'2026-04-26 00:00',
+			'2026-04-26 04:00',
+		]);
 	});
 
 	it('geoSupported 为 true 时展示地区与运营商榜单', async () => {

@@ -310,6 +310,11 @@ func TestPostCommentLengthBoundaries(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestPostCommentRespectsAutoApproveSetting(t *testing.T) {
+	// 正文刻意长于审核自动化的默认最短长度（5 字符），
+	// 这样本用例只验证 comment_auto_approve 开关本身；垃圾规则的判定见
+	// TestPostCommentSpamRules。
+	const normalContent = "这是一条正常的评论"
+
 	for _, tc := range []struct {
 		name  string
 		value *string
@@ -326,7 +331,7 @@ func TestPostCommentRespectsAutoApproveSetting(t *testing.T) {
 				setSetting(t, "comment_auto_approve", *tc.value)
 			}
 
-			w := callJSON(t, "POST", "/api/comments", postCommentBody("/p", "a", "a@b.com", "内容"))
+			w := callJSON(t, "POST", "/api/comments", postCommentBody("/p", "a", "a@b.com", normalContent))
 			requireStatus(t, w, 200)
 
 			if got := latestComment(t).Status; got != tc.want {
@@ -334,6 +339,252 @@ func TestPostCommentRespectsAutoApproveSetting(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/comments —— 审核自动化（垃圾规则）
+// ---------------------------------------------------------------------------
+
+// TestPostCommentSpamRules 覆盖「与评论自动通过合并」后的完整判定链路：
+// 命中规则 → pending，未命中 → approved，博主评论豁免，阈值 0（默认）表示不启用。
+func TestPostCommentSpamRules(t *testing.T) {
+	// 9 个码点，便于隔离「太短」规则（该规则默认关闭）
+	const normal = "这是一条正常的评论"
+
+	statusOfLatest := func(t *testing.T) string {
+		t.Helper()
+		return latestComment(t).Status
+	}
+
+	t.Run("默认不启用任何规则：短评论与多链接都直接通过", func(t *testing.T) {
+		resetState(t)
+
+		requireStatus(t, callJSON(t, "POST", "/api/comments", postCommentBody("/p", "a", "a@b.com", normal)), 200)
+		if got := statusOfLatest(t); got != "approved" {
+			t.Errorf("状态期望 approved，实际 %q", got)
+		}
+
+		// 换 IP 规避 60 秒冷却
+		requireStatus(t, callFromIP(t, "POST", "/api/comments", postCommentBody("/p", "a", "a@b.com", "好文"), nextRemoteAddr()), 200)
+		if got := statusOfLatest(t); got != "approved" {
+			t.Errorf("默认（不启用长度规则）短评论应直接通过，实际 %q", got)
+		}
+
+		links := "看这里 https://a.com https://b.com https://c.com https://d.com https://e.com"
+		requireStatus(t, callFromIP(t, "POST", "/api/comments", postCommentBody("/p", "a", "a@b.com", links), nextRemoteAddr()), 200)
+		if got := statusOfLatest(t); got != "approved" {
+			t.Errorf("默认（不启用链接规则）多链接应直接通过，实际 %q", got)
+		}
+	})
+
+	t.Run("开启最短长度规则后，正文短于阈值转入待审核", func(t *testing.T) {
+		resetState(t)
+		setSetting(t, "comment_spam_min_length", "5")
+
+		w := callJSON(t, "POST", "/api/comments", postCommentBody("/p", "a", "a@b.com", "好文"))
+		requireStatus(t, w, 200)
+		if got := statusOfLatest(t); got != "pending" {
+			t.Errorf("短评论应转入待审核，实际 %q", got)
+		}
+	})
+
+	t.Run("命中敏感关键词转入待审核", func(t *testing.T) {
+		resetState(t)
+		setSetting(t, "comment_spam_keywords", `["加微信"]`)
+
+		w := callJSON(t, "POST", "/api/comments", postCommentBody("/p", "a", "a@b.com", "快来加微信看看"))
+		requireStatus(t, w, 200)
+		if got := statusOfLatest(t); got != "pending" {
+			t.Errorf("命中关键词应转入待审核，实际 %q", got)
+		}
+	})
+
+	t.Run("昵称命中关键词同样转入待审核", func(t *testing.T) {
+		resetState(t)
+		setSetting(t, "comment_spam_keywords", `["casino"]`)
+
+		w := callJSON(t, "POST", "/api/comments", postCommentBody("/p", "Casino 代理", "a@b.com", normal))
+		requireStatus(t, w, 200)
+		if got := statusOfLatest(t); got != "pending" {
+			t.Errorf("昵称命中关键词应转入待审核，实际 %q", got)
+		}
+	})
+
+	t.Run("未命中关键词时正常通过", func(t *testing.T) {
+		resetState(t)
+		setSetting(t, "comment_spam_keywords", `["加微信","casino"]`)
+
+		w := callJSON(t, "POST", "/api/comments", postCommentBody("/p", "a", "a@b.com", normal))
+		requireStatus(t, w, 200)
+		if got := statusOfLatest(t); got != "approved" {
+			t.Errorf("未命中关键词应直接通过，实际 %q", got)
+		}
+	})
+
+	t.Run("关键词配置损坏时放行", func(t *testing.T) {
+		resetState(t)
+		setSetting(t, "comment_spam_keywords", "{oops")
+
+		w := callJSON(t, "POST", "/api/comments", postCommentBody("/p", "a", "a@b.com", normal))
+		requireStatus(t, w, 200)
+		if got := statusOfLatest(t); got != "approved" {
+			t.Errorf("关键词配置损坏时应放行，实际 %q", got)
+		}
+	})
+
+	t.Run("链接数超过阈值转入待审核", func(t *testing.T) {
+		resetState(t)
+		setSetting(t, "comment_spam_max_links", "3")
+
+		content := "看这里 https://a.com https://b.com https://c.com https://d.com"
+		w := callJSON(t, "POST", "/api/comments", postCommentBody("/p", "a", "a@b.com", content))
+		requireStatus(t, w, 200)
+		if got := statusOfLatest(t); got != "pending" {
+			t.Errorf("链接超限应转入待审核，实际 %q", got)
+		}
+	})
+
+	t.Run("链接数等于阈值时放行", func(t *testing.T) {
+		resetState(t)
+		setSetting(t, "comment_spam_max_links", "3")
+
+		content := "看这里 https://a.com https://b.com https://c.com"
+		w := callJSON(t, "POST", "/api/comments", postCommentBody("/p", "a", "a@b.com", content))
+		requireStatus(t, w, 200)
+		if got := statusOfLatest(t); got != "approved" {
+			t.Errorf("链接数等于阈值应放行，实际 %q", got)
+		}
+	})
+
+	t.Run("个人网址字段计入链接数", func(t *testing.T) {
+		resetState(t)
+		setSetting(t, "comment_spam_max_links", "3")
+
+		body := `{"post_slug":"/p","author":"a","email":"a@b.com",` +
+			`"content":"看这里 https://a.com https://b.com https://c.com","url":"https://me.com"}`
+		w := callJSON(t, "POST", "/api/comments", body)
+		requireStatus(t, w, 200)
+		if got := statusOfLatest(t); got != "pending" {
+			t.Errorf("个人网址应计入链接数，实际 %q", got)
+		}
+	})
+
+	t.Run("阈值为 0 时该条规则不生效", func(t *testing.T) {
+		resetState(t)
+		setSetting(t, "comment_spam_max_links", "0")
+		setSetting(t, "comment_spam_min_length", "0")
+
+		content := "看这里 https://a.com https://b.com https://c.com https://d.com https://e.com"
+		w := callJSON(t, "POST", "/api/comments", postCommentBody("/p", "a", "a@b.com", content))
+		requireStatus(t, w, 200)
+		if got := statusOfLatest(t); got != "approved" {
+			t.Errorf("阈值为 0 时应放行，实际 %q", got)
+		}
+	})
+
+	t.Run("同一 IP 在时间窗内提交相同正文转入待审核", func(t *testing.T) {
+		resetState(t)
+		setSetting(t, "comment_spam_duplicate_window", "10")
+		ip := nextIP()
+		addr := ip + ":1234"
+
+		// 60 秒冷却之外、10 分钟窗口之内的历史评论
+		seedComment(t, &model.Comment{
+			PostSlug: "/p", Author: "a", Email: "a@b.com", IPAddress: &ip,
+			ContentText: normal, ContentHTML: "<p>x</p>", Status: "approved",
+			PubDate: time.Now().UnixMilli() - 120_000,
+		})
+
+		w := callFromIP(t, "POST", "/api/comments", postCommentBody("/p", "a", "a@b.com", normal), addr)
+		requireStatus(t, w, 200)
+		if got := statusOfLatest(t); got != "pending" {
+			t.Errorf("重复内容应转入待审核，实际 %q", got)
+		}
+	})
+
+	t.Run("时间窗外的相同正文不算重复", func(t *testing.T) {
+		resetState(t)
+		setSetting(t, "comment_spam_duplicate_window", "10")
+		ip := nextIP()
+		addr := ip + ":1234"
+
+		// 窗口 10 分钟 → 11 分钟前的历史评论不算重复
+		seedComment(t, &model.Comment{
+			PostSlug: "/p", Author: "a", Email: "a@b.com", IPAddress: &ip,
+			ContentText: normal, ContentHTML: "<p>x</p>", Status: "approved",
+			PubDate: time.Now().UnixMilli() - 11*60_000,
+		})
+
+		w := callFromIP(t, "POST", "/api/comments", postCommentBody("/p", "a", "a@b.com", normal), addr)
+		requireStatus(t, w, 200)
+		if got := statusOfLatest(t); got != "approved" {
+			t.Errorf("窗口外内容应放行，实际 %q", got)
+		}
+	})
+
+	t.Run("其他 IP 的相同正文不算重复", func(t *testing.T) {
+		resetState(t)
+		setSetting(t, "comment_spam_duplicate_window", "10")
+		otherIP := nextIP()
+		seedComment(t, &model.Comment{
+			PostSlug: "/p", Author: "a", Email: "a@b.com", IPAddress: &otherIP,
+			ContentText: normal, ContentHTML: "<p>x</p>", Status: "approved",
+			PubDate: time.Now().UnixMilli() - 120_000,
+		})
+
+		w := callFromIP(t, "POST", "/api/comments", postCommentBody("/p", "a", "a@b.com", normal), nextRemoteAddr())
+		requireStatus(t, w, 200)
+		if got := statusOfLatest(t); got != "approved" {
+			t.Errorf("不同 IP 的相同内容应放行，实际 %q", got)
+		}
+	})
+
+	t.Run("重复窗口为 0（默认）时关闭重复检测", func(t *testing.T) {
+		resetState(t)
+		setSetting(t, "comment_spam_duplicate_window", "0")
+		ip := nextIP()
+		addr := ip + ":1234"
+
+		seedComment(t, &model.Comment{
+			PostSlug: "/p", Author: "a", Email: "a@b.com", IPAddress: &ip,
+			ContentText: normal, ContentHTML: "<p>x</p>", Status: "approved",
+			PubDate: time.Now().UnixMilli() - 120_000,
+		})
+
+		w := callFromIP(t, "POST", "/api/comments", postCommentBody("/p", "a", "a@b.com", normal), addr)
+		requireStatus(t, w, 200)
+		if got := statusOfLatest(t); got != "approved" {
+			t.Errorf("关闭重复检测后应放行，实际 %q", got)
+		}
+	})
+
+	t.Run("关闭自动通过时规则不参与判定（全部待审核）", func(t *testing.T) {
+		resetState(t)
+		setSetting(t, "comment_auto_approve", "false")
+
+		w := callJSON(t, "POST", "/api/comments", postCommentBody("/p", "a", "a@b.com", normal))
+		requireStatus(t, w, 200)
+		if got := statusOfLatest(t); got != "pending" {
+			t.Errorf("关闭自动通过后应全部待审核，实际 %q", got)
+		}
+	})
+
+	t.Run("管理员密钥验证后的博主评论不受规则影响", func(t *testing.T) {
+		resetState(t)
+		setSetting(t, "admin_email", "admin@x.com")
+		setSetting(t, "admin_comment_key", "secret-key")
+		setSetting(t, "admin_comment_key_enabled", "true")
+		setSetting(t, "comment_spam_keywords", `["加微信"]`)
+
+		// 正文同时命中关键词且短于默认阈值，博主仍应直接通过
+		body := `{"post_slug":"/p","author":"博主","email":"admin@x.com",` +
+			`"content":"加微信","admin_key":"secret-key"}`
+		w := callJSON(t, "POST", "/api/comments", body)
+		requireStatus(t, w, 200)
+		if got := statusOfLatest(t); got != "approved" {
+			t.Errorf("博主评论应直接通过，实际 %q", got)
+		}
+	})
 }
 
 func TestPostCommentRateLimit(t *testing.T) {
@@ -645,6 +896,55 @@ func TestPostCommentAdminKey(t *testing.T) {
 
 		w := callJSON(t, "POST", "/api/comments", postCommentBody("/p", "博主", "admin@x.com", "内容"))
 		requireStatus(t, w, 200)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/comments —— 公开列表限流（与 Node / Worker 一致：120 次/分钟/IP）
+// ---------------------------------------------------------------------------
+
+func TestGetCommentsRateLimit(t *testing.T) {
+	t.Run("同一 IP 每分钟最多 120 次，第 121 次返回 429", func(t *testing.T) {
+		resetState(t)
+		ip := nextIP() + ":1234"
+
+		for i := 0; i < 120; i++ {
+			w := callFromIP(t, "GET", "/api/comments?post_slug=/p", "", ip)
+			if w.Code != 200 {
+				t.Fatalf("第 %d 次请求期望 200，实际 %d", i+1, w.Code)
+			}
+		}
+
+		blocked := callFromIP(t, "GET", "/api/comments?post_slug=/p", "", ip)
+		requireStatus(t, blocked, 429)
+		m := decodeJSON(t, blocked)
+		if m["code"] != float64(429) {
+			t.Errorf("响应 code 期望 429，实际 %v", m["code"])
+		}
+		if m["message"] != "Too many requests. Please slow down." {
+			t.Errorf("限流文案应与 Node/Worker 一致，实际 %v", m["message"])
+		}
+	})
+
+	t.Run("限流按 IP 隔离，其他 IP 不受影响", func(t *testing.T) {
+		resetState(t)
+		blockedIP := nextIP() + ":1234"
+
+		for i := 0; i < 120; i++ {
+			callFromIP(t, "GET", "/api/comments?post_slug=/p", "", blockedIP)
+		}
+		requireStatus(t, callFromIP(t, "GET", "/api/comments?post_slug=/p", "", blockedIP), 429)
+
+		// 换一个 IP 仍可正常访问
+		requireStatus(t, callFromIP(t, "GET", "/api/comments?post_slug=/p", "", nextRemoteAddr()), 200)
+	})
+
+	t.Run("未达上限时连续请求都返回 200", func(t *testing.T) {
+		resetState(t)
+		ip := nextIP() + ":1234"
+		for i := 0; i < 5; i++ {
+			requireStatus(t, callFromIP(t, "GET", "/api/comments?post_slug=/p", "", ip), 200)
+		}
 	})
 }
 

@@ -360,6 +360,23 @@ describe('POST /admin/data/import/settings', () => {
 		expect((await rawSettings()).ip_blacklist).toBe('["10.0.0.0/8"]');
 	});
 
+	it('审核自动化规则非法时整批拒绝，合法时写入', async () => {
+		const bad = await importSettings({ site_name: '不应写入', comment_spam_max_links: '51' });
+		expect(bad.status).toBe(400);
+		expect(bad.body.message).toBe('comment_spam_max_links must be an integer between 0 and 50');
+		expect(await rawSettings()).not.toHaveProperty('site_name');
+
+		const good = await importSettings({
+			comment_spam_keywords: '["加微信"]',
+			comment_spam_max_links: '5',
+			comment_spam_min_length: '0',
+			comment_spam_duplicate_window: '60',
+		});
+		expect(good.status).toBe(200);
+		expect((await rawSettings()).comment_spam_max_links).toBe('5');
+		expect((await rawSettings()).comment_spam_keywords).toBe('["加微信"]');
+	});
+
 	it('非法 JSON 返回 500（json() 无 catch）', async () => {
 		const res = await api('/admin/data/import/settings', {
 			method: 'POST',

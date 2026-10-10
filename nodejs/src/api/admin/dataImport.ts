@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import { db, schema } from "../../orm/client";
 import { setSetting } from "../../utils/settings";
 import { checkKey, extractToken, checkContent, sanitizeUrl, sanitizeHtml, isValidIpBlacklistJson } from "../../utils/security";
+import { validateSpamSettings } from "../../utils/spam";
 import { parseMarkdown } from "../../utils/markdown";
 import { applyTrustProxySetting } from "../../utils/ip";
 import LogService from "../../utils/log";
@@ -164,6 +165,10 @@ export async function importSettings(c: Context): Promise<Response> {
     "reply_template",
     "notification_template",
     "comment_auto_approve",
+    "comment_spam_keywords",
+    "comment_spam_max_links",
+    "comment_spam_min_length",
+    "comment_spam_duplicate_window",
     "ip_blacklist",
     "email_blacklist",
     "blogger_badge_enabled",
@@ -190,6 +195,12 @@ export async function importSettings(c: Context): Promise<Response> {
       { code: 400, message: "ip_blacklist must be a JSON array of valid IP or CIDR strings" },
       400
     );
+  }
+
+  // 图纸级校验：导入文件同样可能来自不可信来源
+  const spamError = validateSpamSettings(body as Record<string, unknown>);
+  if (spamError) {
+    return c.json({ code: 400, message: spamError }, 400);
   }
 
   const updated: string[] = [];

@@ -82,6 +82,28 @@ class CommentService {
   }
 
   /*
+   * 判断同一 IP 在时间窗内是否提交过完全相同的正文（审核自动化的「重复」规则）
+   *
+   * 不区分状态：被判为垃圾或被删除的评论同样计入 —— 否则刷屏者只要被删一次
+   * 就能把同一段内容无限重发。
+   */
+  async hasRecentDuplicate(ip: string, contentText: string, sinceMillis: number): Promise<boolean> {
+    const rows = (await db
+      .select({ id: schema.comments.id })
+      .from(schema.comments)
+      .where(
+        and(
+          eq(schema.comments.ip_address, ip),
+          eq(schema.comments.content_text, contentText),
+          gte(schema.comments.pub_date, sinceMillis)
+        )
+      )
+      .limit(1)
+      .all()) as unknown as { id: number }[];
+    return rows.length > 0;
+  }
+
+  /*
    * 删除评论（递归删除子评论）
    */
   async deleteComment(id: number) {

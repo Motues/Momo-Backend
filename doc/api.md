@@ -134,6 +134,17 @@
 
 > 当 `comment_auto_approve` 设为 `"false"` 时，评论提交后状态为 `"pending"`，需在管理后台审核通过后才会公开显示。
 
+> **审核自动化（垃圾规则）**：`comment_auto_approve` 为其它取值（默认开启）时，
+> 提交的评论会先过一遍垃圾规则，**命中任一规则 → `"pending"`，未命中 → `"approved"`**：
+> - `comment_spam_keywords`：命中的关键词，不区分大小写，检查正文 / 昵称 / 个人网址；
+> - `comment_spam_max_links`：正文中的 `http(s)://` 链接与裸 `www.` 链接，加上个人网址字段（计 1）超过该值；
+> - `comment_spam_min_length`：正文（按 Unicode 码点、忽略首尾空白）短于该值；
+> - `comment_spam_duplicate_window`：同一 IP 在时间窗内提交过**完全相同**的正文。
+>
+> **四项阈值默认全部为 `"0"`（不启用）**，因此升级后行为与本功能上线前完全一致，不会凭空拦下任何评论；
+> 建议按需填写（链接 `3` / 正文 `5` 字符 / 重复 `10` 分钟），或用 `0` 单独关闭某条规则。
+> 使用管理员评论密钥验证通过的博主评论不受规则影响，与 `comment_verify_enabled` 的豁免一致。
+
 > **字段长度上限**（超出返回 `400`）：
 > `content` ≤ 2000 字符、`author` ≤ 100、`email` ≤ 254、`url` ≤ 500、`post_slug` ≤ 200。
 > 字段类型不是字符串时同样返回 `400`。
@@ -624,6 +635,10 @@ block             = nonce / n                        // 整数除法
     "reply_template": "",
     "notification_template": "",
     "comment_auto_approve": "true",
+    "comment_spam_keywords": "",
+    "comment_spam_max_links": "0",
+    "comment_spam_min_length": "0",
+    "comment_spam_duplicate_window": "0",
     "ip_blacklist": "[\"192.168.1.100\",\"10.0.0.0/8\"]",
     "email_blacklist": "[\"spam@example.com\"]",
     "blogger_badge_enabled": "false",
@@ -663,6 +678,10 @@ block             = nonce / n                        // 整数除法
     "site_name": "Momo Blog",
     "admin_email": "admin@example.com",
     "comment_auto_approve": "true",
+    "comment_spam_keywords": "",
+    "comment_spam_max_links": "0",
+    "comment_spam_min_length": "0",
+    "comment_spam_duplicate_window": "0",
     "blogger_badge_enabled": "false",
     "blogger_badge_text": "",
     "placeholder_name": "",
@@ -755,6 +774,10 @@ block             = nonce / n                        // 整数除法
   "reply_template": "<div>Hi {{toName}}，<br>{{replyAuthor}} 回复了您：{{replyContent}}</div>",
   "notification_template": "<div>{{commentAuthor}} 评论了 {{postTitle}}：{{commentContent}}</div>",
   "comment_auto_approve": "false",
+  "comment_spam_keywords": "[\"加微信\",\"casino\"]",
+  "comment_spam_max_links": "5",
+  "comment_spam_min_length": "0",
+  "comment_spam_duplicate_window": "60",
   "ip_blacklist": "[\"192.168.1.100\",\"10.0.0.0/8\"]",
   "email_blacklist": "[\"spam@example.com\"]",
   "admin_comment_key_enabled": "true",
@@ -792,8 +815,17 @@ block             = nonce / n                        // 整数除法
 
 > **新字段说明**：
 > - `comment_auto_approve`：评论自动通过开关，`"true"` 表示评论直接显示，`"false"` 表示评论需审核
+> - `comment_spam_keywords`：审核自动化的敏感关键词，JSON 数组（最多 200 条、单条最多 100 字，不区分大小写），
+>   未设置留空表示不启用该规则；格式非法返回 `400`
+> - `comment_spam_max_links`：链接数上限（`0`–`50`，默认 `"0"` 表示不限制）；
+>   正文链接 + 个人网址字段（计 1）超过该值即判为垃圾，建议值 `"3"`
+> - `comment_spam_min_length`：正文最少字符数（`0`–`2000`，默认 `"0"` 表示不限制），按 Unicode 码点计算，建议值 `"5"`
+> - `comment_spam_duplicate_window`：重复内容检测时间窗，单位分钟（`0`–`10080`，默认 `"0"` 表示关闭），建议值 `"10"`
 > - `ip_blacklist`：IP 黑名单，JSON 数组格式，支持单个 IP 和 CIDR 网段（如 `"192.168.1.0/24"`）
 > - `email_blacklist`：邮箱黑名单，JSON 数组格式，不区分大小写匹配邮箱地址（可通过用户列表一键拉黑）
+>
+> 四项 `comment_spam_*` 阈值留空表示「未设置，使用默认值（0 = 不启用）」。
+> 它们只在 `comment_auto_approve` 为其它取值（即开启自动通过）且评论不是博主评论时才参与判定。
 
 **响应（成功）**：
 ```json

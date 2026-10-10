@@ -98,6 +98,7 @@ import { useRouter } from 'vue-router'
 import request from '../utils/request'
 import toast from '../utils/toast'
 import AdminLayout from '../components/AdminLayout.vue'
+import { formatLocalDate } from '../utils/time'
 
 const router = useRouter()
 const apiUrl = ref(localStorage.getItem('apiUrl') || window.location.origin)
@@ -116,7 +117,7 @@ const exportComments = async () => {
   try {
     const res = await request.get('/admin/data/export/comments')
     if (res.code === 200 && res.data) {
-      downloadJSON(res.data, `momo-comments-${new Date().toISOString().slice(0, 10)}.json`)
+      downloadJSON(res.data, `momo-comments-${formatLocalDate(new Date())}.json`)
       toast.success(`成功导出 ${res.data.total || res.data.comments?.length || 0} 条评论`)
     }
   } catch (e) {
@@ -132,7 +133,7 @@ const exportSettings = async () => {
   try {
     const res = await request.get('/admin/data/export/settings')
     if (res.code === 200 && res.data) {
-      downloadJSON(res.data, `momo-settings-${new Date().toISOString().slice(0, 10)}.json`)
+      downloadJSON(res.data, `momo-settings-${formatLocalDate(new Date())}.json`)
       const omitted = res.data.sensitiveOmitted || []
       if (omitted.length) {
         toast.warning(`敏感字段（${omitted.join('、')}）出于安全考虑已置空，导入后请手工补填`)

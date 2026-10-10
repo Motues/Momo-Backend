@@ -31,6 +31,10 @@ function uniqueIp(): string {
 
 const TOUCHED_SETTINGS = [
   "comment_auto_approve",
+  "comment_spam_keywords",
+  "comment_spam_max_links",
+  "comment_spam_min_length",
+  "comment_spam_duplicate_window",
   "ip_blacklist",
   "email_blacklist",
   "admin_email",
@@ -697,5 +701,219 @@ describe("POST /api/comments — 邮件通知与邮箱验证（本地假 SMTP）
       sql`SELECT * FROM "EmailVerification" WHERE "email" = 'plain@example.com'`
     ) as any[];
     expect(tokens).toHaveLength(0);
+  });
+});
+
+/**
+ * 审核自动化：与「评论自动通过」合并为一个开关 ——
+ * 开启时命中垃圾规则转待审核、未命中直接通过；关闭时全部待审核。
+ */
+describe("POST /api/comments — 审核自动化（垃圾规则）", () => {
+  /** 9 个码点，长于默认最短长度（5），用于隔离「太短」规则 */
+  const NORMAL = "这是一条正常的评论";
+
+  const statusOf = (slug: string) =>
+    (db.get(sql`SELECT * FROM "Comment" WHERE "post_slug" = ${slug}`) as any)?.status;
+
+  it("默认不启用任何规则：短评论与多链接都直接通过", async () => {
+    await postComment(validBody({ post_slug: "/posts/spam-default-ok", content: NORMAL }));
+    expect(statusOf("/posts/spam-default-ok")).toBe("approved");
+
+    await postComment(validBody({ post_slug: "/posts/spam-default-short", content: "好文" }));
+    expect(statusOf("/posts/spam-default-short")).toBe("approved");
+
+    await postComment(
+      validBody({
+        post_slug: "/posts/spam-default-links",
+        content: "看这里 https://a.com https://b.com https://c.com https://d.com",
+      })
+    );
+    expect(statusOf("/posts/spam-default-links")).toBe("approved");
+  });
+
+  it("开启最短长度规则后，正文短于阈值进入待审核", async () => {
+    await setSetting("comment_spam_min_length", "5");
+    await postComment(validBody({ post_slug: "/posts/spam-short", content: "好文" }));
+    expect(statusOf("/posts/spam-short")).toBe("pending");
+  });
+
+  it("命中敏感关键词进入待审核", async () => {
+    await setSetting("comment_spam_keywords", '["加微信"]');
+    await postComment(
+      validBody({ post_slug: "/posts/spam-keyword", content: "快来加微信看更多" })
+    );
+    expect(statusOf("/posts/spam-keyword")).toBe("pending");
+  });
+
+  it("昵称命中关键词同样进入待审核", async () => {
+    await setSetting("comment_spam_keywords", '["casino"]');
+    await postComment(
+      validBody({ post_slug: "/posts/spam-author", author: "Casino 代理", content: NORMAL })
+    );
+    expect(statusOf("/posts/spam-author")).toBe("pending");
+  });
+
+  it("网址字段命中关键词进入待审核", async () => {
+    await setSetting("comment_spam_keywords", '["casino"]');
+    await postComment(
+      validBody({
+        post_slug: "/posts/spam-url",
+        content: NORMAL,
+        url: "https://casino.example.com",
+      })
+    );
+    expect(statusOf("/posts/spam-url")).toBe("pending");
+  });
+
+  it("未命中关键词时正常通过", async () => {
+    await setSetting("comment_spam_keywords", '["加微信","casino"]');
+    await postComment(validBody({ post_slug: "/posts/spam-clean", content: NORMAL }));
+    expect(statusOf("/posts/spam-clean")).toBe("approved");
+  });
+
+  it("关键词配置损坏时放行（fail-open）", async () => {
+    await setSetting("comment_spam_keywords", "{oops");
+    await postComment(validBody({ post_slug: "/posts/spam-broken-kw", content: NORMAL }));
+    expect(statusOf("/posts/spam-broken-kw")).toBe("approved");
+  });
+
+  it("链接数超过阈值进入待审核", async () => {
+    await setSetting("comment_spam_max_links", "3");
+    await postComment(
+      validBody({
+        post_slug: "/posts/spam-links",
+        content: "看这里 https://a.com https://b.com https://c.com https://d.com",
+      })
+    );
+    expect(statusOf("/posts/spam-links")).toBe("pending");
+  });
+
+  it("链接数等于阈值时放行", async () => {
+    await setSetting("comment_spam_max_links", "3");
+    await postComment(
+      validBody({
+        post_slug: "/posts/spam-links-eq",
+        content: "看这里 https://a.com https://b.com https://c.com",
+      })
+    );
+    expect(statusOf("/posts/spam-links-eq")).toBe("approved");
+  });
+
+  it("个人网址字段计入链接数", async () => {
+    await setSetting("comment_spam_max_links", "3");
+    await postComment(
+      validBody({
+        post_slug: "/posts/spam-links-url",
+        content: "看这里 https://a.com https://b.com https://c.com",
+        url: "https://me.example.com",
+      })
+    );
+    expect(statusOf("/posts/spam-links-url")).toBe("pending");
+  });
+
+  it("阈值为 0 时该条规则不生效", async () => {
+    await setSetting("comment_spam_max_links", "0");
+    await setSetting("comment_spam_min_length", "0");
+    await postComment(
+      validBody({
+        post_slug: "/posts/spam-rules-off",
+        content: "看这里 https://a.com https://b.com https://c.com https://d.com https://e.com",
+      })
+    );
+    expect(statusOf("/posts/spam-rules-off")).toBe("approved");
+  });
+
+  it("同一 IP 在时间窗内提交相同正文进入待审核", async () => {
+    await setSetting("comment_spam_duplicate_window", "10");
+    const ip = uniqueIp();
+    seedComment({
+      post_slug: "/posts/dup",
+      author: "老访客",
+      email: "old@example.com",
+      content_text: NORMAL,
+      status: "approved",
+      // 60 秒冷却之外、10 分钟窗口之内的历史评论
+      pub_date: Date.now() - 120_000,
+      ip_address: ip,
+    });
+
+    await postComment(validBody({ post_slug: "/posts/dup-new", content: NORMAL }), ip);
+    expect(statusOf("/posts/dup-new")).toBe("pending");
+  });
+
+  it("时间窗外的相同正文不算重复", async () => {
+    await setSetting("comment_spam_duplicate_window", "10");
+    const ip = uniqueIp();
+    seedComment({
+      post_slug: "/posts/dup-old",
+      author: "老访客",
+      email: "old@example.com",
+      content_text: NORMAL,
+      status: "approved",
+      pub_date: Date.now() - 11 * 60_000,
+      ip_address: ip,
+    });
+
+    await postComment(validBody({ post_slug: "/posts/dup-old-new", content: NORMAL }), ip);
+    expect(statusOf("/posts/dup-old-new")).toBe("approved");
+  });
+
+  it("其他 IP 的相同正文不算重复", async () => {
+    await setSetting("comment_spam_duplicate_window", "10");
+    seedComment({
+      post_slug: "/posts/dup-other",
+      author: "老访客",
+      email: "old@example.com",
+      content_text: NORMAL,
+      status: "approved",
+      pub_date: Date.now() - 120_000,
+      ip_address: uniqueIp(),
+    });
+
+    await postComment(validBody({ post_slug: "/posts/dup-other-new", content: NORMAL }), uniqueIp());
+    expect(statusOf("/posts/dup-other-new")).toBe("approved");
+  });
+
+  it("重复窗口为 0（默认）时关闭重复检测", async () => {
+    await setSetting("comment_spam_duplicate_window", "0");
+    const ip = uniqueIp();
+    seedComment({
+      post_slug: "/posts/dup-off",
+      author: "老访客",
+      email: "old@example.com",
+      content_text: NORMAL,
+      status: "approved",
+      pub_date: Date.now() - 120_000,
+      ip_address: ip,
+    });
+
+    await postComment(validBody({ post_slug: "/posts/dup-off-new", content: NORMAL }), ip);
+    expect(statusOf("/posts/dup-off-new")).toBe("approved");
+  });
+
+  it("关闭自动通过时规则不参与判定（全部待审核）", async () => {
+    await setSetting("comment_auto_approve", "false");
+    await postComment(validBody({ post_slug: "/posts/spam-auto-off", content: NORMAL }));
+    expect(statusOf("/posts/spam-auto-off")).toBe("pending");
+  });
+
+  it("管理员密钥验证后的博主评论不受规则影响", async () => {
+    await setSetting("admin_email", "admin@example.com");
+    await setSetting("admin_comment_key", "secret-key");
+    await setSetting("admin_comment_key_enabled", "true");
+    await setSetting("comment_spam_keywords", '["加微信"]');
+
+    // 正文同时命中关键词且短于默认阈值，博主仍应直接通过
+    const res = await postComment(
+      validBody({
+        post_slug: "/posts/spam-admin",
+        author: "博主",
+        email: "admin@example.com",
+        content: "加微信",
+        admin_key: "secret-key",
+      })
+    );
+    expect(res.status).toBe(200);
+    expect(statusOf("/posts/spam-admin")).toBe("approved");
   });
 });

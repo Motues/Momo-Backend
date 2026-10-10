@@ -20,6 +20,10 @@ const RESET_KEYS = [
   "allow_origin",
   "email_enabled",
   "comment_auto_approve",
+  "comment_spam_keywords",
+  "comment_spam_max_links",
+  "comment_spam_min_length",
+  "comment_spam_duplicate_window",
   "ip_blacklist",
   "email_blacklist",
   "admin_comment_key",
@@ -447,6 +451,39 @@ describe("POST /admin/data/import/settings", () => {
     expect(body.data.updated).toEqual(["site_name"]);
     expect(await getSetting("email_password")).toBe("keep-me");
     expect(await getSetting("admin_comment_key")).toBe("keep-key");
+  });
+
+  it("审核自动化规则：非法值整批拒绝，合法值写入", async () => {
+    const token = await loginToken();
+
+    const bad = await api("/admin/data/import/settings", {
+      method: "POST",
+      token,
+      body: { site_name: "不应写入", comment_spam_max_links: "51" },
+    });
+    expect(bad.status).toBe(400);
+    expect((await json(bad)).message).toContain("comment_spam_max_links");
+    expect(await getSetting("site_name")).toBeNull();
+
+    const good = await api("/admin/data/import/settings", {
+      method: "POST",
+      token,
+      body: {
+        comment_spam_keywords: JSON.stringify(["加微信"]),
+        comment_spam_max_links: "5",
+        comment_spam_min_length: "0",
+        comment_spam_duplicate_window: "60",
+      },
+    });
+    expect(good.status).toBe(200);
+    const body = await json(good);
+    expect(body.data.updated.sort()).toEqual([
+      "comment_spam_duplicate_window",
+      "comment_spam_keywords",
+      "comment_spam_max_links",
+      "comment_spam_min_length",
+    ]);
+    expect(await getSetting("comment_spam_max_links")).toBe("5");
   });
 
   it("导入 trust_proxy 立即生效", async () => {

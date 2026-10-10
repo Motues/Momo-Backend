@@ -34,19 +34,24 @@ var (
 //
 // 新增设置项时只改这一处。
 var allowedSettings = map[string]bool{
-	"site_name":                      true,
-	"admin_email":                    true,
-	"admin_name":                     true,
-	"smtp_host":                      true,
-	"smtp_port":                      true,
-	"email_user":                     true,
-	"email_password":                 true,
-	"email_secure":                   true,
-	"allow_origin":                   true,
-	"email_enabled":                  true,
-	"reply_template":                 true,
-	"notification_template":          true,
-	"comment_auto_approve":           true,
+	"site_name":             true,
+	"admin_email":           true,
+	"admin_name":            true,
+	"smtp_host":             true,
+	"smtp_port":             true,
+	"email_user":            true,
+	"email_password":        true,
+	"email_secure":          true,
+	"allow_origin":          true,
+	"email_enabled":         true,
+	"reply_template":        true,
+	"notification_template": true,
+	"comment_auto_approve":  true,
+	// 审核自动化（垃圾规则）：与 comment_auto_approve 合并为一个开关
+	"comment_spam_keywords":          true,
+	"comment_spam_max_links":         true,
+	"comment_spam_min_length":        true,
+	"comment_spam_duplicate_window":  true,
 	"ip_blacklist":                   true,
 	"email_blacklist":                true,
 	"blogger_badge_enabled":          true,
@@ -288,6 +293,9 @@ func CheckEmailBlacklist(email string) bool {
 }
 
 // GetCommentStatus 根据设置返回评论状态（pending/approved）
+//
+// 只反映 comment_auto_approve 开关本身；审核自动化（垃圾规则）的判定在
+// handler 层叠加，见 utils.EvaluateSpamRules。
 func GetCommentStatus() string {
 	val := GetSetting("comment_auto_approve")
 	if val == "false" {

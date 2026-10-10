@@ -212,6 +212,7 @@ import request from '../utils/request';
 import AdminLayout from '../components/AdminLayout.vue';
 import SelectMenu from '../components/SelectMenu.vue';
 import MultiLineChart from '../components/charts/MultiLineChart.vue';
+import { bucketAxisLabel, bucketTooltipLabel, formatLocalDate } from '../utils/time';
 
 /**
  * 认证记录页：统计评论区无感验证（人机验证）的每一次认证。
@@ -276,11 +277,16 @@ const windowTotal = computed(() => {
 
 const canShiftBack = computed(() => windowTotal.value > 0 && offset.value < 120);
 
+/**
+ * 区间文本：后端返回的 from / to 是 UTC 时刻，这里换算成浏览器本地时区显示，
+ * 与明细列表的时间列（toLocaleString）保持同一口径。
+ */
 const rangeText = computed(() => {
   const { from, to } = overview.value.range;
   if (!from || !to) return '';
-  const fmt = (iso) => (iso ? iso.slice(0, 10) : '');
-  return `${fmt(from)} ~ ${fmt(to)}`;
+  const start = formatLocalDate(from);
+  const end = formatLocalDate(to);
+  return start && end ? `${start} ~ ${end}` : '';
 });
 
 /** 环比颜色按「指标变好/变坏」着色：失败数与耗时上升是坏事，其余上升是好事 */
@@ -340,20 +346,14 @@ const trendSeries = computed(() => [
 
 const trendLegend = computed(() => trendSeries.value.map((item) => ({ name: item.name, color: item.color })));
 
-/** X 轴标签：小时粒度取 HH:00，日粒度取 MM-DD，月粒度取「M月 / YY年」 */
-const trendLabels = computed(() => overview.value.trend.map((item) => {
-  const date = item.date || '';
-  if (date.length === 7) {
-    const [year, month] = date.split('-');
-    const parsed = parseInt(month, 10);
-    if (parsed === 1) return `${year.slice(2)}年`;
-    return `${parsed}月`;
-  }
-  if (date.length === 13) return `${date.slice(11)}:00`;
-  return date.slice(5);
-}));
+/**
+ * X 轴标签：后端的分桶键是 UTC，这里换算成浏览器本地时区后显示 ——
+ * 小时粒度取 HH:00，日粒度取 MM-DD，月粒度取「M月 / YY年」。
+ */
+const trendLabels = computed(() => overview.value.trend.map((item) => bucketAxisLabel(item.date)));
 
-const trendRawLabels = computed(() => overview.value.trend.map((item) => item.date || ''));
+/** 悬浮提示展示分桶起点的完整本地时间（如 `2024-05-06 13:00`） */
+const trendRawLabels = computed(() => overview.value.trend.map((item) => bucketTooltipLabel(item.date)));
 
 const COUNTRY_NAMES = {
   US: '美国', GB: '英国', FR: '法国', DE: '德国', PT: '葡萄牙', CN: '中国', HK: '中国香港',

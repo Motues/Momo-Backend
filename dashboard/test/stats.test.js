@@ -2,6 +2,10 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import { nextTick } from 'vue';
 
+// 趋势横坐标按浏览器本地时区换算，因此断言依赖进程时区：
+// 固定成 Asia/Shanghai（UTC+8），保证在任何机器上跑出的结果一致。
+process.env.TZ = 'Asia/Shanghai';
+
 /* ---------- 依赖 mock：request / toast ---------- */
 const requestMock = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn() }));
 const toastMock = vi.hoisted(() => ({

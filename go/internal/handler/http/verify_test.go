@@ -620,7 +620,8 @@ func TestVerifySolutionRoundTripAndTicketUsage(t *testing.T) {
 	}
 
 	// 票据可用于提交评论
-	commentBody := fmt.Sprintf(`{"post_slug":%q,"author":"a","email":"a@b.com","content":"内容","verify_ticket":%q}`,
+	// 正文刻意长于审核自动化的默认最短长度，避免垃圾规则干扰本用例的「默认通过」断言
+	commentBody := fmt.Sprintf(`{"post_slug":%q,"author":"a","email":"a@b.com","content":"这是一条正常的评论","verify_ticket":%q}`,
 		slug, solution.Data.Ticket)
 	commentResp := callFromIP(t, "POST", "/api/comments", commentBody, addr)
 	requireStatus(t, commentResp, 200)

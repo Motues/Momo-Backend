@@ -69,6 +69,10 @@
 | `reply_template` | 回复通知邮件模板 |
 | `notification_template` | 新评论通知邮件模板 |
 | `comment_auto_approve` | 是否自动审核通过 |
+| `comment_spam_keywords` | 审核自动化的敏感关键词（JSON 数组，不区分大小写，命中正文/昵称/网址即判为垃圾；默认不启用） |
+| `comment_spam_max_links` | 链接数上限（默认 `0` = 不限制，建议 `3`）：正文链接 + 个人网址字段超过即判为垃圾 |
+| `comment_spam_min_length` | 正文最少字符数（默认 `0` = 不限制，建议 `5`），单位是 **Unicode 码点** |
+| `comment_spam_duplicate_window` | 重复内容检测时间窗（分钟，默认 `0` = 关闭，建议 `10`）：同一 IP 在窗口内提交完全相同正文即判为垃圾 |
 | `allow_origin` | 允许的跨域来源 |
 | `ip_blacklist` | IP 黑名单（JSON 数组） |
 | `email_blacklist` | 邮箱黑名单（JSON 数组） |

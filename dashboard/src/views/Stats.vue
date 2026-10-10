@@ -135,6 +135,7 @@ import request from '../utils/request';
 import AdminLayout from '../components/AdminLayout.vue';
 import DonutChart from '../components/charts/DonutChart.vue';
 import LineAreaChart from '../components/charts/LineAreaChart.vue';
+import { bucketAxisLabel, bucketTooltipLabel } from '../utils/time';
 
 const router = useRouter();
 const loading = ref(false);
@@ -167,21 +168,15 @@ const statusSlices = computed(() => {
   ];
 });
 
-/** X 轴展示标签：日粒度取 MM-DD，月粒度取「M月 / YY年」 */
+/** X 轴展示标签：后端分桶键是 UTC，换算成本地时区后显示（日粒度 MM-DD，月粒度「M月 / YY年」） */
 const trendLabels = computed(() =>
-  (stats.value.recentComments || []).map((item) => {
-    if (item.date?.length === 7) {
-      const parts = item.date.split('-');
-      const month = parseInt(parts[1]);
-      if (month === 1) return `${parts[0].slice(2)}年`;
-      return `${month}月`;
-    }
-    return item.date?.slice(5) || '';
-  }),
+  (stats.value.recentComments || []).map((item) => bucketAxisLabel(item.date)),
 );
 
-/** 悬浮提示使用的原始日期 */
-const trendRawLabels = computed(() => (stats.value.recentComments || []).map((item) => item.date ?? ''));
+/** 悬浮提示使用的完整本地时间 */
+const trendRawLabels = computed(() =>
+  (stats.value.recentComments || []).map((item) => bucketTooltipLabel(item.date)),
+);
 
 const trendValues = computed(() => (stats.value.recentComments || []).map((item) => item.count ?? 0));
 
