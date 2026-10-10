@@ -9,7 +9,7 @@
 ```html
 <div id="momo-comment"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/@motues/momo-comment@1.5.x/dist/momo-comment.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@motues/momo-comment@1.6.x/dist/momo-comment.min.js"></script>
 <script>
     momo.init({
         el: '#momo-comment', // 评论容器的 id
@@ -23,16 +23,16 @@
 
 > 建议使用版本号锁定版本，避免版本更新导致冲突
 
-## ⚠️ 版本与后端的配套要求（1.5.1 起为破坏性变更）
+## ⚠️ 版本与后端的配套要求（1.6.0 起为破坏性变更）
 
-1.5.1 起评论区组件使用**协议 v2** 的人机验证（第一层为 HashWX 工作量证明，第二层为 Instrumentation 环境质询），必须与同时升级的后端配套。注意**包版本与协议版本是两件事**：包版本是 1.5.1，协议版本号是 `v2`。
+1.6.0 起评论区组件使用**协议 v2** 的人机验证（第一层为 HashWX 工作量证明，第二层为 Instrumentation 环境质询），必须与同时升级的后端配套。注意**包版本与协议版本是两件事**：包版本是 1.6.0，协议版本号是 `v2`。
 
 | 前端版本 | 需要搭配的后端 |
 |---|---|
 | 1.5.0 及更早 | v1 后端（旧版 SHA-256 无感验证） |
-| 1.5.1 及以后 | v2 后端（HashWX + Instrumentation 环境质询） |
+| 1.6.0 及以后 | v2 后端（HashWX + Instrumentation 环境质询） |
 
-- 前端 1.5.1 连到仍是 v1 的后端时，验证框会明确显示「验证服务版本过旧，请联系博主升级」，而不是笼统的「验证失败」（且不会给出无用的重试按钮）。
+- 前端 1.6.0 连到仍是 v1 的后端时，验证框会明确显示「验证服务版本过旧，请联系博主升级」，而不是笼统的「验证失败」（且不会给出无用的重试按钮）。
 - 旧版前端 1.x 连到已升级 v2 的后端时，验证会失败（后端返回 `reason: "PROTOCOL_OUTDATED"`），请把页面里引用的 CDN 版本一起升级。
 - 第一层工作量证明需要浏览器支持 **WebAssembly**（iOS 15+ 及现代桌面浏览器）。不支持时验证框会提示「浏览器版本过低，不支持验证」，该浏览器将无法提交评论。
 - 验证在后台静默完成：优先使用 Web Worker 并行计算，宿主页面 CSP 不允许 Worker 时自动降级到主线程分片计算（页面仍可滚动、输入）。
