@@ -1,7 +1,7 @@
 /**
  * 测试基础设施自检（替代原先的 smoke.test.ts）。
  *
- * 覆盖：注入的建表语句可用、四张表建全、建表幂等、D1 写入读取、KV 可用，
+ * 覆盖：注入的建表语句可用、五张表建全、建表幂等、D1 写入读取、KV 可用，
  * 以及 vitest-pool-workers 的 isolatedStorage 契约（每个用例独立存储）。
  */
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -26,12 +26,15 @@ describe('测试基础设施', () => {
 		expect(statements.some((s) => /CREATE TABLE IF NOT EXISTS Comment/i.test(s))).toBe(true);
 	});
 
-	it('createSchema 应建出 schemas/comment.sql 里的四张表', async () => {
+	it('createSchema 应建出 schemas/comment.sql 里的五张表', async () => {
 		await createSchema();
 		const names = await tableNames();
 		for (const table of EXPECTED_TABLES) {
 			expect(names).toContain(table);
 		}
+		// VerifyRecord 是认证记录表：新库靠 comment.sql 建表，旧库靠 0002 迁移补齐
+		expect(EXPECTED_TABLES).toHaveLength(5);
+		expect(names).toContain('VerifyRecord');
 	});
 
 	it('createSchema 应可重复调用（幂等）', async () => {

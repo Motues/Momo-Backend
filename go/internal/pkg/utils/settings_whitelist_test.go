@@ -30,6 +30,8 @@ var canonicalSettingKeys = []string{
 	"comment_verify_difficulty",
 	"comment_verify_enabled",
 	"comment_verify_instr_enabled",
+	"comment_verify_log_challenge",
+	"comment_verify_retention_days",
 	"email_blacklist",
 	"email_enabled",
 	"email_password",

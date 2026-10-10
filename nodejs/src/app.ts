@@ -9,6 +9,7 @@ import corsMiddleware from "./middleware/cors";
 import router from "./middleware/routes";
 import LogService from "./utils/log";
 import { initTrustProxy } from "./utils/ip";
+import { pruneVerifyRecords } from "./orm/verifyRecordService";
 
 const app = new Hono();
 
@@ -43,6 +44,8 @@ const port = Number(process.env.PORT || 3000);
 initTrustProxy()
   .catch((e) => LogService.error("读取 trust_proxy 设置失败", e))
   .finally(() => {
+    // 启动时清一次过期的认证记录（后续由写入路径按小时惰性清理）
+    pruneVerifyRecords().catch((e) => LogService.warn("清理认证记录失败", e));
     serve({ fetch: app.fetch, port });
     console.log(`Server running on http://localhost:${port}`);
   });

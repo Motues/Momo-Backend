@@ -19,6 +19,8 @@ import {
   importSettings,
   exportSettings,
   exportComments,
+  verifyOverview,
+  verifyRecords,
 } from "../api/index"; // admin
 import fs from "fs";
 import path from "path";
@@ -51,6 +53,10 @@ router.post("/admin/login", login);
 router.get("/admin/stats/overview", getStatsOverview);
 router.get("/admin/stats/users", getUserList);
 router.get("/admin/stats/users/comments", getUserComments);
+
+// Admin verify records（认证记录：无感验证的签发/通过/失败统计与明细）
+router.get("/admin/verify/overview", verifyOverview);
+router.get("/admin/verify/records", verifyRecords);
 
 // Admin user blacklist
 router.post("/admin/users/blacklist", addUserToBlacklist);

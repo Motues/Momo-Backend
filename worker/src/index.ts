@@ -17,6 +17,8 @@ import { listComments } from './api/admin/listComments'
 import { updateStatus } from './api/admin/updateStatus'
 import { updateComment } from './api/admin/updateComment'
 import { statsOverview } from './api/admin/statsOverview'
+import { verifyOverview } from './api/admin/verifyOverview'
+import { verifyRecords } from './api/admin/verifyRecords'
 import { userList } from './api/admin/userList'
 import { userComments } from './api/admin/userComments'
 import { addUserToBlacklist, removeUserFromBlacklist } from './api/admin/userBlacklist'
@@ -58,6 +60,9 @@ app.get('/admin/comments/list', listComments);
 app.put('/admin/comments/status', updateStatus);
 app.put('/admin/comments/edit', updateComment);
 app.get('/admin/stats/overview', statsOverview);
+// 认证记录（无感验证的签发/通过/失败统计与明细）
+app.get('/admin/verify/overview', verifyOverview);
+app.get('/admin/verify/records', verifyRecords);
 app.get('/admin/stats/users', userList);
 app.get('/admin/stats/users/comments', userComments);
 app.post('/admin/users/blacklist', addUserToBlacklist);

@@ -54,6 +54,18 @@ const checkboxByLabel = (labelText) => {
 	return section.find('input[type="checkbox"]');
 };
 
+/**
+ * 人机验证 section 里的复选框，按 DOM 顺序：
+ *   [0] 启用无感验证  [1] 启用环境质询（第二层）  [2] 命中自动化特征时拒绝  [3] 记录签发事件
+ * 后三个只在前面开启后才存在，所以每次都要重新查询。
+ * 不能用 checkboxByLabel：它只取 section 里的第一个复选框。
+ */
+const verifyToggles = () =>
+	wrapper
+		.findAll('section')
+		.find((s) => s.text().includes('启用无感验证'))
+		.findAll('input[type="checkbox"]');
+
 const addInSection = async (sectionTitle, inputSelector, value) => {
 	await wrapper.find(inputSelector).setValue(value);
 	await sectionByHeading(sectionTitle).findAll('button').at(-1).trigger('click');
@@ -357,18 +369,6 @@ describe('SecuritySettings - 管理员密钥与人机验证', () => {
 		expect(wrapper.vm.commentVerifyDifficulty).toBe('4000000');
 	});
 
-	/**
-	 * 人机验证 section 里的复选框，按 DOM 顺序：
-	 *   [0] 启用无感验证  [1] 启用环境质询（第二层）  [2] 命中自动化特征时拒绝
-	 * 后两个只在前面开启后才存在，所以每次都要重新查询。
-	 * 不能用 checkboxByLabel：它只取 section 里的第一个复选框。
-	 */
-	const verifyToggles = () =>
-		wrapper
-			.findAll('section')
-			.find((s) => s.text().includes('启用无感验证'))
-			.findAll('input[type="checkbox"]');
-
 	it('第二层两个开关默认关闭，且未启用无感验证时不展示', async () => {
 		await mountSettings();
 		expect(wrapper.vm.commentVerifyInstrEnabled).toBe(false);
@@ -382,7 +382,8 @@ describe('SecuritySettings - 管理员密钥与人机验证', () => {
 		await verifyToggles()[0].setValue(true);
 		await verifyToggles()[1].setValue(true);
 		expect(wrapper.vm.commentVerifyInstrEnabled).toBe(true);
-		expect(verifyToggles().length).toBe(3);
+		// 开启无感验证后：启用无感验证 / 第二层 / 命中即拒绝 / 记录签发事件
+		expect(verifyToggles().length).toBe(4);
 
 		await verifyToggles()[2].setValue(true);
 		expect(wrapper.vm.commentVerifyBlockAutomated).toBe(true);
@@ -407,6 +408,68 @@ describe('SecuritySettings - 管理员密钥与人机验证', () => {
 	});
 });
 
+describe('SecuritySettings - 认证记录保留策略', () => {
+	it('默认记录签发事件、保留 30 天', async () => {
+		await mountSettings();
+		expect(wrapper.vm.commentVerifyLogChallenge).toBe(true);
+		expect(wrapper.vm.commentVerifyRetentionDays).toBe(30);
+	});
+
+	it('未启用无感验证时不展示保留策略', async () => {
+		await mountSettings();
+		expect(wrapper.text()).not.toContain('认证记录保留天数');
+	});
+
+	it('启用后展示保留策略，且开关文案随状态变化', async () => {
+		await mountSettings({ code: 200, data: { comment_verify_enabled: 'true' } });
+		expect(wrapper.text()).toContain('认证记录保留天数');
+		expect(wrapper.text()).toContain('已记录');
+
+		// 未开启第二层时该区块只有三个复选框：启用无感验证 / 环境质询 / 记录签发事件
+		expect(verifyToggles()).toHaveLength(3);
+		await verifyToggles()[2].setValue(false);
+		expect(wrapper.vm.commentVerifyLogChallenge).toBe(false);
+		expect(wrapper.text()).toContain('仅结果');
+	});
+
+	it('加载时回填保留天数与签发事件开关', async () => {
+		await mountSettings({
+			code: 200,
+			data: {
+				comment_verify_enabled: 'true',
+				comment_verify_retention_days: '7',
+				comment_verify_log_challenge: 'false',
+			},
+		});
+		expect(wrapper.vm.commentVerifyRetentionDays).toBe(7);
+		expect(wrapper.vm.commentVerifyLogChallenge).toBe(false);
+	});
+
+	it('保留天数：默认 30、0 为永久保留、非法与超限都归一化', async () => {
+		await mountSettings({ code: 200, data: { comment_verify_enabled: 'true' } });
+
+		await saveButton().trigger('click');
+		await flushPromises();
+		expect(lastPayload().comment_verify_retention_days).toBe('30');
+		expect(lastPayload().comment_verify_log_challenge).toBe('true');
+
+		wrapper.vm.commentVerifyRetentionDays = 0;
+		await saveButton().trigger('click');
+		await flushPromises();
+		expect(lastPayload().comment_verify_retention_days).toBe('0');
+
+		wrapper.vm.commentVerifyRetentionDays = 'abc';
+		await saveButton().trigger('click');
+		await flushPromises();
+		expect(lastPayload().comment_verify_retention_days).toBe('30');
+
+		wrapper.vm.commentVerifyRetentionDays = 99999;
+		await saveButton().trigger('click');
+		await flushPromises();
+		expect(lastPayload().comment_verify_retention_days).toBe('3650');
+	});
+});
+
 describe('SecuritySettings - 保存载荷', () => {
 	it('保存请求为 PUT /admin/settings', async () => {
 		await mountSettings();
@@ -416,7 +479,7 @@ describe('SecuritySettings - 保存载荷', () => {
 		expect(requestMock.put.mock.calls[0][0]).toBe('/admin/settings');
 	});
 
-	it('提交的键集合固定为 10 项（含用于清除密钥的空 admin_comment_key）', async () => {
+	it('提交的键集合固定为 12 项（含用于清除密钥的空 admin_comment_key）', async () => {
 		await mountSettings();
 		await saveButton().trigger('click');
 		await flushPromises();
@@ -428,6 +491,8 @@ describe('SecuritySettings - 保存载荷', () => {
 			'comment_verify_difficulty',
 			'comment_verify_enabled',
 			'comment_verify_instr_enabled',
+			'comment_verify_log_challenge',
+			'comment_verify_retention_days',
 			'email_blacklist',
 			'ip_blacklist',
 			'trust_proxy',

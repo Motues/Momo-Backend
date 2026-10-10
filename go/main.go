@@ -80,6 +80,14 @@ func main() {
 	repo := sqlite.NewCommentRepository(db)
 	handler := &h.CommentHandler{Repo: repo, Version: Version}
 
+	// 启动时清一次过期的认证记录（后续由写入路径按小时惰性清理）。
+	// 放到 goroutine 里：历史数据很多时也不该拖慢启动。
+	go func() {
+		if _, err := repo.PruneVerifyRecords(context.Background()); err != nil {
+			log.Printf("[WARN] 清理认证记录失败: %v", err)
+		}
+	}()
+
 	// 5. 设置 Gin 引擎
 	r := gin.Default()
 

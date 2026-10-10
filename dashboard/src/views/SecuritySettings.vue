@@ -183,6 +183,36 @@
               </label>
             </div>
           </div>
+
+          <!-- 认证记录（保留策略）：数据在「认证记录」页展示，见 router 的 /verify-records -->
+          <div v-if="commentVerifyEnabled" class="border-t border-gray-100 pt-4 space-y-4">
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="text-sm font-medium text-gray-700">记录签发事件</p>
+                <p class="text-xs text-gray-400 mt-1">
+                  默认记录每一次挑战签发。关闭后只记录通过/失败，能明显降低写入量
+                  （签发事件在评论框加载时就会产生，是记录条数的主要来源），
+                  代价是看不到「签发了但没人提交答案」的情况。
+                </p>
+              </div>
+              <label class="relative shrink-0 ms-4 inline-flex items-center cursor-pointer">
+                <input type="checkbox" v-model="commentVerifyLogChallenge" class="sr-only peer">
+                <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-emerald-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                <span class="ms-3 text-sm font-medium whitespace-nowrap text-gray-700">
+                  {{ commentVerifyLogChallenge ? '已记录' : '仅结果' }}
+                </span>
+              </label>
+            </div>
+
+            <div class="max-w-md">
+              <label class="block text-sm font-medium text-gray-700 mb-1">认证记录保留天数</label>
+              <input v-model.number="commentVerifyRetentionDays" type="number" min="0" max="3650" step="1"
+                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-sm" />
+              <p class="text-xs text-gray-400 mt-1">
+                超期记录会被自动清理（默认 30 天，上限 3650 天）。设为 <code class="bg-gray-100 px-1 rounded text-gray-600">0</code> 表示永久保留 —— 访客 IP 会随记录长期留在数据库里，请谨慎选择。
+              </p>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -289,6 +319,17 @@ const commentVerifyDifficulty = ref('1000000')
 const commentVerifyInstrEnabled = ref(false)
 // 命中自动化特征时是否拒绝：默认关闭，只记录日志
 const commentVerifyBlockAutomated = ref(false)
+// 认证记录：是否记录「签发挑战」事件（默认记录）与保留天数（0 = 永久保留）
+const commentVerifyLogChallenge = ref(true)
+const commentVerifyRetentionDays = ref(30)
+
+/** 保留天数归一化：非法输入按默认 30 天处理，负数按 0（永久保留），上限 3650 */
+const normalizedRetentionDays = computed(() => {
+  const parsed = parseInt(commentVerifyRetentionDays.value, 10)
+  if (!Number.isFinite(parsed)) return 30
+  if (parsed <= 0) return 0
+  return Math.min(parsed, 3650)
+})
 // 客户端 IP 识别：是否信任反向代理下发的 IP 头
 const trustProxy = ref(false)
 const trustProxyOverride = ref('')
@@ -358,10 +399,12 @@ const takeSnapshot = () => JSON.stringify({
   verifyDifficulty: commentVerifyDifficulty.value,
   verifyInstrEnabled: commentVerifyInstrEnabled.value,
   verifyBlockAutomated: commentVerifyBlockAutomated.value,
+  verifyLogChallenge: commentVerifyLogChallenge.value,
+  verifyRetentionDays: commentVerifyRetentionDays.value,
   trustProxy: trustProxy.value,
 })
 
-watch([ipBlacklist, emailBlacklist, originList, adminCommentKey, adminCommentKeyEnabled, commentVerifyEnabled, commentVerifyDifficulty, commentVerifyInstrEnabled, commentVerifyBlockAutomated, trustProxy], () => {
+watch([ipBlacklist, emailBlacklist, originList, adminCommentKey, adminCommentKeyEnabled, commentVerifyEnabled, commentVerifyDifficulty, commentVerifyInstrEnabled, commentVerifyBlockAutomated, commentVerifyLogChallenge, commentVerifyRetentionDays, trustProxy], () => {
   isDirty.value = takeSnapshot() !== initialSnapshot
 }, { deep: true })
 
@@ -392,6 +435,10 @@ const loadSettings = async () => {
       commentVerifyDifficulty.value = res.data.comment_verify_difficulty || '1000000'
       commentVerifyInstrEnabled.value = res.data.comment_verify_instr_enabled === 'true'
       commentVerifyBlockAutomated.value = res.data.comment_verify_block_automated === 'true'
+      // 默认记录签发事件（后端默认值也是「非 false 即记录」）
+      commentVerifyLogChallenge.value = res.data.comment_verify_log_challenge !== 'false'
+      const retention = parseInt(res.data.comment_verify_retention_days ?? '30', 10)
+      commentVerifyRetentionDays.value = Number.isFinite(retention) ? retention : 30
       trustProxy.value = res.data.trust_proxy === 'true'
       trustProxyOverride.value = res.data.trust_proxy_override || ''
       try {
@@ -434,6 +481,8 @@ const saveSettings = async () => {
       comment_verify_difficulty: commentVerifyDifficulty.value,
       comment_verify_instr_enabled: commentVerifyInstrEnabled.value ? 'true' : 'false',
       comment_verify_block_automated: commentVerifyBlockAutomated.value ? 'true' : 'false',
+      comment_verify_log_challenge: commentVerifyLogChallenge.value ? 'true' : 'false',
+      comment_verify_retention_days: String(normalizedRetentionDays.value),
       trust_proxy: trustProxy.value ? 'true' : 'false',
     }
     if (adminCommentKeyEnabled.value && adminCommentKey.value) {

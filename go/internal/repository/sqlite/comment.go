@@ -81,6 +81,30 @@ func InitSchema(db *sqlx.DB) error {
 		return err
 	}
 
+	// VerifyRecord table：评论无感验证（人机验证）的认证记录，见 doc/data_table.md
+	// 纯新增表：靠 IF NOT EXISTS 在每次启动时补齐，已有数据库无需手工迁移
+	verifyRecordSchema := `
+	CREATE TABLE IF NOT EXISTS VerifyRecord (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		created_at INTEGER NOT NULL,
+		event TEXT NOT NULL,
+		reason TEXT,
+		elapsed_ms INTEGER,
+		difficulty INTEGER,
+		challenge_id TEXT,
+		post_slug TEXT,
+		ip_address TEXT,
+		country TEXT,
+		network TEXT,
+		asn INTEGER
+	);
+	CREATE INDEX IF NOT EXISTS idx_vr_created ON VerifyRecord(created_at);
+	CREATE INDEX IF NOT EXISTS idx_vr_event ON VerifyRecord(event);
+	CREATE INDEX IF NOT EXISTS idx_vr_cid ON VerifyRecord(challenge_id);`
+	if _, err := db.Exec(verifyRecordSchema); err != nil {
+		return err
+	}
+
 	_, err := db.Exec(schema)
 	if err != nil {
 		return err

@@ -19,6 +19,9 @@ import type { Bindings } from '../../src/bindings';
 const ISO_PUB_DATE = '2024-03-05T06:07:08.000Z';
 const ISO_MILLIS = 1709618828000;
 const MIGRATION_ID = '0001_pub_date_to_millis';
+const MIGRATION_ID_VERIFY_RECORD = '0002_verify_record_table';
+/** 已发布的迁移 id 列表（顺序即执行顺序）：新增迁移时必须同步这里 */
+const MIGRATION_IDS = [MIGRATION_ID, MIGRATION_ID_VERIFY_RECORD];
 
 /** 读取某条评论 pub_date 的 SQLite 存储类型（integer / text / real / null） */
 async function typeofPubDate(id: number): Promise<string | null> {
@@ -49,7 +52,7 @@ describe('ensureMigrated —— 0001_pub_date_to_millis', () => {
 		expect(await typeofPubDate(isoId)).toBe('integer');
 
 		const rows = await migrationRows();
-		expect(rows.map((r) => r.id)).toEqual([MIGRATION_ID]);
+		expect(rows.map((r) => r.id)).toEqual(MIGRATION_IDS);
 		expect(rows[0].description).toContain('毫秒整数');
 		expect(rows[0].applied_at).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
 	});
@@ -107,11 +110,36 @@ describe('ensureMigrated —— 0001_pub_date_to_millis', () => {
 		const { ensureMigrated } = await import('../../src/utils/migrations?case=empty');
 		await ensureMigrated(env);
 
-		expect(await migrationRows()).toHaveLength(1);
+		expect(await migrationRows()).toHaveLength(MIGRATION_IDS.length);
 		const count = await testEnv.MOMO_DB.prepare('SELECT COUNT(*) as c FROM Comment').first<{
 			c: number;
 		}>();
 		expect(count?.c).toBe(0);
+	});
+});
+
+describe('ensureMigrated —— 0002_verify_record_table', () => {
+	it('为升级前的旧库补齐 VerifyRecord 表与三个索引（无需手工执行 SQL）', async () => {
+		await createSchema();
+		// 模拟升级前已有的 D1：有 Comment / SchemaMigration，但没有 VerifyRecord
+		await testEnv.MOMO_DB.prepare('DROP TABLE IF EXISTS VerifyRecord').run();
+		expect(await tableExists('VerifyRecord')).toBe(false);
+
+		const { ensureMigrated } = await import('../../src/utils/migrations?case=verify-record');
+		await ensureMigrated(env);
+
+		expect(await tableExists('VerifyRecord')).toBe(true);
+
+		const { results } = await testEnv.MOMO_DB.prepare(
+			"SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'VerifyRecord' ORDER BY name"
+		).all<{ name: string }>();
+		expect((results ?? []).map((row) => row.name)).toEqual([
+			'idx_vr_cid',
+			'idx_vr_created',
+			'idx_vr_event',
+		]);
+
+		expect((await migrationRows()).map((row) => row.id)).toEqual(MIGRATION_IDS);
 	});
 });
 
@@ -130,7 +158,7 @@ describe('ensureMigrated —— 幂等性', () => {
 
 		expect((await getComment(after))?.pub_date).toBe(ISO_PUB_DATE);
 		expect(await typeofPubDate(after)).toBe('text');
-		expect(await migrationRows()).toHaveLength(1);
+		expect(await migrationRows()).toHaveLength(MIGRATION_IDS.length);
 	});
 
 	it('并发调用共享同一个 Promise，迁移只执行一次', async () => {
@@ -143,7 +171,7 @@ describe('ensureMigrated —— 幂等性', () => {
 		expect(first).toBe(second);
 
 		await Promise.all([first, second]);
-		expect(await migrationRows()).toHaveLength(1);
+		expect(await migrationRows()).toHaveLength(MIGRATION_IDS.length);
 	});
 
 	it('Comment 表不存在时直接跳过，且不创建 SchemaMigration 表', async () => {

@@ -91,7 +91,9 @@ const maxLoginAttempts = 5
 // truncateAll 清空所有业务表并吊销全部 token
 func truncateAll() {
 	if testDB != nil {
-		for _, table := range []string{"Comment", "Settings", "EmailVerification"} {
+		// VerifyRecord 也必须清空：认证记录的用例会断言「恰好 N 条」，
+		// 残留行会让后续用例出现假失败
+		for _, table := range []string{"Comment", "Settings", "EmailVerification", "VerifyRecord"} {
 			_, _ = testDB.Exec("DELETE FROM " + table)
 		}
 		_, _ = testDB.Exec("DELETE FROM sqlite_sequence")

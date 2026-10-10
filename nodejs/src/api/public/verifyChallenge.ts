@@ -1,7 +1,8 @@
 import type { Context } from "hono";
 import { getClientIP } from "../../utils/ip";
-import { createChallenge, isVerifyEnabled, VERIFY_PROTOCOL_VERSION } from "../../utils/verify";
+import { createChallenge, getDifficulty, isVerifyEnabled, VERIFY_PROTOCOL_VERSION } from "../../utils/verify";
 import { sanitizePostSlug } from "../../utils/security";
+import { recordVerifyEvent } from "../../orm/verifyRecordService";
 import LogService from "../../utils/log";
 
 /**
@@ -36,6 +37,18 @@ export default async (c: Context): Promise<Response> => {
     // post_slug 必须传进挑战：它会被签进载荷，从而把这份挑战绑定到该文章，
     // 避免一次工作量证明被拿去兑换任意文章的票据。
     const challenge = await createChallenge(ip, postSlug);
+
+    // 认证记录：签发事件。写入是尽力而为的（内部已吞掉异常），不影响签发结果；
+    // 关闭 comment_verify_log_challenge 时该事件不会被记录，见 verifyRecordService。
+    await recordVerifyEvent({
+      event: "challenge",
+      challengeId: challenge.challenge_id,
+      // 记录的是**总期望哈希次数**（而非响应里 pow.d 的单子挑战难度），
+      // 与 solution 侧记录的口径一致，否则两边的 difficulty 无法比较
+      difficulty: await getDifficulty(),
+      postSlug,
+      ip,
+    });
 
     return c.json({
       code: 200,

@@ -8,6 +8,7 @@ const EXPECTED_ROUTES = [
 	{ path: '/comments', name: 'Comments', file: 'Dashboard.vue', auth: true },
 	{ path: '/users', name: 'Users', file: 'Users.vue', auth: true },
 	{ path: '/user-comments', name: 'UserComments', file: 'UserComments.vue', auth: true },
+	{ path: '/verify-records', name: 'VerifyRecords', file: 'VerifyRecords.vue', auth: true },
 	{ path: '/settings', name: 'Settings', file: 'Settings.vue', auth: true },
 	{ path: '/settings/basic', name: 'BasicSettings', file: 'BasicSettings.vue', auth: true },
 	{ path: '/settings/email', name: 'EmailSettings', file: 'EmailSettings.vue', auth: true },

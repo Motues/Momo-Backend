@@ -40,6 +40,12 @@
           <i class="fa-solid fa-users w-5 mr-3"></i>
           <span class="font-medium">用户列表</span>
         </router-link>
+        <router-link to="/verify-records" @click="closeMobileMenu"
+          :class="['flex items-center px-3 py-2.5 rounded-lg group transition-colors',
+            isActive('/verify-records') ? 'bg-blue-50 text-blue-600' : 'text-gray-600 hover:bg-gray-100']">
+          <i class="fa-solid fa-fingerprint w-5 mr-3"></i>
+          <span class="font-medium">认证记录</span>
+        </router-link>
         <router-link to="/settings" @click="closeMobileMenu"
           :class="['flex items-center px-3 py-2.5 rounded-lg group transition-colors',
             isActive('/settings') ? 'bg-blue-50 text-blue-600' : 'text-gray-600 hover:bg-gray-100']">
@@ -135,6 +141,7 @@ const pageTitle = computed(() => {
     '/comments': '评论列表',
     '/users': '用户列表',
     '/user-comments': '用户评论',
+    '/verify-records': '认证记录',
     '/settings': '系统设置',
     '/settings/basic': '基本设置',
     '/settings/email': '邮件通知',

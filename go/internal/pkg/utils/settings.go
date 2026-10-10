@@ -63,7 +63,10 @@ var allowedSettings = map[string]bool{
 	"comment_verify_difficulty":      true,
 	"comment_verify_instr_enabled":   true,
 	"comment_verify_block_automated": true,
-	"trust_proxy":                    true,
+	// 认证记录（无感验证落库）：保留天数与「是否记录签发事件」
+	"comment_verify_retention_days": true,
+	"comment_verify_log_challenge":  true,
+	"trust_proxy":                   true,
 }
 
 // IsAllowedSetting 判断某个设置键是否允许通过后台接口读写。

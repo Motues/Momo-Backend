@@ -52,6 +52,27 @@ const SCHEMA_DDL = `
     "description" TEXT NOT NULL DEFAULT '',
     "applied_at" TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  -- 评论无感验证（人机验证）的认证记录，见 doc/data_table.md
+  -- 纯新增表：靠 IF NOT EXISTS 在每次启动时补齐，已有数据库无需手工迁移
+  CREATE TABLE IF NOT EXISTS "VerifyRecord" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "created_at" INTEGER NOT NULL,
+    "event" TEXT NOT NULL,
+    "reason" TEXT,
+    "elapsed_ms" INTEGER,
+    "difficulty" INTEGER,
+    "challenge_id" TEXT,
+    "post_slug" TEXT,
+    "ip_address" TEXT,
+    "country" TEXT,
+    "network" TEXT,
+    "asn" INTEGER
+  );
+  -- 写多读少：只建三个真正会被查询命中的索引（时间窗口 / 事件筛选 / 串起同一次认证）
+  CREATE INDEX IF NOT EXISTS idx_vr_created ON "VerifyRecord"("created_at");
+  CREATE INDEX IF NOT EXISTS idx_vr_event ON "VerifyRecord"("event");
+  CREATE INDEX IF NOT EXISTS idx_vr_cid ON "VerifyRecord"("challenge_id");
 `;
 
 /**

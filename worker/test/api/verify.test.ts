@@ -11,7 +11,7 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { api, rawRequest } from '../helpers/http';
-import { createSchema, rawSettings, seedSettings, testEnv } from '../helpers/db';
+import { allVerifyRecords, createSchema, rawSettings, seedSettings, testEnv } from '../helpers/db';
 import { createInstrumentationChallenge, interpretProgram } from '../../src/utils/instrumentation';
 import { fromBase64url, hashVerifyIp, hmacSHA256, toBase64url } from '../../src/utils/verifyCrypto';
 import { solveHashwxSpec } from '../stubs/hashwx';
@@ -638,5 +638,99 @@ describe('第二层依赖的 D1 状态保持干净', () => {
 
 	it('testEnv 仍是可用的 D1 绑定（防止帮助函数漂移）', async () => {
 		expect(typeof testEnv.MOMO_DB.prepare).toBe('function');
+	});
+});
+
+/**
+ * 认证记录落库（VerifyRecord）。
+ *
+ * 每次认证最多三条记录（challenge / pass / fail），通过 challenge_id 串联；
+ * 这些断言是「三端记录口径一致」的护栏，因此逐个字段比对，而不只看行数。
+ */
+describe('认证记录落库（VerifyRecord）', () => {
+	it('成功签发挑战后有一条 challenge 记录，challenge_id 与响应一致', async () => {
+		await enableVerify();
+		const data = await issueChallenge();
+
+		const rows = await allVerifyRecords();
+		expect(rows).toHaveLength(1);
+		const [row] = rows;
+
+		expect(row.event).toBe('challenge');
+		expect(row.challenge_id).toBe(data.challenge_id);
+		expect(row.post_slug).toBe(SLUG);
+		expect(row.ip_address).toBe(IP);
+		// 记录的是「总期望哈希次数」，而不是响应里 pow.d 的单子挑战难度（1000 / 4 = 250）
+		expect(row.difficulty).toBe(1000);
+		expect(data.pow.d).toBe(250);
+		// 签发事件没有耗时与失败原因
+		expect(row.elapsed_ms).toBeNull();
+		expect(row.reason).toBeNull();
+		// created_at 与 Comment.pub_date 同为 Unix 毫秒整数
+		expect(typeof row.created_at).toBe('number');
+		expect(row.created_at).toBeGreaterThan(Date.now() - 60_000);
+		// 本地测试环境没有 request.cf（只有 Cloudflare 边缘会注入），地域列落库为 NULL；
+		// 解析规则本身由 admin.verify.test.ts 里的 extractCfGeo 用例覆盖。
+		expect(row.country).toBeNull();
+		expect(row.network).toBeNull();
+		expect(row.asn).toBeNull();
+	});
+
+	it('提交错误答案后有 fail 记录，reason 与服务端返回一致', async () => {
+		await enableVerify();
+		const challenge = await issueChallenge();
+		const res = await submitSolution({
+			post_slug: SLUG,
+			prefix: challenge.prefix,
+			sig: `${challenge.sig}x`,
+			nonces: ['1', '2', '3', '4'],
+			elapsed_ms: 640,
+		});
+		expect(res.status).toBe(403);
+		expect(res.body.reason).toBe('bad signature');
+
+		const rows = await allVerifyRecords();
+		// 先签发后校验：两条记录按写入顺序排列，并靠 challenge_id 串起同一次认证
+		expect(rows.map((r) => r.event)).toEqual(['challenge', 'fail']);
+		const fail = rows[1];
+		expect(fail.reason).toBe(res.body.reason);
+		expect(fail.challenge_id).toBe(challenge.challenge_id);
+		expect(fail.elapsed_ms).toBe(640);
+		expect(fail.post_slug).toBe(SLUG);
+		expect(fail.ip_address).toBe(IP);
+		expect(fail.difficulty).toBe(1000);
+	});
+
+	it('成功通过后有 pass 记录，elapsed_ms 等于请求体里的值', async () => {
+		await enableVerify();
+		const challenge = await issueChallenge();
+		const res = await submitSolution({
+			post_slug: SLUG,
+			prefix: challenge.prefix,
+			sig: challenge.sig,
+			nonces: await solve(challenge.pow),
+			elapsed_ms: 321,
+		});
+		expect(res.status).toBe(200);
+
+		const rows = await allVerifyRecords();
+		expect(rows.map((r) => r.event)).toEqual(['challenge', 'pass']);
+		const pass = rows[1];
+		expect(pass.elapsed_ms).toBe(321);
+		expect(pass.reason).toBeNull();
+		expect(pass.challenge_id).toBe(challenge.challenge_id);
+		expect(pass.post_slug).toBe(SLUG);
+		expect(pass.difficulty).toBe(1000);
+	});
+
+	it('关闭验证时不写任何认证记录', async () => {
+		// 未 enableVerify：挑战返回 enabled=false，且不应留下任何副作用
+		await api('/api/verify/challenge', { method: 'POST', ip: IP, body: { post_slug: SLUG } });
+		await api('/api/verify/solution', {
+			method: 'POST',
+			ip: IP,
+			body: { post_slug: SLUG, prefix: 'p', sig: 's', nonces: ['1'], elapsed_ms: 500 },
+		});
+		expect(await allVerifyRecords()).toEqual([]);
 	});
 });

@@ -1,9 +1,12 @@
 package http
 
 import (
+	"encoding/base64"
 	"encoding/json"
+	"math"
 	"strings"
 
+	"momo-backend-go/internal/model"
 	"momo-backend-go/internal/pkg/utils"
 
 	"github.com/gin-gonic/gin"
@@ -107,6 +110,17 @@ func (h *CommentHandler) VerifyChallenge(c *gin.Context) {
 		return
 	}
 
+	// 认证记录：签发事件（尽力而为，写入失败不影响签发结果）。
+	// 记录的是**总期望哈希次数**（而非响应里 pow.d 的单子挑战难度），与校验侧口径一致。
+	difficulty := int64(utils.GetVerifyDifficulty())
+	h.Repo.RecordVerifyEvent(c.Request.Context(), model.VerifyRecordInput{
+		Event:       model.VerifyEventChallenge,
+		ChallengeID: challenge.ChallengeID,
+		Difficulty:  &difficulty,
+		PostSlug:    postSlug,
+		IP:          clientIP,
+	})
+
 	c.JSON(http.StatusOK, gin.H{
 		"code":    200,
 		"message": "Challenge issued",
@@ -151,8 +165,22 @@ func (h *CommentHandler) VerifySolution(c *gin.Context) {
 	// 与签发挑战时使用同一套净化规则，否则会出现「同一篇文章两次净化结果不同」的假拒绝
 	postSlug := sanitizePostSlug(req.PostSlug)
 
+	// 认证记录的公共字段：即使校验失败也尽量把「是哪一次认证」记下来
+	difficulty := int64(utils.GetVerifyDifficulty())
+	recordBase := model.VerifyRecordInput{
+		ChallengeID: extractChallengeID(req.Prefix),
+		ElapsedMs:   parseElapsedMs(req.ElapsedMs),
+		Difficulty:  &difficulty,
+		PostSlug:    postSlug,
+		IP:          clientIP,
+	}
+
 	// 蜜罐字段被填写 => 认定为脚本，静默拒绝
 	if strings.TrimSpace(req.Hp) != "" {
+		recordBase.Event = model.VerifyEventFail
+		recordBase.Reason = "honeypot"
+		h.Repo.RecordVerifyEvent(c.Request.Context(), recordBase)
+
 		c.JSON(http.StatusForbidden, gin.H{
 			"code":    403,
 			"message": "Verification failed",
@@ -172,6 +200,10 @@ func (h *CommentHandler) VerifySolution(c *gin.Context) {
 		Instr:    req.Instr,
 	})
 	if !ok {
+		recordBase.Event = model.VerifyEventFail
+		recordBase.Reason = reason
+		h.Repo.RecordVerifyEvent(c.Request.Context(), recordBase)
+
 		c.JSON(http.StatusForbidden, gin.H{
 			"code":    403,
 			"message": "Verification failed",
@@ -189,6 +221,9 @@ func (h *CommentHandler) VerifySolution(c *gin.Context) {
 		return
 	}
 
+	recordBase.Event = model.VerifyEventPass
+	h.Repo.RecordVerifyEvent(c.Request.Context(), recordBase)
+
 	c.JSON(http.StatusOK, gin.H{
 		"code":    200,
 		"message": "Verification passed",
@@ -199,4 +234,53 @@ func (h *CommentHandler) VerifySolution(c *gin.Context) {
 			ExpiresIn: utils.TicketTTLSeconds,
 		},
 	})
+}
+
+// parseElapsedMs 解析客户端上报的求解耗时。
+//
+// 该字段是 json.RawMessage（与 utils.VerifySolution 的宽松判定保持一致），
+// 可能是字符串、null 或畸形 JSON，解析不出来就记 NULL，绝不让它影响记录写入。
+func parseElapsedMs(raw json.RawMessage) *int64 {
+	if len(raw) == 0 {
+		return nil
+	}
+	var value float64
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil
+	}
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return nil
+	}
+	ms := int64(value)
+	return &ms
+}
+
+// extractChallengeID 从挑战 prefix 里取出挑战 id（cid），仅用于把同一次认证的记录串起来。
+//
+// 这里**不做任何可信性判断**（签名校验是 utils.VerifySolution 的职责）：拿到的 cid
+// 只是被当作不透明的分组标签，因此必须严格限制长度与类型，避免把攻击者构造的
+// 超长内容写进记录表。取不到就返回空串，记录照常写入。
+func extractChallengeID(prefix string) string {
+	if prefix == "" || len(prefix) > 4096 {
+		return ""
+	}
+
+	raw, err := base64.RawURLEncoding.DecodeString(prefix)
+	if err != nil {
+		// 兼容带 '=' 填充的 base64url（Node 的编码器不补填充，但答案来自客户端）
+		if raw, err = base64.URLEncoding.DecodeString(prefix); err != nil {
+			return ""
+		}
+	}
+
+	var payload struct {
+		Cid string `json:"cid"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return ""
+	}
+	if payload.Cid == "" || len(payload.Cid) > 64 {
+		return ""
+	}
+	return payload.Cid
 }

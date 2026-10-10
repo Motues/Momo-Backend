@@ -96,6 +96,30 @@ async function obtainTicket(ip: string, postSlug: string): Promise<string> {
   return (await json(solved)).data.ticket as string;
 }
 
+/* ------------------------------------------------------------------ *
+ * VerifyRecord 埋点助手
+ * ------------------------------------------------------------------ */
+
+/** 读取某个挑战 id 下的全部认证记录（按写入顺序，即 id 升序） */
+function verifyRecordsOf(challengeId: string): any[] {
+  return db.all(
+    sql`SELECT * FROM "VerifyRecord" WHERE "challenge_id" = ${challengeId} ORDER BY "id" ASC`
+  ) as any[];
+}
+
+/** 认证记录总行数（用于「未开启验证时不写任何记录」的前后对比） */
+function countVerifyRecords(): number {
+  return (db.get(sql`SELECT COUNT(*) AS n FROM "VerifyRecord"`) as { n: number }).n;
+}
+
+/** 从 v2 挑战 prefix 载荷里取出 cid（与服务端 extractChallengeId 同口径） */
+function cidFromPrefix(prefix: string): string {
+  const payload = JSON.parse(
+    Buffer.from(prefix.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8")
+  );
+  return String(payload.cid);
+}
+
 beforeAll(async () => {
   // 必须早于任何触发 getSecret() 的调用（密钥只读库一次），见上方注释
   await setSetting("comment_verify_secret", VECTOR_SECRET);
@@ -112,6 +136,7 @@ afterEach(() => {
 
 describe("POST /api/verify/challenge", () => {
   it("未开启验证时返回 enabled=false 与协议版本", async () => {
+    const before = countVerifyRecords();
     const res = await api("/api/verify/challenge", { method: "POST", ip: uniqueIp() });
     expect(res.status).toBe(200);
     expect(await json(res)).toEqual({
@@ -119,15 +144,18 @@ describe("POST /api/verify/challenge", () => {
       message: "Verification disabled",
       data: { enabled: false, version: 2 },
     });
+    // 未开启验证时不产生任何认证记录（默认关闭必须是零副作用）
+    expect(countVerifyRecords()).toBe(before);
   });
 
   it("开启后签发 v2 挑战（HashWX 参数），并回显 post_slug", async () => {
     await setSetting("comment_verify_enabled", "true");
     await setSetting("comment_verify_difficulty", TEST_DIFFICULTY);
 
+    const ip = uniqueIp();
     const res = await api("/api/verify/challenge", {
       method: "POST",
-      ip: uniqueIp(),
+      ip,
       body: { post_slug: "/posts/verify" },
     });
     expect(res.status).toBe(200);
@@ -152,6 +180,21 @@ describe("POST /api/verify/challenge", () => {
     });
     // v1 的 difficulty 字段已彻底移除（旧前端据此判断会拿到 undefined）
     expect(body.data.difficulty).toBeUndefined();
+
+    // 埋点：签发挑战必须落一条 challenge 记录，challenge_id 与响应一致
+    const records = verifyRecordsOf(body.data.challenge_id);
+    expect(records).toHaveLength(1);
+    expect(records[0].event).toBe("challenge");
+    expect(records[0].challenge_id).toBe(body.data.challenge_id);
+    // 记录的是**总期望哈希次数**，不是响应里 pow.d 的单子挑战难度
+    expect(records[0].difficulty).toBe(Number(TEST_DIFFICULTY));
+    expect(records[0].difficulty).not.toBe(body.data.pow.d);
+    expect(records[0].post_slug).toBe("/posts/verify");
+    expect(records[0].ip_address).toBe(ip);
+    expect(records[0].reason).toBeNull();
+    expect(records[0].elapsed_ms).toBeNull();
+    // created_at 是 Unix 毫秒（若是秒级，管理面板的时间列会退回 1970 年）
+    expect(Math.abs(Number(records[0].created_at) - Date.now())).toBeLessThan(5000);
   });
 
   it("无请求体也能签发挑战（仅探测开关）", async () => {
@@ -199,6 +242,7 @@ describe("POST /api/verify/challenge", () => {
 
 describe("POST /api/verify/solution", () => {
   it("未开启验证时直接返回 enabled=false 与协议版本", async () => {
+    const before = countVerifyRecords();
     const res = await api("/api/verify/solution", {
       method: "POST",
       ip: uniqueIp(),
@@ -206,6 +250,7 @@ describe("POST /api/verify/solution", () => {
     });
     expect(res.status).toBe(200);
     expect((await json(res)).data).toEqual({ enabled: false, version: 2 });
+    expect(countVerifyRecords()).toBe(before);
   });
 
   it("完整流程可拿到票据，并能用于提交评论", async () => {
@@ -235,6 +280,20 @@ describe("POST /api/verify/solution", () => {
     expect(solvedBody.data.enabled).toBe(true);
     expect(solvedBody.data.version).toBe(2);
     expect(solvedBody.data.expires_in).toBe(300);
+
+    // 埋点：同一次认证（同一 cid）先有 challenge、后有 pass；
+    // elapsed_ms 原样记录请求体里的值，而不是服务端自己测的耗时
+    const cid = cidFromPrefix(challenge.prefix);
+    expect(cid).toBe(challenge.challenge_id);
+    const records = verifyRecordsOf(cid);
+    expect(records.map((r) => r.event)).toEqual(["challenge", "pass"]);
+    expect(records[0].difficulty).toBe(Number(TEST_DIFFICULTY));
+    expect(records[1].difficulty).toBe(Number(TEST_DIFFICULTY));
+    expect(records[1].reason).toBeNull();
+    expect(records[1].elapsed_ms).toBe(1000);
+    expect(records[1].post_slug).toBe("/posts/ok");
+    expect(records[1].ip_address).toBe(ip);
+    expect(records[1].challenge_id).toBe(challenge.challenge_id);
 
     const comment = await api("/api/comments", {
       method: "POST",
@@ -304,6 +363,17 @@ describe("POST /api/verify/solution", () => {
     expect(body.code).toBe(403);
     expect(body.message).toBe("Verification failed");
     expect(body.reason).toBe("insufficient work");
+
+    // 埋点：失败记录必须带**服务端给出的 reason**（而不是客户端可控的字段）
+    const cid = cidFromPrefix(challenge.prefix);
+    expect(cid).toBe(challenge.challenge_id);
+    const records = verifyRecordsOf(cid);
+    expect(records.map((r) => r.event)).toEqual(["challenge", "fail"]);
+    expect(records[1].reason).toBe(body.reason);
+    expect(records[1].elapsed_ms).toBe(1000);
+    expect(records[1].difficulty).toBe(1000000);
+    expect(records[1].post_slug).toBe("/posts/bad");
+    expect(records[1].ip_address).toBe(ip);
   });
 
   it("nonces 数量不匹配返回 403 solution count mismatch", async () => {

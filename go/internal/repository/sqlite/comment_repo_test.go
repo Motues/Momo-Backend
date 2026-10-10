@@ -98,7 +98,7 @@ func requireCount(t *testing.T, db *sqlx.DB, query string, want int, args ...int
 func TestInitSchemaCreatesAllTables(t *testing.T) {
 	db := newTestDB(t)
 
-	for _, table := range []string{"Comment", "Settings", "EmailVerification", "SchemaMigration"} {
+	for _, table := range []string{"Comment", "Settings", "EmailVerification", "SchemaMigration", "VerifyRecord"} {
 		var name string
 		err := db.Get(&name, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", table)
 		if err != nil {
@@ -107,7 +107,10 @@ func TestInitSchemaCreatesAllTables(t *testing.T) {
 	}
 
 	// 索引也应创建
-	for _, index := range []string{"idx_post_slug", "idx_status", "idx_ev_email", "idx_ev_token"} {
+	for _, index := range []string{
+		"idx_post_slug", "idx_status", "idx_ev_email", "idx_ev_token",
+		"idx_vr_created", "idx_vr_event", "idx_vr_cid",
+	} {
 		var name string
 		err := db.Get(&name, "SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?", index)
 		if err != nil {

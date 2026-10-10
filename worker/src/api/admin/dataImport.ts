@@ -102,6 +102,8 @@ export const importSettings = async (c: Context<{ Bindings: Bindings }>) => {
     "comment_verify_difficulty",
     "comment_verify_instr_enabled",
     "comment_verify_block_automated",
+    "comment_verify_retention_days",
+    "comment_verify_log_challenge",
     "trust_proxy",
   ]);
 

@@ -32,6 +32,35 @@ const MIGRATIONS: Migration[] = [
          WHERE typeof(pub_date) = 'text'`,
     ],
   },
+  {
+    /**
+     * 认证记录表（VerifyRecord）。
+     *
+     * 与 schemas/comment.sql 里的定义逐字一致：新库用那份建表，已部署的 D1
+     * 靠这条迁移补齐。纯 CREATE ... IF NOT EXISTS，非破坏性，可安全自动执行。
+     */
+    id: '0002_verify_record_table',
+    description: '新增 VerifyRecord 表：评论无感验证的认证记录',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS VerifyRecord (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         created_at INTEGER NOT NULL,
+         event TEXT NOT NULL,
+         reason TEXT,
+         elapsed_ms INTEGER,
+         difficulty INTEGER,
+         challenge_id TEXT,
+         post_slug TEXT,
+         ip_address TEXT,
+         country TEXT,
+         network TEXT,
+         asn INTEGER
+       )`,
+      `CREATE INDEX IF NOT EXISTS idx_vr_created ON VerifyRecord(created_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_vr_event ON VerifyRecord(event)`,
+      `CREATE INDEX IF NOT EXISTS idx_vr_cid ON VerifyRecord(challenge_id)`,
+    ],
+  },
 ];
 
 const SCHEMA_MIGRATION_DDL = `

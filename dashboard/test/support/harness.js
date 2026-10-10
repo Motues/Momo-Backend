@@ -22,6 +22,7 @@ export const DASHBOARD_ROUTES = [
 	{ path: '/comments', name: 'comments', component: { template: '<div />' } },
 	{ path: '/users', name: 'users', component: { template: '<div />' } },
 	{ path: '/user-comments', name: 'userComments', component: { template: '<div />' } },
+	{ path: '/verify-records', name: 'verifyRecords', component: { template: '<div />' } },
 	{ path: '/settings', name: 'settings', component: { template: '<div />' } },
 	{ path: '/settings/basic', name: 'basic', component: { template: '<div />' } },
 	{ path: '/settings/email', name: 'email', component: { template: '<div />' } },

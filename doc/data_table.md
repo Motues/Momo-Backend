@@ -85,6 +85,8 @@
 | `comment_verify_secret` | 无感验证签名密钥，首次启用时自动生成（敏感字段，不对外读写） |
 | `comment_verify_instr_enabled` | 是否启用第二层环境质询（Instrumentation），默认关闭。开启后挑战会下发一段随机程序，要求访客浏览器真实执行并回传环境特征 |
 | `comment_verify_block_automated` | 第二层命中自动化特征（webdriver、HeadlessChrome、无布局引擎等）时是否直接拒绝，默认关闭（只写日志、不拦截） |
+| `comment_verify_retention_days` | 认证记录（`VerifyRecord`）保留天数，默认 `30`；`0` 或负数表示永久保留，上限 3650。超期记录由三端的惰性清理自动删除 |
+| `comment_verify_log_challenge` | 是否记录「签发挑战」事件（`VerifyRecord.event = 'challenge'`），默认记录（非 `"false"` 即记录）。关闭后只记录通过/失败，可显著降低写入量 |
 | `password_changed` | 是否已修改默认密码 |
 
 ---
@@ -111,6 +113,55 @@
 |--------|------|------|
 | `idx_ev_email` | `email` | 加速按邮箱查询验证记录 |
 | `idx_ev_token` | `token` | 加速按令牌查询验证记录 |
+
+---
+
+## 表：`VerifyRecord`
+
+评论无感验证（人机验证）的**认证记录**。一次完整认证最多产生三条记录：
+`challenge`（签发挑战）、`pass` 或 `fail`（答案校验结果），三者通过 `challenge_id` 串联。
+
+写入是**尽力而为**的：记录失败只写日志，绝不影响验证结果本身；
+验证功能关闭（`comment_verify_enabled != "true"`）时不产生任何记录。
+
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | 自增 ID |
+| `created_at` | INTEGER | NOT NULL | 事件时间（**Unix 毫秒整数**，与 `Comment.pub_date` 口径一致） |
+| `event` | TEXT | NOT NULL | `challenge` 签发 / `pass` 校验通过 / `fail` 校验失败 |
+| `reason` | TEXT | — | 失败原因（`honeypot` / `bad signature` / `ip mismatch` / `challenge already used` / `PROTOCOL_OUTDATED` 等），非失败事件为 NULL |
+| `elapsed_ms` | INTEGER | — | 客户端上报的求解耗时（仅 `pass` / `fail` 有） |
+| `difficulty` | INTEGER | — | 本次生效的**总期望哈希次数**（不是响应里 `pow.d` 的单子挑战难度） |
+| `challenge_id` | TEXT | — | 挑战 cid；签名校验或载荷解析就失败时为 NULL（此时无法安全取出 cid） |
+| `post_slug` | TEXT | — | 关联的文章标识 |
+| `ip_address` | TEXT | — | 访客完整 IP（仅管理后台可见，按保留天数自动清理） |
+| `country` | TEXT | — | **仅 Cloudflare Worker 部署有值**（`cf.country`，ISO 二字码） |
+| `network` | TEXT | — | **仅 Cloudflare Worker 部署有值**（`cf.asOrganization`，运营商名称） |
+| `asn` | INTEGER | — | **仅 Cloudflare Worker 部署有值**（`cf.asn`） |
+
+### 索引
+
+| 索引名 | 字段 | 说明 |
+|--------|------|------|
+| `idx_vr_created` | `created_at` | 时间窗口统计与过期清理 |
+| `idx_vr_event` | `event` | 按事件类型筛选/计数 |
+| `idx_vr_cid` | `challenge_id` | 串联同一次认证的签发与结果 |
+
+> **建表方式（三端一致）**: Node 见 `nodejs/src/orm/migrations.ts` 的 `SCHEMA_DDL`，
+> Go 见 `go/internal/repository/sqlite/comment.go` 的 `InitSchema`，
+> Worker 见 `worker/schemas/comment.sql` 与启动自迁移 `0002_verify_record_table`
+> （`worker/src/utils/migrations.ts`）。三者都是 `CREATE TABLE IF NOT EXISTS`，
+> 已有部署重启（Node/Go）或下次请求（Worker）即自动补表。
+
+### 统计口径
+
+统计接口（`/admin/verify/overview`）的口径，三端逐条一致：
+
+- **分桶**：`days = 1` 按小时、`days = 0`（全部）按月（最近 12 个月）、其余按天；分桶与键统一使用 **UTC**；
+- **通过率** `passRate` = `pass / (pass + fail)`：签发了但没提交答案不应拉低通过率；
+- **平均耗时**只统计 `pass` 事件的 `elapsed_ms`；
+- **环比 `*Delta`** 与**紧邻的上一个等长窗口**比较，上一窗口为空时返回 `null`（而不是 0/100%）；
+- **Top 榜单一律按窗口内全部事件计数**（含签发），`percent` 为占窗口内总事件数的百分比。
 
 ---
 

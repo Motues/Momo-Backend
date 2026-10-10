@@ -12,8 +12,11 @@ import (
 	"momo-backend-go/internal/repository"
 )
 
-// isoMillis 与仓库层输出格式一致：2006-01-02T15:04:05.000Z（UTC）
-var isoMillis = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$`)
+// isoMillisRe 与仓库层输出格式一致：2006-01-02T15:04:05.000Z（UTC）。
+//
+// 变量名带 Re 后缀：verifyRecord.go 里的 isoMillis(ms int64) string 是包级函数，
+// 同名变量会与之冲突（编译期 redeclared）。
+var isoMillisRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$`)
 
 func daysAgoMillis(n int) int64 {
 	return time.Now().UTC().AddDate(0, 0, -n).UnixMilli()
@@ -74,7 +77,7 @@ func TestGetStatsOverviewTotals(t *testing.T) {
 	if stats.TopCommenters[0].Author != "alice" || stats.TopCommenters[0].Count != 3 {
 		t.Errorf("热门评论者首位应为 alice(3)，实际 %+v", stats.TopCommenters[0])
 	}
-	if !isoMillis.MatchString(stats.TopCommenters[0].LastCommentDate) {
+	if !isoMillisRe.MatchString(stats.TopCommenters[0].LastCommentDate) {
 		t.Errorf("lastCommentDate 格式应为毫秒 ISO，实际 %q", stats.TopCommenters[0].LastCommentDate)
 	}
 }
@@ -325,7 +328,7 @@ func TestGetUserList(t *testing.T) {
 	if alice.Email != "a@x.com" {
 		t.Errorf("alice 邮箱期望 a@x.com，实际 %q", alice.Email)
 	}
-	if !isoMillis.MatchString(alice.FirstCommentDate) || !isoMillis.MatchString(alice.LastCommentDate) {
+	if !isoMillisRe.MatchString(alice.FirstCommentDate) || !isoMillisRe.MatchString(alice.LastCommentDate) {
 		t.Errorf("日期格式应为毫秒 ISO，实际 %q / %q", alice.FirstCommentDate, alice.LastCommentDate)
 	}
 	if alice.FirstCommentDate != time.UnixMilli(times.aliceFirst).UTC().Format("2006-01-02T15:04:05.000Z") {

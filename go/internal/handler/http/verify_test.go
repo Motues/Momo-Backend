@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"momo-backend-go/internal/model"
 	"momo-backend-go/internal/pkg/utils"
 )
 
@@ -295,6 +296,135 @@ func TestVerifyChallengeWhenEnabled(t *testing.T) {
 	}
 	if second.Data.Pow.C == payload.Data.Pow.C {
 		t.Errorf("两次签发的 pow.c 不应相同")
+	}
+
+	// 认证记录：两次签发都要落库，challenge_id 与响应一致，
+	// difficulty 是**当时的总期望哈希次数**（不是响应里 pow.d 的单子挑战难度）
+	records := listVerifyRows(t)
+	if len(records) != 2 {
+		t.Fatalf("两次签发应写入 2 条认证记录，实际 %d 条: %+v", len(records), records)
+	}
+	seenChallengeIDs := make(map[string]bool, len(records))
+	for _, rec := range records {
+		if rec.Event != model.VerifyEventChallenge {
+			t.Errorf("签发事件的 event 应为 %q，实际 %q", model.VerifyEventChallenge, rec.Event)
+			continue
+		}
+		seenChallengeIDs[rec.ChallengeID.String] = true
+		if !rec.Difficulty.Valid || rec.Difficulty.Int64 != int64(utils.GetVerifyDifficulty()) {
+			t.Errorf("difficulty 应为总期望哈希次数 %d，实际 %v", utils.GetVerifyDifficulty(), rec.Difficulty)
+		}
+		if !rec.PostSlug.Valid || rec.PostSlug.String != "/posts/hello" {
+			t.Errorf("post_slug 应为 /posts/hello，实际 %v", rec.PostSlug)
+		}
+		// 签发事件没有失败原因，也没有客户端耗时
+		if rec.Reason.Valid {
+			t.Errorf("签发事件的 reason 应为 NULL，实际 %q", rec.Reason.String)
+		}
+		if rec.ElapsedMs.Valid {
+			t.Errorf("签发事件的 elapsed_ms 应为 NULL，实际 %d", rec.ElapsedMs.Int64)
+		}
+	}
+	for _, id := range []string{payload.Data.ChallengeID, second.Data.ChallengeID} {
+		if !seenChallengeIDs[id] {
+			t.Errorf("认证记录里缺少 challenge_id=%q 的签发事件", id)
+		}
+	}
+}
+
+// TestVerifyRecordWrittenForChallengeFailAndPass 钉住认证记录的落库内容：
+// 三端（Node / Go / Worker）在「什么时候写、写什么」上必须一致，
+// 否则后台的认证统计会随实现漂移。
+func TestVerifyRecordWrittenForChallengeFailAndPass(t *testing.T) {
+	resetState(t)
+	enableVerify(t, "1000")
+
+	wantDifficulty := int64(utils.GetVerifyDifficulty())
+	ip := nextIP()
+	addr := ip + ":1234"
+	const slug = "/posts/recorded"
+
+	// 1) 签发挑战 => 一条 event='challenge'，challenge_id 与响应一致
+	challenge := requestChallenge(t, slug, addr)
+	rows := listVerifyRows(t)
+	if len(rows) != 1 {
+		t.Fatalf("签发挑战后应有 1 条记录，实际 %d 条: %+v", len(rows), rows)
+	}
+	challengeRow := rows[0]
+	if challengeRow.Event != model.VerifyEventChallenge {
+		t.Errorf("event 期望 %q，实际 %q", model.VerifyEventChallenge, challengeRow.Event)
+	}
+	if !challengeRow.ChallengeID.Valid || challengeRow.ChallengeID.String != challenge.Data.ChallengeID {
+		t.Errorf("challenge_id 期望 %q，实际 %v", challenge.Data.ChallengeID, challengeRow.ChallengeID)
+	}
+	if !challengeRow.Difficulty.Valid || challengeRow.Difficulty.Int64 != wantDifficulty {
+		t.Errorf("difficulty 期望 %d（总期望哈希次数），实际 %v", wantDifficulty, challengeRow.Difficulty)
+	}
+	if !challengeRow.PostSlug.Valid || challengeRow.PostSlug.String != slug {
+		t.Errorf("post_slug 期望 %q，实际 %v", slug, challengeRow.PostSlug)
+	}
+	if !challengeRow.IPAddress.Valid || challengeRow.IPAddress.String != ip {
+		t.Errorf("ip_address 期望 %q，实际 %v", ip, challengeRow.IPAddress)
+	}
+
+	// 2) 提交错误答案 => 一条 event='fail'，reason 与服务端返回的一致
+	failResp := callFromIP(t, "POST", "/api/verify/solution", solutionBody(t, verifySolutionRequest{
+		PostSlug: slug, Prefix: challenge.Data.Prefix, Sig: challenge.Data.Sig + "x",
+		Nonces: solvePow(t, challenge.Data.Pow), ElapsedMs: 321,
+	}), addr)
+	requireStatus(t, failResp, 403)
+
+	var failPayload verifySolutionPayload
+	decodeInto(t, failResp, &failPayload)
+	if failPayload.Reason == "" {
+		t.Fatalf("失败响应应带 reason: %s", failResp.Body.String())
+	}
+
+	rows = listVerifyRows(t)
+	if len(rows) != 2 {
+		t.Fatalf("失败后应有 2 条记录，实际 %d 条: %+v", len(rows), rows)
+	}
+	failRow := rows[1]
+	if failRow.Event != model.VerifyEventFail {
+		t.Errorf("event 期望 %q，实际 %q", model.VerifyEventFail, failRow.Event)
+	}
+	if !failRow.Reason.Valid || failRow.Reason.String != failPayload.Reason {
+		t.Errorf("reason 期望 %q（与服务端返回一致），实际 %v", failPayload.Reason, failRow.Reason)
+	}
+	if !failRow.ChallengeID.Valid || failRow.ChallengeID.String != challenge.Data.ChallengeID {
+		t.Errorf("fail 记录的 challenge_id 期望 %q，实际 %v", challenge.Data.ChallengeID, failRow.ChallengeID)
+	}
+	if !failRow.ElapsedMs.Valid || failRow.ElapsedMs.Int64 != 321 {
+		t.Errorf("fail 的 elapsed_ms 期望 321，实际 %v", failRow.ElapsedMs)
+	}
+
+	// 3) 成功通过 => 一条 event='pass'，elapsed_ms 等于请求体里的值
+	second := requestChallenge(t, slug, addr)
+	passResp := callFromIP(t, "POST", "/api/verify/solution", solutionBody(t, verifySolutionRequest{
+		PostSlug: slug, Prefix: second.Data.Prefix, Sig: second.Data.Sig,
+		Nonces: solvePow(t, second.Data.Pow), ElapsedMs: 742,
+	}), addr)
+	requireStatus(t, passResp, 200)
+
+	rows = listVerifyRows(t)
+	if len(rows) != 4 {
+		t.Fatalf("通过后应有 4 条记录，实际 %d 条: %+v", len(rows), rows)
+	}
+	passRow := rows[len(rows)-1]
+	if passRow.Event != model.VerifyEventPass {
+		t.Errorf("event 期望 %q，实际 %q", model.VerifyEventPass, passRow.Event)
+	}
+	if !passRow.ElapsedMs.Valid || passRow.ElapsedMs.Int64 != 742 {
+		t.Errorf("pass 的 elapsed_ms 应等于请求体里的 742，实际 %v", passRow.ElapsedMs)
+	}
+	if passRow.Reason.Valid {
+		t.Errorf("通过事件的 reason 应为 NULL，实际 %q", passRow.Reason.String)
+	}
+	if !passRow.ChallengeID.Valid || passRow.ChallengeID.String != second.Data.ChallengeID {
+		t.Errorf("pass 记录的 challenge_id 期望 %q，实际 %v", second.Data.ChallengeID, passRow.ChallengeID)
+	}
+	if !passRow.Difficulty.Valid || passRow.Difficulty.Int64 != wantDifficulty {
+		t.Errorf("pass 的 difficulty 期望 %d，实际 %v", wantDifficulty, passRow.Difficulty)
 	}
 }
 

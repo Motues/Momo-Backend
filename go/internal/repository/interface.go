@@ -29,4 +29,13 @@ type CommentRepository interface {
 	SaveVerificationToken(ctx context.Context, email, token, expiresAt, postSlug, postTitle string) error
 	GetVerificationRecord(ctx context.Context, token, email string) (*model.EmailVerification, error)
 	VerifyEmail(ctx context.Context, token, email string) (int64, error)
+
+	// Verify records（认证记录：评论无感验证的签发/通过/失败）
+	//
+	// RecordVerifyEvent 是**尽力而为**的写入：实现内部吞掉错误并只记日志，
+	// 因此不返回 error —— 记录失败绝不能影响验证结果本身。
+	RecordVerifyEvent(ctx context.Context, in model.VerifyRecordInput)
+	GetVerifyOverview(ctx context.Context, days, offset int) (*model.VerifyOverview, error)
+	ListVerifyRecords(ctx context.Context, q model.VerifyRecordQuery) (*model.VerifyRecordList, error)
+	PruneVerifyRecords(ctx context.Context) (int64, error)
 }

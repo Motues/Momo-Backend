@@ -20,8 +20,14 @@ export type TestBindings = {
 
 export const testEnv = env as unknown as TestBindings;
 
-/** schemas/comment.sql 中定义的四张表 */
-export const EXPECTED_TABLES = ['Comment', 'EmailVerification', 'SchemaMigration', 'Settings'];
+/** schemas/comment.sql 中定义的五张表 */
+export const EXPECTED_TABLES = [
+	'Comment',
+	'EmailVerification',
+	'SchemaMigration',
+	'Settings',
+	'VerifyRecord',
+];
 
 /**
  * 用注入的 schema 语句建表（幂等）。
@@ -258,6 +264,99 @@ export async function getVerification(token: string): Promise<{
 	return await testEnv.MOMO_DB.prepare('SELECT * FROM EmailVerification WHERE token = ?')
 		.bind(token)
 		.first();
+}
+
+/* ----------------------------- VerifyRecord 表 ---------------------------- */
+
+export interface SeedVerifyRecordInput {
+	/** 事件时间（Unix 毫秒）；默认「现在」 */
+	created_at?: number;
+	event?: 'challenge' | 'pass' | 'fail';
+	reason?: string | null;
+	elapsed_ms?: number | null;
+	difficulty?: number | null;
+	challenge_id?: string | null;
+	post_slug?: string | null;
+	ip_address?: string | null;
+	country?: string | null;
+	network?: string | null;
+	asn?: number | null;
+}
+
+export interface VerifyRecordRow {
+	id: number;
+	created_at: number;
+	event: string;
+	reason: string | null;
+	elapsed_ms: number | null;
+	difficulty: number | null;
+	challenge_id: string | null;
+	post_slug: string | null;
+	ip_address: string | null;
+	country: string | null;
+	network: string | null;
+	asn: number | null;
+}
+
+/**
+ * 直接写库播种一条认证记录，返回自增 id。
+ *
+ * created_at 是「Unix 毫秒整数」，因此可以精确构造「窗口内 / 窗口外」的记录，
+ * 而不用依赖真实时钟（统计窗口按 UTC 对齐，见 src/utils/verifyRecord.ts）。
+ */
+export async function seedVerifyRecord(input: SeedVerifyRecordInput = {}): Promise<number> {
+	const row: Required<SeedVerifyRecordInput> = {
+		created_at: Date.now(),
+		event: 'challenge',
+		reason: null,
+		elapsed_ms: null,
+		difficulty: null,
+		challenge_id: null,
+		post_slug: null,
+		ip_address: null,
+		country: null,
+		network: null,
+		asn: null,
+		...input,
+	};
+
+	const result = await testEnv.MOMO_DB.prepare(
+		`INSERT INTO VerifyRecord
+       (created_at, event, reason, elapsed_ms, difficulty, challenge_id, post_slug, ip_address, country, network, asn)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	)
+		.bind(
+			row.created_at,
+			row.event,
+			row.reason,
+			row.elapsed_ms,
+			row.difficulty,
+			row.challenge_id,
+			row.post_slug,
+			row.ip_address,
+			row.country,
+			row.network,
+			row.asn
+		)
+		.run();
+
+	return Number(result.meta.last_row_id);
+}
+
+/** 读取全部认证记录（按 id 升序，便于断言写入顺序） */
+export async function allVerifyRecords(): Promise<VerifyRecordRow[]> {
+	const { results } = await testEnv.MOMO_DB.prepare(
+		'SELECT * FROM VerifyRecord ORDER BY id ASC'
+	).all<VerifyRecordRow>();
+	return results ?? [];
+}
+
+/** 认证记录条数 */
+export async function countVerifyRecords(): Promise<number> {
+	const row = await testEnv.MOMO_DB.prepare('SELECT COUNT(*) as count FROM VerifyRecord').first<{
+		count: number;
+	}>();
+	return row?.count ?? 0;
 }
 
 /* ------------------------------- KV 辅助 --------------------------------- */

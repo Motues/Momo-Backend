@@ -19,6 +19,8 @@
 | PUT | `/admin/comments/status` | 修改评论状态 |
 | PUT | `/admin/comments/edit` | 修改评论内容 |
 | GET | `/admin/stats/overview` | 统计概览 |
+| GET | `/admin/verify/overview` | 认证记录统计概览（无感验证的签发/通过/失败） |
+| GET | `/admin/verify/records` | 认证记录明细（分页 + 筛选） |
 | GET | `/admin/stats/users` | 用户列表（支持按昵称/邮箱搜索） |
 | GET | `/admin/stats/users/comments` | 用户的评论 |
 | POST | `/admin/users/blacklist` | 将用户（按邮箱）加入黑名单 |
@@ -520,6 +522,8 @@ block             = nonce / n                        // 整数除法
 | `comment_verify_difficulty` | `"1000000"` | **访客需要完成的哈希计算总次数**（协议 v2 语义），有效范围 1000–1000000000，按 4 个子挑战均分。**兼容 v1 旧值**：≤26 的值按 `2^值` 迁移（视为旧的前导 0 比特数），且上限钳到 2^20。**`"0"`、负数或解析不出数字时退回默认强度 `1000000`**（视为配置无效，安全的失败方向）；合法但低于下限的值才钳到 1000；`parseInt` 容忍尾部垃圾（与 v1 一致，`"1.5x"` 解析为 `1`） |
 | `comment_verify_instr_enabled` | `"false"` | 第二层环境质询开关，默认关闭 |
 | `comment_verify_block_automated` | `"false"` | 第二层命中自动化特征时是否拒绝，默认只记录日志 |
+| `comment_verify_retention_days` | `"30"` | 认证记录（`VerifyRecord`）保留天数：`0` 或负数 = 永久保留，上限 3650，非法值按 30 处理；超期记录由三端惰性清理自动删除 |
+| `comment_verify_log_challenge` | `"true"` | 是否记录「签发挑战」事件（非 `"false"` 即记录）。关闭后只记录通过/失败，可显著降低写入量，代价是看不到「签发了但没人提交答案」的流失 |
 | `comment_verify_secret` | 自动生成 | 服务端签名密钥，首次使用时自动生成并写入 `Settings` 表，不对外提供读写 |
 
 #### 七、版本与兼容性
@@ -633,7 +637,9 @@ block             = nonce / n                        // 整数除法
     "comment_verify_enabled": "false",
     "comment_verify_difficulty": "1000000",
     "comment_verify_instr_enabled": "false",
-    "comment_verify_block_automated": "false"
+    "comment_verify_block_automated": "false",
+    "comment_verify_retention_days": "30",
+    "comment_verify_log_challenge": "true"
   }
 }
 ```
@@ -700,7 +706,10 @@ block             = nonce / n                        // 整数除法
     "comment_verify_enabled": "false",
     "comment_verify_difficulty": "1000000",
     "comment_verify_instr_enabled": "false",
-    "comment_verify_block_automated": "false"
+    "comment_verify_block_automated": "false",
+    "comment_verify_retention_days": "30",
+    "comment_verify_log_challenge": "true",
+    "trust_proxy": "false"
   }
 }
 ```
@@ -754,6 +763,8 @@ block             = nonce / n                        // 整数除法
   "comment_verify_difficulty": "1000000",
   "comment_verify_instr_enabled": "true",
   "comment_verify_block_automated": "false",
+  "comment_verify_retention_days": "30",
+  "comment_verify_log_challenge": "true",
   "trust_proxy": "false"
 }
 ```
@@ -764,6 +775,8 @@ block             = nonce / n                        // 整数除法
 > - `comment_verify_enabled` 控制评论无感验证的启用/关闭，默认 `"false"`；开启后提交评论必须携带 `verify_ticket`
 > - `comment_verify_difficulty` 是**访客需要完成的哈希计算总次数**（协议 v2 语义），默认 `"1000000"`；≤26 的历史值会按 `2^值` 自动迁移
 > - `comment_verify_instr_enabled` 开启第二层环境质询，默认 `"false"`；`comment_verify_block_automated` 控制命中自动化特征时是否拒绝，默认 `"false"`（只记录日志）
+> - `comment_verify_retention_days` 是认证记录（`VerifyRecord`）的保留天数，默认 `"30"`；`"0"` 表示永久保留，上限 3650
+> - `comment_verify_log_challenge` 控制是否记录「签发挑战」事件，默认 `"true"`；设为 `"false"` 只记录通过/失败以降低写入量
 > - `admin_password` **不在允许写入的字段中**，直接提交会返回 `400`；修改密码请使用 `PUT /admin/password`（需要提供旧凭据）
 > - `ip_blacklist` 会被校验格式，必须是「合法 IP 或 CIDR」组成的 JSON 数组，否则返回 `400`
 > - `allow_origin`：逗号分隔的来源白名单；**留空表示不放开跨域**，填 `*` 表示允许任意来源。
@@ -1113,6 +1126,140 @@ block             = nonce / n                        // 整数除法
   }
 }
 ```
+
+**响应（失败）**：
+```json
+{
+  "code": 401,
+  "message": "Invalid token"
+}
+```
+
+### 认证记录统计概览 (GET `/admin/verify/overview`)
+
+> 统计评论区**无感验证（人机验证）**的每一次认证：签发挑战数、通过数、失败数、平均解题耗时，
+> 以及趋势折线与 Top 榜单。数据来自 `VerifyRecord` 表（见 [data_table.md](./data_table.md)），
+> 只有开启 `comment_verify_enabled` 后才会产生记录。
+>
+> 统计口径（三端逐条一致）：分桶与时间键统一按 **UTC**；`passRate = pass / (pass + fail)`；
+> 平均耗时只统计 `pass` 事件；`*Delta` 与紧邻的上一个等长窗口比较，上一窗口无数据时为 `null`。
+
+**查询参数**：
+- `days`：统计窗口天数（可选，默认 `30`）
+  - `1` — 最近 24 小时（按小时分桶，键形如 `2026-04-27T14`）
+  - `7` / `30` / `90` — 最近 N 天（按天分桶，键形如 `2026-04-27`）
+  - `0` 或 `all` — 最近 12 个月（按月分桶，键形如 `2026-04`）
+  - 上限 365 天，超出按 365 处理；非法值按默认 30 处理
+- `offset`：窗口向前平移的**整窗个数**（可选，默认 `0`，上限 120）—— 对应管理面板上的左右箭头
+
+**响应（成功）**：
+`GET /admin/verify/overview?days=30&offset=0`
+
+```json
+{
+  "code": 200,
+  "message": "Verify stats fetched successfully",
+  "data": {
+    "range": {
+      "days": 30,
+      "offset": 0,
+      "from": "2026-03-28T00:00:00.000Z",
+      "to": "2026-04-26T23:59:59.999Z",
+      "bucket": "day"
+    },
+    "summary": {
+      "challenges": 2400000,
+      "challengesDelta": 20,
+      "verified": 2200000,
+      "verifiedDelta": 11,
+      "failed": 142000,
+      "failedDelta": -85,
+      "avgDurationMs": 5000,
+      "avgDurationDelta": -12,
+      "passRate": 93.9
+    },
+    "trend": [
+      { "date": "2026-04-25", "challenges": 120, "verified": 110, "failed": 7 },
+      { "date": "2026-04-26", "challenges": 98, "verified": 90, "failed": 5 }
+    ],
+    "geoSupported": true,
+    "topCountries": [
+      { "name": "US", "count": 85200, "percent": 30.1 },
+      { "name": "GB", "count": 25400, "percent": 9.0 }
+    ],
+    "topNetworks": [
+      { "name": "Comcast Cable Communications", "asn": 7922, "count": 20200, "percent": 7.1 }
+    ],
+    "topReasons": [
+      { "reason": "ip mismatch", "count": 1200, "percent": 0.4 },
+      { "reason": "challenge expired", "count": 320, "percent": 0.1 }
+    ]
+  }
+}
+```
+
+> **`geoSupported`**：只有 Cloudflare Worker 部署为 `true`（地域与运营商来自请求对象上的
+> `cf.country` / `cf.asOrganization` / `cf.asn`）。Node 与 Go 部署返回 `false`，且
+> `topCountries` / `topNetworks` 恒为空数组，管理面板据此隐藏这两块榜单。
+>
+> **`topReasons`** 三端都有数据，取窗口内 `event = 'fail'` 的原因计数。
+> Top 榜单的 `percent` 为「该条目计数 ÷ 窗口内全部事件数（签发 + 通过 + 失败）」。
+
+**响应（失败）**：
+```json
+{
+  "code": 401,
+  "message": "Invalid token"
+}
+```
+
+### 认证记录明细 (GET `/admin/verify/records`)
+
+> 分页返回认证记录明细，用于排查「某个 IP 为什么一直失败」「某篇文章的认证流失」这类问题。
+
+**查询参数**：
+- `page`：页码（可选，默认 1）
+- `pageSize`：每页条数（可选，默认 20，上限 100）
+- `event`：`all`（默认）| `challenge` | `pass` | `fail`
+- `reason`：失败原因精确匹配，例如 `ip mismatch`
+- `ip`：来源 IP **前缀**匹配（便于按网段排查），如 `203.0.113.`
+- `slug`：文章标识精确匹配
+- `days`：时间窗口天数（可选，默认 30；`0` 或 `all` 表示全部历史）
+
+**响应（成功）**：
+`GET /admin/verify/records?page=1&pageSize=20&event=fail&days=30`
+
+```json
+{
+  "code": 200,
+  "message": "Verify records fetched successfully",
+  "data": {
+    "list": [
+      {
+        "id": 10241,
+        "createdAt": "2026-04-26T12:34:56.789Z",
+        "event": "fail",
+        "reason": "ip mismatch",
+        "elapsedMs": 4200,
+        "difficulty": 1000000,
+        "challengeId": "3Qk9mZ2f1sV0xA",
+        "postSlug": "/posts/hello-world",
+        "ipAddress": "203.0.113.42",
+        "country": "US",
+        "network": "Comcast Cable Communications",
+        "asn": 7922
+      }
+    ],
+    "total": 142,
+    "page": 1,
+    "pageSize": 20
+  }
+}
+```
+
+> `createdAt` 为 ISO 8601 UTC 字符串；`elapsedMs` / `difficulty` / `asn` 在无数据时为 `null`；
+> `reason` / `challengeId` / `postSlug` / `ipAddress` / `country` / `network` 无数据时为空字符串。
+> `country` / `network` / `asn` 同样只有 Cloudflare Worker 部署有值。
 
 **响应（失败）**：
 ```json

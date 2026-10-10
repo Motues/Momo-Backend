@@ -77,6 +77,9 @@ export function countComments(): number {
 export function resetTables(): void {
   db.run(sql`DELETE FROM "Comment"`);
   db.run(sql`DELETE FROM "EmailVerification"`);
+  // 认证记录同样按文件隔离：验证类用例的埋点会持续写入这张表，
+  // 不清理会让「恰好 N 条」这类断言在后续用例里出现假失败
+  db.run(sql`DELETE FROM "VerifyRecord"`);
 }
 
 /** 删除若干配置项，用于用例之间的隔离 */

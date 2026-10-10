@@ -17,6 +17,8 @@ import changePassword from "./admin/password";
 import logout from "./admin/logout";
 import { importComments, importSettings } from "./admin/dataImport";
 import { exportSettings, exportComments } from "./admin/dataExport";
+import verifyOverview from "./admin/verifyOverview";
+import verifyRecords from "./admin/verifyRecords";
 
 export { getCommentBySlug, postComment, verifyEmail, verifyChallenge, verifySolution };
-export { getAllComments, changeCommentStatus, updateComment, login, getStatsOverview, getUserList, getUserComments, getSettings, updateSettings, changePassword, logout, testEmail, importComments, importSettings, exportSettings, exportComments, addUserToBlacklist, removeUserFromBlacklist };
+export { getAllComments, changeCommentStatus, updateComment, login, getStatsOverview, getUserList, getUserComments, getSettings, updateSettings, changePassword, logout, testEmail, importComments, importSettings, exportSettings, exportComments, addUserToBlacklist, removeUserFromBlacklist, verifyOverview, verifyRecords };

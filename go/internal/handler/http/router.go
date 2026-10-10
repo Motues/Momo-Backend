@@ -65,6 +65,9 @@ func RegisterRoutes(r *gin.Engine, h *CommentHandler) {
 			auth.PUT("/comments/status", h.UpdateCommentStatus)
 			auth.PUT("/comments/edit", h.UpdateComment)
 			auth.GET("/stats/overview", h.GetStatsOverview)
+			// 认证记录（无感验证的签发/通过/失败统计与明细）
+			auth.GET("/verify/overview", h.GetVerifyOverview)
+			auth.GET("/verify/records", h.GetVerifyRecords)
 			auth.GET("/stats/users", h.GetUserList)
 			auth.GET("/stats/users/comments", h.GetUserComments)
 			auth.POST("/users/blacklist", h.AddUserToBlacklist)
