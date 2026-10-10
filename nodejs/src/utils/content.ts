@@ -45,6 +45,7 @@ async (comments: Comment[] | null, page: number, limit: number, nested: boolean,
         admin_email_hash: adminEmailHash,
         verify_enabled: verifyConfig.verify_enabled,
         verify_honeypot: verifyConfig.verify_honeypot,
+        verify_version: verifyConfig.verify_version,
       }
     };
   }
@@ -76,6 +77,7 @@ async (comments: Comment[] | null, page: number, limit: number, nested: boolean,
         admin_email_hash: adminEmailHash,
         verify_enabled: verifyConfig.verify_enabled,
         verify_honeypot: verifyConfig.verify_honeypot,
+        verify_version: verifyConfig.verify_version,
       }
     }
   } else {
@@ -116,6 +118,7 @@ async (comments: Comment[] | null, page: number, limit: number, nested: boolean,
         admin_email_hash: adminEmailHash,
         verify_enabled: verifyConfig.verify_enabled,
         verify_honeypot: verifyConfig.verify_honeypot,
+        verify_version: verifyConfig.verify_version,
       }
     };
   }

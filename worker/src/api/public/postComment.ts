@@ -9,6 +9,8 @@ import { toMillis } from '../../utils/time';
 import {
   checkContent,
   sanitizeUrl,
+  sanitizePostSlug,
+  countCodePoints,
   parseIpBlacklist,
   ipMatchesBlacklist,
   MAX_CONTENT,
@@ -76,7 +78,7 @@ export const postComment = async (c: Context<{ Bindings: Bindings }>) => {
 
   // 1.1 长度上限校验：避免 MB 级内容触发 CPU 时长与存储风险
   const overLimit =
-    data.post_slug.length > MAX_POST_SLUG ||
+    countCodePoints(data.post_slug) > MAX_POST_SLUG ||
     data.author.length > MAX_AUTHOR ||
     data.email.length > MAX_EMAIL ||
     data.content.length > MAX_CONTENT ||
@@ -137,7 +139,14 @@ export const postComment = async (c: Context<{ Bindings: Bindings }>) => {
 
   // 5.1 无感验证票据校验（管理员密钥已通过的博主不受影响）
   if (!isAdminVerified && await isVerifyEnabled(c.env)) {
-    const ticketOk = await verifyTicket(c.env, data.verify_ticket, ip, data.post_slug);
+    // 票据里的 slug 是**净化后**的值（见 verifySolution 里签发票据时传入的 sanitizePostSlug），
+    // 所以这里必须用同一套净化规则处理后才能比对 —— 否则只要文章标识里含有
+    // checkContent 会改写的片段（例如 <script>…</script>），签出的票据就永远兑不掉，
+    // 真人会持续收到假 VERIFY_REQUIRED。
+    //
+    // 注意只对「票据比对」用净化值：评论落库仍用原始 data.post_slug，
+    // 因为读取端是按原始 slug 查询的，改动存储口径会让评论查不出来。
+    const ticketOk = await verifyTicket(c.env, data.verify_ticket, ip, sanitizePostSlug(data.post_slug));
     if (!ticketOk) {
       return c.json({
         code: 403,

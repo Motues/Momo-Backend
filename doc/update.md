@@ -43,6 +43,22 @@ pnpm run deploy
 
 ## 数据库更新记录
 
+### `v1.5.1` 版本
+
+**没有人机验证相关的数据库结构变更**：新增的两个设置项写在既有的 `Settings` 表里，首次保存时自动出现，
+无需执行任何 SQL。`comment_verify_difficulty` 的旧值会在读取时自动迁移（≤26 视为 v1 的「前导 0 比特数」，
+按 `2^值` 换算，上限 2^20），不需要手工改配置。
+
+⚠️ **这是一次破坏性变更**：人机验证协议从 v1 升到 v2，前端组件与后端必须**同时升级**。
+
+- 第一层工作量证明由 SHA-256 换成 HashWX（需要浏览器支持 WebAssembly；**不再有纯 JS 降级路径**）。
+- 答案字段由单个 `nonce` 变成 `nonces` 数组，票据版本升到 `v: 2`，已签发的挑战与票据在升级瞬间全部失效（访客刷新页面即可重新验证）。
+- 旧前端连新后端会在验证时失败，后端返回 `reason: "PROTOCOL_OUTDATED"`；新前端连旧后端会提示「验证服务版本过旧，请联系博主升级」。
+- 引入第三方组件 HashWX（`hashwx.wasm`，**LGPL-3.0**）。分发产物时请保留各端 `vendor/hashwx/` 目录下的许可证文本；详情见 `frontend/THIRD_PARTY_NOTICES.md` 与各端 `vendor/hashwx/README.md`。
+- 第一层实现需要用到的构建改动：Node.js 的 `tsconfig.json` 目标提升到 ES2022（BigInt 必需）；Go 端新增 `wazero` 依赖。
+
+协议细节见 [api.md](./api.md) 的「人机验证（无感验证 · 协议 v2）」，升级须知见根目录 README 的「升级到 1.5.1」。
+
 ### `v1.3.0` 版本
 
 添加了 `Settings` 表，SQL 语句如下：

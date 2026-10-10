@@ -91,7 +91,7 @@ describe('SecuritySettings - 加载与默认值', () => {
 		expect(wrapper.vm.originList).toEqual([]);
 		expect(wrapper.vm.adminCommentKeyEnabled).toBe(false);
 		expect(wrapper.vm.commentVerifyEnabled).toBe(false);
-		expect(wrapper.vm.commentVerifyDifficulty).toBe('18');
+		expect(wrapper.vm.commentVerifyDifficulty).toBe('1000000');
 		expect(wrapper.vm.trustProxy).toBe(false);
 	});
 
@@ -170,8 +170,8 @@ describe('SecuritySettings - 加载与默认值', () => {
 	});
 
 	it('加载验证强度', async () => {
-		await mountSettings({ code: 200, data: { comment_verify_difficulty: '20' } });
-		expect(wrapper.vm.commentVerifyDifficulty).toBe('20');
+		await mountSettings({ code: 200, data: { comment_verify_difficulty: '4000000' } });
+		expect(wrapper.vm.commentVerifyDifficulty).toBe('4000000');
 	});
 
 	it('加载后 isDirty 为 false', async () => {
@@ -353,8 +353,57 @@ describe('SecuritySettings - 管理员密钥与人机验证', () => {
 	it('验证强度可选高并写入模型', async () => {
 		await mountSettings();
 		await checkboxByLabel('启用无感验证').setValue(true);
-		await wrapper.find('select').setValue('20');
-		expect(wrapper.vm.commentVerifyDifficulty).toBe('20');
+		await wrapper.find('select').setValue('4000000');
+		expect(wrapper.vm.commentVerifyDifficulty).toBe('4000000');
+	});
+
+	/**
+	 * 人机验证 section 里的复选框，按 DOM 顺序：
+	 *   [0] 启用无感验证  [1] 启用环境质询（第二层）  [2] 命中自动化特征时拒绝
+	 * 后两个只在前面开启后才存在，所以每次都要重新查询。
+	 * 不能用 checkboxByLabel：它只取 section 里的第一个复选框。
+	 */
+	const verifyToggles = () =>
+		wrapper
+			.findAll('section')
+			.find((s) => s.text().includes('启用无感验证'))
+			.findAll('input[type="checkbox"]');
+
+	it('第二层两个开关默认关闭，且未启用无感验证时不展示', async () => {
+		await mountSettings();
+		expect(wrapper.vm.commentVerifyInstrEnabled).toBe(false);
+		expect(wrapper.vm.commentVerifyBlockAutomated).toBe(false);
+		// 未启用无感验证时该区块只有「启用无感验证」一个复选框
+		expect(verifyToggles().length).toBe(1);
+	});
+
+	it('开启第二层后可用「命中自动化特征时拒绝」，保存时写为 true', async () => {
+		await mountSettings();
+		await verifyToggles()[0].setValue(true);
+		await verifyToggles()[1].setValue(true);
+		expect(wrapper.vm.commentVerifyInstrEnabled).toBe(true);
+		expect(verifyToggles().length).toBe(3);
+
+		await verifyToggles()[2].setValue(true);
+		expect(wrapper.vm.commentVerifyBlockAutomated).toBe(true);
+
+		await saveButton().trigger('click');
+		await flushPromises();
+		expect(lastPayload().comment_verify_instr_enabled).toBe('true');
+		expect(lastPayload().comment_verify_block_automated).toBe('true');
+	});
+
+	it('加载时回填第二层开关', async () => {
+		await mountSettings({
+			code: 200,
+			data: {
+				comment_verify_enabled: 'true',
+				comment_verify_instr_enabled: 'true',
+				comment_verify_block_automated: 'true',
+			},
+		});
+		expect(wrapper.vm.commentVerifyInstrEnabled).toBe(true);
+		expect(wrapper.vm.commentVerifyBlockAutomated).toBe(true);
 	});
 });
 
@@ -367,7 +416,7 @@ describe('SecuritySettings - 保存载荷', () => {
 		expect(requestMock.put.mock.calls[0][0]).toBe('/admin/settings');
 	});
 
-	it('提交的键集合固定为 8 项（含用于清除密钥的空 admin_comment_key）', async () => {
+	it('提交的键集合固定为 10 项（含用于清除密钥的空 admin_comment_key）', async () => {
 		await mountSettings();
 		await saveButton().trigger('click');
 		await flushPromises();
@@ -375,8 +424,10 @@ describe('SecuritySettings - 保存载荷', () => {
 			'admin_comment_key',
 			'admin_comment_key_enabled',
 			'allow_origin',
+			'comment_verify_block_automated',
 			'comment_verify_difficulty',
 			'comment_verify_enabled',
+			'comment_verify_instr_enabled',
 			'email_blacklist',
 			'ip_blacklist',
 			'trust_proxy',

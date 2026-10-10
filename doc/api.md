@@ -198,7 +198,8 @@
     "admin_comment_key_configured": "false",
     "admin_email_hash": "xxxxx",
     "verify_enabled": "false",
-    "verify_honeypot": ""
+    "verify_honeypot": "",
+    "verify_version": "2"
   }
 }
 ```
@@ -249,7 +250,8 @@
     "admin_comment_key_configured": "false",
     "admin_email_hash": "xxxxx",
     "verify_enabled": "false",
-    "verify_honeypot": ""
+    "verify_honeypot": "",
+    "verify_version": "2"
   }
 }
 ```
@@ -278,16 +280,113 @@
 
 ---
 
-### 人机验证（无感验证）
+### 人机验证（无感验证 · 协议 v2）
 
 评论区可开启一套 Turnstile 风格的无感验证，由设置项 `comment_verify_enabled` 控制，**默认关闭**。开启后：
 
-- 前端在加载评论后自动调用 `/api/verify/challenge` 获取挑战
-- 浏览器静默完成一次工作量证明（真人无需任何点击）
-- 将答案提交到 `/api/verify/solution` 换取票据 `ticket`
-- 提交评论时携带该票据，后端校验通过才会写入数据库
+1. 前端在加载评论后自动调用 `/api/verify/challenge` 获取挑战
+2. 浏览器静默完成**第一层**：HashWX 工作量证明（真人无需任何点击）
+3. 若开启第二层，浏览器再执行服务端下发的随机程序并采集环境特征
+4. 把两层答案一起提交到 `/api/verify/solution` 换取票据 `ticket`
+5. 提交评论时携带该票据，后端校验通过才会写入数据库
 
-#### 签发挑战（POST `/api/verify/challenge`）
+> **两层是互补的**：第一层证明「付出了算力」，第二层证明「计算确实发生在浏览器里」。
+> 主要成本杠杆是第一层；按上游说明，`undetected-chromedriver` 这类工具驱动**有头**原生 Chrome
+> 可以绕过全部自动化检测，因此不要只依赖第二层。
+
+> ⚠️ **协议 v2 是破坏性变更**：`prefix` 载荷、难度语义、答案字段与票据版本都与 v1 不兼容。
+> 详见本节末尾的「版本与兼容性」。
+
+#### 一、挑战参数如何派生（三端必须逐字节一致）
+
+服务端**不保存任何挑战状态**，所有参数都由（签名密钥, 挑战 id）确定性派生：
+
+```
+cid     = base64url(随机 16 字节)                    // 每次签发都不同
+c       = SHA256("hashwx:C:" + secret + ":" + cid)   // 32 字节，hex 下发
+program = generateProgram(SHA256("instr:prog:" + secret + ":" + cid))
+```
+
+> `program` 的生成与解释口径见下面的「第二层」。注意 `secret` 是十六进制字符串，
+> 冒号分隔符与字段顺序都属于协议的一部分，改动会让三端互不认可。
+
+#### 二、第一层：HashWX 工作量证明
+
+算法来自 [tevador/hashwx](https://github.com/tevador/hashwx) v1.0.0（LGPL-3.0，见 `nodejs/vendor/hashwx/`）。
+
+```
+target            = U64_MAX / d                      // 整数除法
+seed(i, block)    = SHA256(c(32字节) ‖ u8le(i) ‖ u64le(block))
+需要找到 nonce 使得 hash(seed(i, nonce / n), nonce) <= target
+block             = nonce / n                        // 整数除法
+```
+
+| 参数 | 值 | 说明 |
+| --- | --- | --- |
+| `count` | 4 | 子挑战个数，把总工作量均分以压平解题耗时的长尾 |
+| `d` | `round(总难度 / count)` | 每个子挑战的期望哈希次数 |
+| `n` | 65536 | 每个生成函数覆盖的 nonce 数（摊薄内层模块的编译开销） |
+
+> - `nonce` 是 **u64**，JSON 中一律用十进制字符串传输（JS 的 Number 放不下 64 位）。
+> - 总难度取自 `comment_verify_difficulty`，**语义是访客需要完成的哈希计算总次数**。
+> - 实现要点：compiled 模式需要运行时编译每个索引用一次生成的内层 WASM 模块；
+>   服务端只需单次求值，因此统一使用解释模式（实测单次校验 100–150µs）。
+
+#### 三、第二层：Instrumentation 环境质询
+
+仅在 `comment_verify_instr_enabled` 为 `"true"` 时下发与校验。
+
+**程序格式**：扁平的整数数组，每 3 个整数一个操作：`[opcode, a, b]`。共 24 个操作码：
+
+| 编号 | 操作 | 语义 |
+| --- | --- | --- |
+| 0–13 | `CONST` `MOV` `AND` `OR` `XOR` `NAND` `ADD` `SUB` `MUL` `ROTL` `ROTR` `SHL` `SHR` `NOT` | 4 个 32 位有符号寄存器的整数运算（乘法为 32 位溢出截断，移位/旋转按 32 位语义） |
+| 14–21 | `DOM_CREATE` `DOM_APPEND` `DOM_SET_TEXT` `DOM_SET_ATTR` `DOM_READ_TEXT` `DOM_READ_ATTR` `DOM_WALK_UP` `DOM_REMOVE` | 在真实 DOM 上建元素树并读写：写入的值都是程序自己算出来的，因此服务端能用「影子模型」独立推算 |
+| 22–23 | `PROTO_JOIN` `PROTO_CHARCODE` | 通过真实原型链调用（`Array.prototype.join` / `String.prototype.charCodeAt`） |
+
+- 元素标签候选：`div span p section b i em u`；读写属性名固定为 `data-v`。
+- `DOM_WALK_UP(dst, steps)`：从栈顶节点沿 `parentElement` 向上最多 `steps` 步，累加各节点的 `data-v`，再叠加到 `dst`。
+- 程序结尾保证把整棵树拆掉，客户端执行完不应留下任何节点。
+- 操作码总数上限 240。
+
+**程序生成（确定性 PRNG）**：用 SHA-256 计数器模式扩展种子 —— 把 4 字节大端计数器追加到 32 字节种子后求摘要，每次得到 8 个 32 位字，循环取用即可。刻意不用有状态的 PRNG，避免跨语言的初始化/溢出语义差异。
+
+**期望值**：服务端用「影子 DOM 模型」解释同一段程序得到 `regs`；客户端必须用真实 DOM 执行得到相同结果。两侧语义必须逐位一致，`doc/vectors/instrumentation-v2.json` 是双方共用的固定向量（覆盖全部 24 个操作码）。
+
+**环境向量**（客户端采集，服务端判定）：
+
+| 字段 | 说明 |
+| --- | --- |
+| `cd` | `navigator.webdriver`：`-1` 表示 `undefined`，`0` 表示 `false`，`1` 表示 `true` |
+| `ua` / `br` | `userAgent` 与 `userAgentData.brands` 拼接（各截断到 300 字符） |
+| `ge` | 引擎标记：`1`=Blink，`2`=Gecko，`3`=WebKit，`0`=未知 |
+| `dm` | `navigator.deviceMemory`，不支持为 `-1` |
+| `tm` | 字体度量：同一探测串在 17 个字体栈下的宽度（**原始浮点值，不要取整**，否则会虚增下面的整数量化计数） |
+| `lw` / `lh` | 布局探针的宽高（离屏元素，32px 字号） |
+| `iw` `ih` `ow` `oh` | 视口与窗口尺寸 |
+| `sw` `sh` `ex` | 屏幕宽高与 `screen.isExtended` |
+| `mob` | 是否移动端 |
+| `nt` | 原生方法被改写的位掩码：`1`=canvas，`2`=webgl，`4`=permissions |
+
+**判定规则**（`comment_verify_block_automated` 为 `"false"` 时只记录日志，不拦截）：
+
+| 规则 | 触发条件 | 为何不误伤真人 |
+| --- | --- | --- |
+| `webdriver_true` | `cd === 1` | 规范定义的自动化标志，没有市售浏览器会设为 true |
+| `webdriver_stripped` | Blink 引擎且 `cd === -1` | 真实 Chrome 永远暴露 `false` |
+| `headless_token` | UA 或 brands 含 `HeadlessChrome` | 消费级浏览器不含该 token |
+| `layout_zero` | `lw <= 0` 或 `lh <= 0` | 真实渲染引擎必然给出正的几何尺寸（jsdom 类环境恒为 0） |
+| `gecko_contradiction` | Gecko 引擎却暴露 `deviceMemory` 或 `userAgentData` | Firefox 从未实现这两个 API |
+| `window_exceeds_screen` | `ow > sw + 4` 或 `oh > sh + 4`（`ex === 1` 时跳过） | 第二显示器/扩展屏场景被排除 |
+| `geometry_quantized` | 17 条字宽中至少 5 条为整数且至少有 2 个不同整数 | 单一字体系统不会命中；真实引擎返回小数 |
+| `viewport_override` | 非移动端且视口与屏幕完全相等 | 移动端全屏是正常的，已跳过 |
+
+只记录、**永不拦截**的风险标记：`native_tamper`（`nt !== 0`）、`few_font_metrics`（字宽采样不足 5 条）、`ua_missing`。
+
+> 隐私扩展（Canvas Blocker / Chameleon / Trace 等）会改写 `nt` 涉及的同一批原生方法，
+> 所以它只能作为风险标记。已知误报风险：Tor Browser 的字体整数量化、混合 DPI 多显示器环境。
+
+#### 四、签发挑战（POST `/api/verify/challenge`）
 
 **请求体**：
 ```json
@@ -303,15 +402,34 @@
   "message": "Challenge issued",
   "data": {
     "enabled": true,
+    "version": 2,
     "post_slug": "/posts/my-article",
     "challenge_id": "7Yb1pQ2wS9kLzXcV3nRf4A",
-    "prefix": "eyJjaWQiOiI3WGIxcFEyd1M5a0x6WGNWM25SZjRBIiwiaXBoIjoiYTFiMmMzZDRlNWY2N2E4YiIsImlhdCI6MTczMDAwMDAwMDAwMH0",
-    "difficulty": 18,
+    "prefix": "eyJ2IjoyLCJjaWQiOiI3WGIxcFEyd1M5a0x6WGNWM25SZjRBIiwiaXBoIjoiYTFiMmMzZDRlNWY2N2E4YiIsImlhdCI6MTczMDAwMDAwMDAwMH0",
+    "sig": "5mQ8x1vTn0pLbE2sKd9cRw7yUa4hGf6jZo3iNq8tVm0",
     "expires_in": 600,
-    "sig": "5mQ8x1vTn0pLbE2sKd9cRw7yUa4hGf6jZo3iNq8tVm0"
+    "pow": {
+      "algo": "hashwx",
+      "c": "a1b2c3d4e5f60718293a4b5c6d7e8f901a2b3c4d5e6f708192a3b4c5d6e7f801",
+      "d": 250000,
+      "n": 65536,
+      "count": 4
+    },
+    "instr": {
+      "ops": [0, 0, 12345, 14, 0, 0, 15, 0, 0, 17, 0, 0],
+      "fonts": 17
+    }
   }
 }
 ```
+
+- `instr` 仅在 `comment_verify_instr_enabled` 为 `"true"` 时出现；未开启时该字段整个缺席。
+- `prefix` 是 base64url 编码的载荷 `{"v":2,"cid":…,"iph":…,"slug":…,"iat":…}`（**字段顺序固定**），由 `sig` 做 HMAC-SHA256 签名。
+- **挑战绑定文章**：载荷里的 `slug` 就是本次请求的 `post_slug`。提交答案时请求体里的 `post_slug` 必须与它**完全一致**，否则返回 `reason: "slug mismatch"`。
+  这是必需的：`/api/verify/solution` 的 `post_slug` 来自未签名的请求体，若不与挑战绑定，一次工作量证明就能在同一 IP 上换成**任意文章**的票据，跨文章防护等于不存在。
+  两处必须使用**同一套净化规则**处理 `post_slug`（对 `post_slug` 应用 `checkContent` 后按 **Unicode 码点**截断到 200），否则会出现「同一篇文章两次净化结果不同」的假拒绝。三端口径由 `doc/vectors/sanitize-v2.json` 钉死 —— 注意截断单位是**码点**，不是 UTF-16 码元、也不是字节：按码元切可能切出孤立代理项，按字节切会把多字节字符切成非法 UTF-8，两者都会让三端结果不一致。
+- `c` 虽不参与签名，但服务端在校验时会用（密钥, cid）重新派生；用错 `c` 必然被拒。
+- 挑战有效期 10 分钟，且与来源 IP 绑定。
 
 **响应（验证已关闭）**：
 ```json
@@ -319,31 +437,39 @@
   "code": 200,
   "message": "Verification disabled",
   "data": {
-    "enabled": false
+    "enabled": false,
+    "version": 2
   }
 }
 ```
 
-> - `prefix` 是 base64url 编码的自包含载荷（挑战 ID、来源 IP 哈希、签发时间），由 `sig` 做 HMAC-SHA256 签名
-> - `difficulty` 为要求的前导 0 比特数，即需要满足 `leadingZeroBits(SHA256(prefix + ":" + nonce)) >= difficulty`
-> - 挑战有效期 10 分钟，且与来源 IP 绑定
-> - 前端在 `enabled` 为 `false` 时不应渲染验证框
+> 前端在 `enabled` 为 `false` 时不应渲染验证框。
 
-#### 提交答案（POST `/api/verify/solution`）
+#### 五、提交答案（POST `/api/verify/solution`）
 
 **请求体**：
 ```json
 {
   "post_slug": "/posts/my-article",
-  "prefix": "eyJjaWQiOiI3WGIxcFEyd1M5a0x6WGNWM25SZjRBIiwi...",
+  "prefix": "eyJ2IjoyLCJjaWQiOiI3WGIxcFEyd1M5a0x6WGNWM25SZjRBIiwi...",
   "sig": "5mQ8x1vTn0pLbE2sKd9cRw7yUa4hGf6jZo3iNq8tVm0",
-  "nonce": 184213,
+  "nonces": ["58284", "12901", "77310", "4023"],
   "elapsed_ms": 1840,
-  "hp": ""
+  "hp": "",
+  "instr": {
+    "regs": [16, 0, 45, 0],
+    "env": { "cd": 0, "ua": "Mozilla/5.0 …", "ge": 1, "tm": [10.5, 10.75], "lw": 120.5, "lh": 32.25 },
+    "lw": 120.5,
+    "lh": 32.25,
+    "tm": [10.5, 10.75]
+  }
 }
 ```
 
-> `hp` 为蜜罐字段，字段名由评论列表接口下发的 `verify_honeypot` 决定。真人始终提交空值；后端一旦发现非空即判定为脚本并直接拒绝。
+> - `nonces` 是与子挑战一一对应的 **u64 十进制字符串**数组，长度必须等于 `pow.count`。
+> - `hp` 为蜜罐字段，字段名由评论列表接口下发的 `verify_honeypot` 决定。真人始终提交空值；后端一旦发现非空即判定为脚本并直接拒绝。
+> - `instr` 在服务端开启第二层时必须携带（`env` / `lw` / `lh` / `tm` 用于环境判定，`regs` 用于程序结果比对）。
+> - 最小解题耗时下限为 **50ms**（仅用于拦截预置答案/缓存响应；下限过高会误伤多核高性能机器），上限为挑战有效期。
 
 **响应（成功）**：
 ```json
@@ -352,13 +478,14 @@
   "message": "Verification passed",
   "data": {
     "enabled": true,
-    "ticket": "eyJ2IjoxLCJpcGgiOiJhMWIyYzNkNGU1ZjY3YThiIiwic2x1ZyI6Ii9wb3N0cy9teS1hcnRpY2xlIiwiaWF0IjoxNzMwMDAwMDAwMDAwLCJleHAiOjE3MzAwMDAzMDAwMDAsImp0aSI6IkxnTjZ4UTJ3In0.9rT2mVpQ4xLbE8sKd1cRw7yUa4hGf6jZo3iNq8tVm0",
+    "version": 2,
+    "ticket": "eyJ2IjoyLCJpcGgiOiJhMWIyYzNkNGU1ZjY3YThiIiwic2x1ZyI6Ii9wb3N0cy9teS1hcnRpY2xlIiwiaWF0IjoxNzMwMDAwMDAwMDAwLCJleHAiOjE3MzAwMDAzMDAwMDAsImp0aSI6IkxnTjZ4UTJ3In0.9rT2mVpQ4xLbE8sKd1cRw7yUa4hGf6jZo3iNq8tVm0",
     "expires_in": 300
   }
 }
 ```
 
-> 票据有效期 5 分钟，绑定来源 IP 与 `post_slug`；前端刷新页面会重新发起验证。
+> 票据（版本 `v: 2`）有效期 5 分钟，绑定来源 IP 与 `post_slug`；前端刷新页面会重新发起验证。
 
 **响应（失败）**：
 ```json
@@ -369,15 +496,49 @@
 }
 ```
 
-> `reason` 仅用于调试与日志定位，可能取值：`missing challenge`、`bad signature`、`malformed prefix`、`malformed payload`、`challenge expired`、`challenge from the future`、`ip mismatch`、`implausible timing`、`bad nonce`、`insufficient work`、`replayed nonce`、`honeypot`。
+> `reason` 仅用于调试与日志定位。第一层可能取值：`missing challenge`、`bad signature`、
+> `malformed prefix`、`malformed payload`、`PROTOCOL_OUTDATED`、**`slug mismatch`**、`challenge expired`、
+> `challenge from the future`、`ip mismatch`、`implausible timing`、`challenge already used`、
+> `malformed spec`、`malformed challenge`、`solution count mismatch`、`bad nonce`、`insufficient work`。
+> 第二层可能取值：`malformed registers`、`program result mismatch`，
+> 以及命中自动化规则时的 `automated browser detected: <规则名列表>`。
+> 蜜罐命中时为 `honeypot`。
+>
+> 判定顺序（顺序会影响返回的 reason）：签名 → JSON 解析 → 是否为对象 → **协议版本** → 字段形状
+> → **文章绑定** → 时效 → IP → 时序 → 工作量 → 防重放 → 第二层。
+> 协议版本先于字段形状是刻意的：v1 载荷既没有 `v` 也没有 `slug`，否则会被误判成 `malformed payload`。
 
-#### 相关设置项
+> **防重放**：挑战是**单次使用**的 —— 兑换成功（或第二层校验失败）之后，同一 `prefix` 不能再提交。
+> 第二层校验发生在挑战被标记为已用之后，这是有意的：否则攻击者可以用同一个已通过算力证明的挑战
+> 反复更换环境向量，直到凑出一个能通过自动化检测的组合。
+
+#### 六、相关设置项
 
 | 设置项 | 默认值 | 说明 |
 | --- | --- | --- |
 | `comment_verify_enabled` | `"false"` | 总开关，默认关闭 |
-| `comment_verify_difficulty` | `"18"` | 难度（前导 0 比特数），允许范围 8-26 |
+| `comment_verify_difficulty` | `"1000000"` | **访客需要完成的哈希计算总次数**（协议 v2 语义），有效范围 1000–1000000000，按 4 个子挑战均分。**兼容 v1 旧值**：≤26 的值按 `2^值` 迁移（视为旧的前导 0 比特数），且上限钳到 2^20。**`"0"`、负数或解析不出数字时退回默认强度 `1000000`**（视为配置无效，安全的失败方向）；合法但低于下限的值才钳到 1000；`parseInt` 容忍尾部垃圾（与 v1 一致，`"1.5x"` 解析为 `1`） |
+| `comment_verify_instr_enabled` | `"false"` | 第二层环境质询开关，默认关闭 |
+| `comment_verify_block_automated` | `"false"` | 第二层命中自动化特征时是否拒绝，默认只记录日志 |
 | `comment_verify_secret` | 自动生成 | 服务端签名密钥，首次使用时自动生成并写入 `Settings` 表，不对外提供读写 |
+
+#### 七、版本与兼容性
+
+| 项目 | 协议 v1（包版本 1.5.0 及更早） | 协议 v2（包版本 1.5.1 起） |
+| --- | --- | --- |
+| 挑战响应字段 | `difficulty`（前导 0 比特数） | `version`、`pow.{c,d,n,count}`、可选 `instr` |
+| 第一层算法 | `SHA256(prefix + ":" + nonce)` 前导 0 比特 | HashWX（一次性生成函数） |
+| 答案字段 | `nonce`（单个） | `nonces`（u64 十进制字符串数组） |
+| 难度语义 | 前导 0 比特数（8–26） | 总哈希计算次数（1000–1e9） |
+| 票据版本 | `v: 1` | `v: 2` |
+| 挑战重放 | 按 `cid:nonce` 去重 | 挑战单次使用 |
+| 最小解题耗时 | 300ms | 50ms |
+
+- **旧前端 + 新后端**：旧前端签发的 `prefix` 载荷 `v` 为 1，新后端返回 `reason: "PROTOCOL_OUTDATED"` 而不是笼统的失败原因。
+- **新前端 + 旧后端**：挑战响应里没有 `pow`，新前端会显示「验证服务版本过旧，请联系博主升级」，并禁用无效的重试按钮。
+- 评论列表接口下发 `verify_version`（当前为 `"2"`），便于前端做前后端配套判断。
+- 浏览器需要支持 WebAssembly（第一层必需）；不支持时前端会提示「浏览器版本过低，不支持验证」。**v2 不提供纯 JS 降级路径**。
+
 
 ---
 
@@ -470,7 +631,9 @@
     "admin_comment_key": "",
     "admin_comment_key_enabled": "false",
     "comment_verify_enabled": "false",
-    "comment_verify_difficulty": "18"
+    "comment_verify_difficulty": "1000000",
+    "comment_verify_instr_enabled": "false",
+    "comment_verify_block_automated": "false"
   }
 }
 ```
@@ -535,7 +698,9 @@
     "ip_blacklist": "[\"192.168.1.100\",\"10.0.0.0/8\"]",
     "email_blacklist": "[\"spam@example.com\"]",
     "comment_verify_enabled": "false",
-    "comment_verify_difficulty": "18"
+    "comment_verify_difficulty": "1000000",
+    "comment_verify_instr_enabled": "false",
+    "comment_verify_block_automated": "false"
   }
 }
 ```
@@ -586,7 +751,9 @@
   "admin_comment_key_enabled": "true",
   "admin_comment_key": "my-secret-key",
   "comment_verify_enabled": "true",
-  "comment_verify_difficulty": "18",
+  "comment_verify_difficulty": "1000000",
+  "comment_verify_instr_enabled": "true",
+  "comment_verify_block_automated": "false",
   "trust_proxy": "false"
 }
 ```
@@ -595,6 +762,8 @@
 > - `email_password` 留空时不覆盖已有密码，仅当传入新值时更新
 > - `admin_comment_key_enabled` 控制管理员评论密钥的启用/关闭，关闭时自动清除密钥
 > - `comment_verify_enabled` 控制评论无感验证的启用/关闭，默认 `"false"`；开启后提交评论必须携带 `verify_ticket`
+> - `comment_verify_difficulty` 是**访客需要完成的哈希计算总次数**（协议 v2 语义），默认 `"1000000"`；≤26 的历史值会按 `2^值` 自动迁移
+> - `comment_verify_instr_enabled` 开启第二层环境质询，默认 `"false"`；`comment_verify_block_automated` 控制命中自动化特征时是否拒绝，默认 `"false"`（只记录日志）
 > - `admin_password` **不在允许写入的字段中**，直接提交会返回 `400`；修改密码请使用 `PUT /admin/password`（需要提供旧凭据）
 > - `ip_blacklist` 会被校验格式，必须是「合法 IP 或 CIDR」组成的 JSON 数组，否则返回 `400`
 > - `allow_origin`：逗号分隔的来源白名单；**留空表示不放开跨域**，填 `*` 表示允许任意来源。

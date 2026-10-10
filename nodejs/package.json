@@ -1,6 +1,6 @@
 {
   "name": "momo-backend-nodejs",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "",
   "main": "app.js",
   "scripts": {
@@ -11,7 +11,8 @@
     "db:push": "drizzle-kit push",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "test:dist": "tsc -p tsconfig.json && node scripts/smoke-dist.js"
   },
   "packageManager": "pnpm@10.15.1",
   "dependencies": {

@@ -81,8 +81,10 @@
 | `admin_comment_key` | 管理员评论密钥（敏感字段） |
 | `admin_comment_key_enabled` | 是否启用管理员评论密钥 |
 | `comment_verify_enabled` | 是否启用评论无感验证（人机验证），默认关闭 |
-| `comment_verify_difficulty` | 无感验证难度（前导 0 比特数，8-26） |
+| `comment_verify_difficulty` | 无感验证强度：**访客需要完成的哈希计算总次数**（协议 v2 语义，有效范围 1000–1000000000，默认 1000000）。会按 4 个子挑战均分。**兼容 v1 旧值**：≤26 的值按 `2^值` 迁移（视为旧的「前导 0 比特数」，上限 2^20）；`"0"`／负数／非数字退回默认强度 |
 | `comment_verify_secret` | 无感验证签名密钥，首次启用时自动生成（敏感字段，不对外读写） |
+| `comment_verify_instr_enabled` | 是否启用第二层环境质询（Instrumentation），默认关闭。开启后挑战会下发一段随机程序，要求访客浏览器真实执行并回传环境特征 |
+| `comment_verify_block_automated` | 第二层命中自动化特征（webdriver、HeadlessChrome、无布局引擎等）时是否直接拒绝，默认关闭（只写日志、不拦截） |
 | `password_changed` | 是否已修改默认密码 |
 
 ---

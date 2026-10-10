@@ -1,9 +1,13 @@
 /**
- * src/utils/verifyCrypto.ts —— 无感验证纯算法层。
+ * src/utils/verifyCrypto.ts —— 无感验证纯算法层（协议 v2）。
  *
- * 这里的函数是三端（Node.js / Go / Worker）共享的口径定义，
- * 因此除常规边界用例外，还必须把 go/internal/pkg/utils/verify_consistency_test.go
- * 中固定的跨语言向量逐字钉死。向量一旦对不上就是真实的三端漂移，不允许放宽断言。
+ * 这里的函数是三端（Node.js / Go / Worker）共享的口径定义，因此除常规边界用例外，
+ * 还必须把跨语言固定向量逐字钉死。向量一旦对不上就是真实的三端漂移，不允许放宽断言。
+ *
+ * 协议 v2 的载荷 / 签名 / 票据向量全部集中在 doc/vectors/verify-v2.json，
+ * 由 test/unit/vectors.verify-v2.test.ts 逐项复算；
+ * 本文件只钉「与协议版本无关」的基础原语。
+ * v1 的「SHA256(prefix:nonce) 前导 0 比特数」已随协议 v2 一起移除，相应用例也已删除。
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -12,28 +16,19 @@ import {
 	hashVerifyIp,
 	hmacSHA256,
 	honeypotFieldName,
-	leadingZeroBits,
 	sha256Bytes,
 	sha256Hex,
 	timingSafeEqual,
 	toBase64url,
 	toHex,
-	workFor,
 } from '../../src/utils/verifyCrypto';
 
-/* ----------------------- 跨语言一致性向量（逐字复制自 Go） ---------------------- */
+/* ----------------------- 跨语言一致性向量（与 Go / Node 共享） ---------------------- */
 const VECTOR_SECRET = 'a1b2c3d4e5f60718293a4b5c6d7e8f901a2b3c4d5e6f708192a3b4c5d6e7f801';
 const VECTOR_IP = '::ffff:127.0.0.1';
 const VECTOR_SLUG = '/posts/vector-check';
 const VECTOR_IP_HASH = '20fa49e706f48b01';
 const VECTOR_HONEYPOT = 'v_77dc2477f6';
-const VECTOR_PREFIX =
-	'eyJjaWQiOiJkR1Z6ZEMxamFHRnNiR1Z1WjJVIiwiaXBoIjoiMjBmYTQ5ZTcwNmY0OGIwMSIsImlhdCI6MTczMDAwMDAwMDAwMH0';
-const VECTOR_SIG = 'OdtEE6BBCwUhnC5GTRoIcWALl_Wcv5qOfrwVT6tenK0';
-const VECTOR_NONCE = 12345;
-const VECTOR_LEADING = 2;
-const VECTOR_PAYLOAD_JSON =
-	'{"cid":"dGVzdC1jaGFsbGVuZ2U","iph":"20fa49e706f48b01","iat":1730000000000}';
 
 describe('verifyCrypto —— base64url 编解码', () => {
 	it('编码结果不含填充，且使用 URL 安全字符', () => {
@@ -61,10 +56,12 @@ describe('verifyCrypto —— base64url 编解码', () => {
 	});
 
 	it('容忍带填充（= / ==）的输入', () => {
-		const bytes = new TextEncoder().encode(VECTOR_PAYLOAD_JSON);
-		expect(fromBase64url(VECTOR_PREFIX)).toEqual(bytes);
-		expect(fromBase64url(`${VECTOR_PREFIX}==`)).toEqual(bytes);
-		expect(fromBase64url(`${VECTOR_PREFIX}=`)).toEqual(bytes);
+		const payload = '{"v":2,"cid":"x"}';
+		const prefix = toBase64url(payload);
+		const bytes = new TextEncoder().encode(payload);
+		expect(fromBase64url(prefix)).toEqual(bytes);
+		expect(fromBase64url(`${prefix}==`)).toEqual(bytes);
+		expect(fromBase64url(`${prefix}=`)).toEqual(bytes);
 	});
 
 	it('容忍标准 base64 字母表（+ 与 /）', () => {
@@ -138,72 +135,9 @@ describe('verifyCrypto —— 跨语言一致性向量', () => {
 		expect(await honeypotFieldName('/other', VECTOR_SECRET)).toMatch(/^v_[0-9a-f]{10}$/);
 	});
 
-	it('base64url(JSON 载荷) 与固定 prefix 逐字节一致', () => {
-		expect(toBase64url(VECTOR_PAYLOAD_JSON)).toBe(VECTOR_PREFIX);
-	});
-
-	it('固定 prefix 解码后就是约定的 JSON 载荷原文', () => {
-		expect(new TextDecoder().decode(fromBase64url(VECTOR_PREFIX))).toBe(VECTOR_PAYLOAD_JSON);
-	});
-
-	it('prefix 签名 = base64url(HMAC-SHA256(prefix, secret))', async () => {
-		expect(await hmacSHA256(VECTOR_PREFIX, VECTOR_SECRET)).toBe(VECTOR_SIG);
-	});
-
-	it('workFor(prefix, 12345) 的前导 0 比特数为 2', async () => {
-		expect(await workFor(VECTOR_PREFIX, VECTOR_NONCE)).toBe(VECTOR_LEADING);
-	});
-});
-
-describe('verifyCrypto —— leadingZeroBits', () => {
-	it('空数组返回 0', () => {
-		expect(leadingZeroBits(new Uint8Array([]))).toBe(0);
-	});
-
-	it('按字节累加整字节的 0', () => {
-		expect(leadingZeroBits(new Uint8Array([0x00]))).toBe(8);
-		expect(leadingZeroBits(new Uint8Array([0x00, 0x00]))).toBe(16);
-		expect(leadingZeroBits(new Uint8Array([0x00, 0x00, 0x00]))).toBe(24);
-	});
-
-	it('首个非零字节按最高位到最低位计算', () => {
-		expect(leadingZeroBits(new Uint8Array([0x80]))).toBe(0);
-		expect(leadingZeroBits(new Uint8Array([0xff]))).toBe(0);
-		expect(leadingZeroBits(new Uint8Array([0x7f]))).toBe(1);
-		expect(leadingZeroBits(new Uint8Array([0x40]))).toBe(1);
-		expect(leadingZeroBits(new Uint8Array([0x01]))).toBe(7);
-		expect(leadingZeroBits(new Uint8Array([0x0f]))).toBe(4);
-	});
-
-	it('前导零字节与非零字节混合', () => {
-		expect(leadingZeroBits(new Uint8Array([0x00, 0x0f]))).toBe(12);
-		expect(leadingZeroBits(new Uint8Array([0x00, 0x00, 0x01]))).toBe(23);
-	});
-
-	it('全零数组等于字节数 × 8', () => {
-		expect(leadingZeroBits(new Uint8Array(32))).toBe(256);
-	});
-});
-
-describe('verifyCrypto —— workFor', () => {
-	it('对同一 prefix/nonce 稳定，且与 leadingZeroBits(SHA256(prefix:nonce)) 等价', async () => {
-		const expected = leadingZeroBits(await sha256Bytes(`${VECTOR_PREFIX}:${VECTOR_NONCE}`));
-		expect(await workFor(VECTOR_PREFIX, VECTOR_NONCE)).toBe(expected);
-		expect(await workFor(VECTOR_PREFIX, VECTOR_NONCE)).toBe(VECTOR_LEADING);
-	});
-
-	it('不同 nonce 得到不同成果（存在满足难度的解）', async () => {
-		const results = await Promise.all(
-			Array.from({ length: 64 }, (_, i) => workFor('probe-prefix', i))
-		);
-		expect(new Set(results).size).toBeGreaterThan(1);
-		expect(Math.max(...results)).toBeGreaterThanOrEqual(1);
-	});
-
-	it('nonce 以十进制拼接（非十六进制）', async () => {
-		// ':255' 与 ':0xff' 必须被区分
-		expect(await workFor('p', 255)).toBe(
-			leadingZeroBits(await sha256Bytes('p:255'))
+	it('蜜罐字段名对 slug 敏感（同 IP 不同文章必须不同）', async () => {
+		expect(await honeypotFieldName('/posts/a', VECTOR_SECRET)).not.toBe(
+			await honeypotFieldName('/posts/b', VECTOR_SECRET)
 		);
 	});
 });

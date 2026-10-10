@@ -29,6 +29,8 @@ const ALLOWED_SETTINGS = [
   "verify_base_url",
   "comment_verify_enabled",
   "comment_verify_difficulty",
+  "comment_verify_instr_enabled",
+  "comment_verify_block_automated",
   "trust_proxy",
 ];
 
@@ -36,7 +38,7 @@ const ALLOWED_SETTINGS = [
 const SETTINGS_GROUPS: Record<string, string[]> = {
   basic: ["site_name", "admin_email", "comment_auto_approve", "blogger_badge_enabled", "blogger_badge_text", "placeholder_name", "placeholder_email", "placeholder_content", "placeholder_url"],
   email: ["smtp_host", "smtp_port", "email_user", "email_password", "email_secure", "email_enabled", "email_verify_enabled", "verify_base_url", "reply_template", "notification_template"],
-  security: ["allow_origin", "admin_comment_key", "admin_comment_key_enabled", "ip_blacklist", "email_blacklist", "comment_verify_enabled", "comment_verify_difficulty", "trust_proxy"],
+  security: ["allow_origin", "admin_comment_key", "admin_comment_key_enabled", "ip_blacklist", "email_blacklist", "comment_verify_enabled", "comment_verify_difficulty", "comment_verify_instr_enabled", "comment_verify_block_automated", "trust_proxy"],
   account: ["admin_name"],
 };
 

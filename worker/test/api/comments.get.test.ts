@@ -198,6 +198,7 @@ describe('GET /api/comments —— 博主标识与设置下发', () => {
 			admin_email_hash: '',
 			verify_enabled: 'false',
 			verify_honeypot: '',
+			verify_version: '2',
 		});
 	});
 
@@ -228,6 +229,8 @@ describe('GET /api/comments —— 博主标识与设置下发', () => {
 		const res = await getComments(`?post_slug=${SLUG}`);
 		expect(res.body.data.verify_enabled).toBe('true');
 		expect(res.body.data.verify_honeypot).toMatch(/^v_[0-9a-f]{10}$/);
+		// 前端据此判断前后端协议是否配套（协议 v2）
+		expect(res.body.data.verify_version).toBe('2');
 	});
 
 	it('蜜罐字段名随 post_slug 变化', async () => {

@@ -4,7 +4,7 @@ import { UAParser } from "ua-parser-js";
 import CommentService from "../../orm/commentService";
 import { CreateCommentInput } from "../../type/prisma";
 import { sendCommentReplyNotification, sendCommentNotification, isEmailServiceAvailable, checkEmailVerified, saveVerificationToken, hasUnverifiedToken, sendVerificationEmail } from "../../utils/email";
-import { canPostComment, checkContent, sanitizeHtml, sanitizeUrl, checkIpBlacklist, checkEmailBlacklist, getCommentStatus } from "../../utils/security";
+import { canPostComment, checkContent, countCodePoints, MAX_POST_SLUG, sanitizePostSlug, sanitizeHtml, sanitizeUrl, checkIpBlacklist, checkEmailBlacklist, getCommentStatus } from "../../utils/security";
 import { getSetting } from "../../utils/settings";
 import { isVerifyEnabled, verifyTicket } from "../../utils/verify";
 import { parseMarkdown } from "../../utils/markdown";
@@ -16,7 +16,7 @@ const MAX_CONTENT = 2000;
 const MAX_AUTHOR = 100;
 const MAX_EMAIL = 254;
 const MAX_URL = 500;
-const MAX_POST_SLUG = 200;
+
 
 export default async (c: Context): Promise<Response> => {
   try {
@@ -42,7 +42,7 @@ export default async (c: Context): Promise<Response> => {
 
     // 长度上限校验：避免 MB 级内容导致数据库膨胀与 Markdown 渲染 CPU 放大
     const overLimit =
-      data.post_slug.length > MAX_POST_SLUG ||
+      countCodePoints(data.post_slug) > MAX_POST_SLUG ||
       data.author.length > MAX_AUTHOR ||
       data.email.length > MAX_EMAIL ||
       data.content.length > MAX_CONTENT ||
@@ -92,7 +92,15 @@ export default async (c: Context): Promise<Response> => {
 
     // 无感验证票据校验（管理员密钥已通过的博主不受影响）
     if (!isAdminVerified && (await isVerifyEnabled())) {
-      const ticketOk = await verifyTicket(data.verify_ticket, ip, data.post_slug);
+      // 票据里的 slug 是**净化后**的值（见 verifySolution.ts 的 createTicket 调用），
+      // 所以这里必须用同一套净化规则处理后才能比对 —— 否则只要文章标识里含有
+      // checkContent 会改写的片段（例如 <script>…</script>），签出的票据就永远兑不掉，
+      // 真人会持续收到假 VERIFY_REQUIRED。
+      //
+      // 注意只对「票据比对」用净化值：评论落库仍用原始 post_slug，
+      // 因为读取端是按原始 post_slug 查询的，改动存储口径会让评论查不出来。
+      const ticketSlug = sanitizePostSlug(data.post_slug);
+      const ticketOk = await verifyTicket(data.verify_ticket, ip, ticketSlug);
       if (!ticketOk) {
         return c.json(
           {

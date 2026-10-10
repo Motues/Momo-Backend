@@ -135,11 +135,53 @@
             <label class="block text-sm font-medium text-gray-700 mb-1">验证强度</label>
             <select v-model="commentVerifyDifficulty"
               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent text-sm">
-              <option value="16">低（约 6.5 万次计算，几乎无感）</option>
-              <option value="18">中（约 26 万次计算，推荐）</option>
-              <option value="20">高（约 105 万次计算，低端设备可能等待 1-2 秒）</option>
+              <option value="250000">低（约 25 万次计算：桌面不到 0.3 秒，低端手机约 1–2 秒）</option>
+              <option value="1000000">中（约 100 万次计算，推荐：桌面约 1 秒，低端手机 3–6 秒）</option>
+              <option value="4000000">高（约 400 万次计算：桌面约 4 秒，低端手机可能 15 秒以上）</option>
             </select>
-            <p class="text-xs text-gray-400 mt-1">强度越高越能拦住机器人，但访客的等待时间也会变长</p>
+            <p class="text-xs text-gray-400 mt-1">
+              数值为访客需要完成的哈希计算总次数（会分摊到 4 个子挑战并行求解）。强度越高越能拦住机器人，
+              但等待时间也越长；手机性能通常只有桌面的 1/5 到 1/10，请按主要访客的设备选择。
+            </p>
+          </div>
+
+          <!-- 第二层：Instrumentation 环境质询 -->
+          <div v-if="commentVerifyEnabled" class="border-t border-gray-100 pt-4 space-y-4">
+            <div class="flex items-center justify-between">
+              <div>
+                <p class="text-sm font-medium text-gray-700">启用环境质询（第二层）</p>
+                <p class="text-xs text-gray-400 mt-1">
+                  在算力证明之外，再要求访客的浏览器真实执行一段随机生成的程序并回传环境特征。
+                  与算力证明互补：一个证明「付出了算力」，一个证明「计算真的发生在浏览器里」。默认关闭。
+                </p>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" v-model="commentVerifyInstrEnabled" class="sr-only peer">
+                <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-emerald-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                <span class="ms-3 text-sm font-medium text-gray-700">
+                  {{ commentVerifyInstrEnabled ? '已启用' : '已禁用' }}
+                </span>
+              </label>
+            </div>
+
+            <div v-if="commentVerifyInstrEnabled" class="flex items-center justify-between pl-4 border-l-2 border-gray-100">
+              <div>
+                <p class="text-sm font-medium text-gray-700">命中自动化特征时拒绝</p>
+                <p class="text-xs text-gray-400 mt-1">
+                  默认只把命中的特征写进日志、不拦截任何人。开启前请先观察日志确认没有误伤
+                  （Tor Browser 的字体整数量化、混合 DPI 多显示器环境都可能被误判）。
+                  注意：有头原生 Chrome 配 undetected-chromedriver 这类工具可以绕过全部检测，
+                  真正让批量滥用变贵的是第一层的算力证明。
+                </p>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" v-model="commentVerifyBlockAutomated" class="sr-only peer">
+                <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-emerald-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
+                <span class="ms-3 text-sm font-medium text-gray-700">
+                  {{ commentVerifyBlockAutomated ? '已开启' : '仅记录' }}
+                </span>
+              </label>
+            </div>
           </div>
         </div>
       </section>
@@ -239,7 +281,13 @@ const newEmailEntry = ref('')
 const adminCommentKey = ref('')
 const adminCommentKeyEnabled = ref(false)
 const commentVerifyEnabled = ref(false)
-const commentVerifyDifficulty = ref('18')
+// 总哈希计算次数（协议 v2 语义）。默认值与后端 HASHWX_DEFAULT_DIFFICULTY 保持一致，
+// 这样「未设置过」的部署打开本页时选中「中」，保存后不会意外改变验证强度。
+const commentVerifyDifficulty = ref('1000000')
+// 第二层环境质询：默认关闭，与后端 comment_verify_instr_enabled 默认值一致
+const commentVerifyInstrEnabled = ref(false)
+// 命中自动化特征时是否拒绝：默认关闭，只记录日志
+const commentVerifyBlockAutomated = ref(false)
 // 客户端 IP 识别：是否信任反向代理下发的 IP 头
 const trustProxy = ref(false)
 const trustProxyOverride = ref('')
@@ -307,10 +355,12 @@ const takeSnapshot = () => JSON.stringify({
   keyEnabled: adminCommentKeyEnabled.value,
   verifyEnabled: commentVerifyEnabled.value,
   verifyDifficulty: commentVerifyDifficulty.value,
+  verifyInstrEnabled: commentVerifyInstrEnabled.value,
+  verifyBlockAutomated: commentVerifyBlockAutomated.value,
   trustProxy: trustProxy.value,
 })
 
-watch([ipBlacklist, emailBlacklist, originList, adminCommentKey, adminCommentKeyEnabled, commentVerifyEnabled, commentVerifyDifficulty, trustProxy], () => {
+watch([ipBlacklist, emailBlacklist, originList, adminCommentKey, adminCommentKeyEnabled, commentVerifyEnabled, commentVerifyDifficulty, commentVerifyInstrEnabled, commentVerifyBlockAutomated, trustProxy], () => {
   isDirty.value = takeSnapshot() !== initialSnapshot
 }, { deep: true })
 
@@ -338,7 +388,9 @@ const loadSettings = async () => {
       adminCommentKey.value = res.data.admin_comment_key || ''
       adminCommentKeyEnabled.value = res.data.admin_comment_key_enabled === 'true'
       commentVerifyEnabled.value = res.data.comment_verify_enabled === 'true'
-      commentVerifyDifficulty.value = res.data.comment_verify_difficulty || '18'
+      commentVerifyDifficulty.value = res.data.comment_verify_difficulty || '1000000'
+      commentVerifyInstrEnabled.value = res.data.comment_verify_instr_enabled === 'true'
+      commentVerifyBlockAutomated.value = res.data.comment_verify_block_automated === 'true'
       trustProxy.value = res.data.trust_proxy === 'true'
       trustProxyOverride.value = res.data.trust_proxy_override || ''
       try {
@@ -379,6 +431,8 @@ const saveSettings = async () => {
       admin_comment_key_enabled: adminCommentKeyEnabled.value ? 'true' : 'false',
       comment_verify_enabled: commentVerifyEnabled.value ? 'true' : 'false',
       comment_verify_difficulty: commentVerifyDifficulty.value,
+      comment_verify_instr_enabled: commentVerifyInstrEnabled.value ? 'true' : 'false',
+      comment_verify_block_automated: commentVerifyBlockAutomated.value ? 'true' : 'false',
       trust_proxy: trustProxy.value ? 'true' : 'false',
     }
     if (adminCommentKeyEnabled.value && adminCommentKey.value) {

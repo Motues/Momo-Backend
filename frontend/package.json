@@ -1,13 +1,17 @@
 {
   "name": "@motues/momo-comment",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Momo frontend comment component built using Svelte",
   "type": "module",
   "main": "./dist/momo-comment.min.js",
   "author": "Motues",
   "license": "MIT",
   "files": [
-    "dist"
+    "dist",
+    "vendor",
+    "scripts",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "publishConfig": {
     "access": "public"

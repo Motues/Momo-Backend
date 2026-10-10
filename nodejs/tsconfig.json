@@ -1,6 +1,9 @@
 {
   "compilerOptions": {
     "module": "commonjs",
+    // HashWX 的 WebAssembly 出参是 i64，JS 侧只能用 BigInt 承载，
+    // 而 BigInt 字面量要求 target >= ES2020。运行时是 Node（CI 用 24），ES2022 完全可用。
+    "target": "ES2022",
     "outDir": "./dist",
     "rootDir": "./src",
     "strict": true,

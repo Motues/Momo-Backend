@@ -98,7 +98,7 @@ func (h *CommentHandler) GetSettings(c *gin.Context) {
 	settingsGroups := map[string][]string{
 		"basic":    {"site_name", "admin_email", "comment_auto_approve", "blogger_badge_enabled", "blogger_badge_text", "placeholder_name", "placeholder_email", "placeholder_content", "placeholder_url"},
 		"email":    {"smtp_host", "smtp_port", "email_user", "email_password", "email_secure", "email_enabled", "email_verify_enabled", "verify_base_url", "reply_template", "notification_template"},
-		"security": {"allow_origin", "admin_comment_key", "admin_comment_key_enabled", "ip_blacklist", "email_blacklist", "comment_verify_enabled", "comment_verify_difficulty", "trust_proxy"},
+		"security": {"allow_origin", "admin_comment_key", "admin_comment_key_enabled", "ip_blacklist", "email_blacklist", "comment_verify_enabled", "comment_verify_difficulty", "comment_verify_instr_enabled", "comment_verify_block_automated", "trust_proxy"},
 		"account":  {"admin_name"},
 	}
 
@@ -800,21 +800,23 @@ func (h *CommentHandler) ExportSettings(c *gin.Context) {
 		"admin_comment_key": true,
 		"allow_origin":      true, "email_enabled": true,
 		"reply_template": true, "notification_template": true,
-	"ip_blacklist":          true,
-	"email_blacklist":       true,
-	"blogger_badge_enabled": true,
-	"blogger_badge_text":    true,
-	"placeholder_name":      true,
-	"placeholder_email":     true,
-	"placeholder_content":   true,
-	"placeholder_url":       true,
-	"email_verify_enabled":  true,
-	"verify_base_url":       true,
-	"comment_auto_approve":  true,
-	"admin_comment_key_enabled": true,
-	"comment_verify_enabled":    true,
-	"comment_verify_difficulty": true,
-	"trust_proxy":               true,
+		"ip_blacklist":                   true,
+		"email_blacklist":                true,
+		"blogger_badge_enabled":          true,
+		"blogger_badge_text":             true,
+		"placeholder_name":               true,
+		"placeholder_email":              true,
+		"placeholder_content":            true,
+		"placeholder_url":                true,
+		"email_verify_enabled":           true,
+		"verify_base_url":                true,
+		"comment_auto_approve":           true,
+		"admin_comment_key_enabled":      true,
+		"comment_verify_enabled":         true,
+		"comment_verify_difficulty":      true,
+		"comment_verify_instr_enabled":   true,
+		"comment_verify_block_automated": true,
+		"trust_proxy":                    true,
 	}
 	for key := range allowList {
 		if val, ok := all[key]; ok {
@@ -908,15 +910,15 @@ func (h *CommentHandler) ExportComments(c *gin.Context) {
 func (h *CommentHandler) ImportComments(c *gin.Context) {
 	var body struct {
 		Comments []struct {
-			PostSlug    string  `json:"postSlug"`
-			Author      string  `json:"author"`
-			Email       string  `json:"email"`
-			URL         *string `json:"url"`
-			IPAddress   *string `json:"ipAddress"`
-			OS          *string `json:"os"`
-			Browser     *string `json:"browser"`
-			ContentText string  `json:"contentText"`
-			ContentHtml string  `json:"contentHtml"`
+			PostSlug    string          `json:"postSlug"`
+			Author      string          `json:"author"`
+			Email       string          `json:"email"`
+			URL         *string         `json:"url"`
+			IPAddress   *string         `json:"ipAddress"`
+			OS          *string         `json:"os"`
+			Browser     *string         `json:"browser"`
+			ContentText string          `json:"contentText"`
+			ContentHtml string          `json:"contentHtml"`
 			ParentID    *int64          `json:"parentId"`
 			Status      string          `json:"status"`
 			PubDate     json.RawMessage `json:"pubDate"`
@@ -1008,23 +1010,25 @@ func (h *CommentHandler) ImportSettings(c *gin.Context) {
 	allowList := map[string]bool{
 		"site_name": true, "admin_email": true, "admin_name": true,
 		"smtp_host": true, "smtp_port": true, "email_user": true, "email_password": true, "email_secure": true,
-		"admin_comment_key": true,
-		"ip_blacklist":          true,
-		"email_blacklist":       true,
-		"blogger_badge_enabled": true,
-		"blogger_badge_text":    true,
-		"placeholder_name":      true,
-		"placeholder_email":     true,
-		"placeholder_content":   true,
-		"placeholder_url":       true,
-		"email_verify_enabled":  true,
-		"verify_base_url":       true,
-		"comment_auto_approve":  true,
-		"admin_comment_key_enabled":  true,
-		"comment_verify_enabled":     true,
-		"comment_verify_difficulty":  true,
-		"trust_proxy":                true,
-		"allow_origin":               true, "email_enabled": true,
+		"admin_comment_key":              true,
+		"ip_blacklist":                   true,
+		"email_blacklist":                true,
+		"blogger_badge_enabled":          true,
+		"blogger_badge_text":             true,
+		"placeholder_name":               true,
+		"placeholder_email":              true,
+		"placeholder_content":            true,
+		"placeholder_url":                true,
+		"email_verify_enabled":           true,
+		"verify_base_url":                true,
+		"comment_auto_approve":           true,
+		"admin_comment_key_enabled":      true,
+		"comment_verify_enabled":         true,
+		"comment_verify_difficulty":      true,
+		"comment_verify_instr_enabled":   true,
+		"comment_verify_block_automated": true,
+		"trust_proxy":                    true,
+		"allow_origin":                   true, "email_enabled": true,
 		"reply_template": true, "notification_template": true,
 	}
 

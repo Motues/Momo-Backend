@@ -50,6 +50,7 @@ type commentsPayload struct {
 		AdminEmailHash            string `json:"admin_email_hash"`
 		VerifyEnabled             string `json:"verify_enabled"`
 		VerifyHoneypot            string `json:"verify_honeypot"`
+		VerifyVersion             string `json:"verify_version"`
 	} `json:"data"`
 }
 
@@ -946,7 +947,7 @@ func TestGetCommentsAdminCommentKeyMetadata(t *testing.T) {
 		}
 	})
 
-	t.Run("开启人机验证时下发蜜罐字段名", func(t *testing.T) {
+	t.Run("开启人机验证时下发蜜罐字段名与协议版本", func(t *testing.T) {
 		setSetting(t, "comment_verify_enabled", "true")
 		w := callJSON(t, "GET", "/api/comments?post_slug=/p", "")
 		requireStatus(t, w, 200)
@@ -958,6 +959,10 @@ func TestGetCommentsAdminCommentKeyMetadata(t *testing.T) {
 		}
 		if !strings.HasPrefix(payload.Data.VerifyHoneypot, "v_") || len(payload.Data.VerifyHoneypot) != 12 {
 			t.Errorf("verify_honeypot 应形如 v_ + 10 位十六进制，实际 %q", payload.Data.VerifyHoneypot)
+		}
+		// 协议 v2：前端靠 verify_version 判断前后端是否配套
+		if payload.Data.VerifyVersion != "2" {
+			t.Errorf("verify_version 期望 \"2\"，实际 %q", payload.Data.VerifyVersion)
 		}
 	})
 }
@@ -1082,35 +1087,58 @@ func TestBuildCommentTreeCycleDoesNotHang(t *testing.T) {
 	}
 }
 
-func TestClampSlug(t *testing.T) {
+func TestSanitizePostSlug(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		input string
 		want  string
 	}{
 		{"普通 slug", "/posts/hello", "/posts/hello"},
-		{"去除首尾空白", "  /posts/hello  ", "/posts/hello"},
 		{"空串", "", ""},
-		{"恰好 200 字节", strings.Repeat("a", 200), strings.Repeat("a", 200)},
-		{"201 字节被截断到 200", strings.Repeat("a", 201), strings.Repeat("a", 200)},
+		{"恰好 200 码点", strings.Repeat("a", 200), strings.Repeat("a", 200)},
+		{"201 码点被截断到 200", strings.Repeat("a", 201), strings.Repeat("a", 200)},
 		{"远超长度被截断", strings.Repeat("a", 1000), strings.Repeat("a", 200)},
+		{"恰好 200 个中文（600 字节）不截断", strings.Repeat("中", 200), strings.Repeat("中", 200)},
+		{"201 个中文截到 200 个码点", strings.Repeat("中", 201), strings.Repeat("中", 200)},
+		// 与 Node/Worker 的 checkContent 一致：只做清洗 + 截断，不做 trim
+		{"首尾空白原样保留（Node 也不 trim）", "  /posts/hello  ", "  /posts/hello  "},
+		// XSS 清洗与评论的其他纯文本字段共用同一套规则
+		{"移除 script 块", "/posts/<script>alert(1)</script>a", "/posts/a"},
+		{"移除事件处理器属性", `/p onclick="x"`, "/p"},
+		{"移除危险标签", "<iframe src=x></iframe>/p", "/p"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := clampSlug(tc.input); got != tc.want {
-				t.Errorf("clampSlug 期望长度 %d 的字符串，实际长度 %d", len(tc.want), len(got))
+			if got := sanitizePostSlug(tc.input); got != tc.want {
+				t.Errorf("sanitizePostSlug(%q) 期望 %q，实际 %q", tc.input, tc.want, got)
 			}
 		})
 	}
 
-	// 记录当前行为：clampSlug 按字节截断，会切断多字节字符（100 个汉字 = 300 字节，
-	// 截到 200 字节时第 67 个汉字只剩 2 个字节），产生非法 UTF-8。
-	t.Run("多字节字符被按字节截断", func(t *testing.T) {
-		got := clampSlug(strings.Repeat("汉", 100))
-		if len(got) != 200 {
-			t.Errorf("截断后长度应为 200 字节，实际 %d", len(got))
+	// 按 **Unicode 码点** 截断（不是字节、也不是 UTF-16 码元）：
+	// 多字节字符与补充平面字符都不会被从中间切断，结果始终是合法 UTF-8，
+	// 这样才能与 Node/Worker 得到逐字节一致的结果。
+	t.Run("多字节字符按码点截断，结果始终是合法 UTF-8", func(t *testing.T) {
+		got := sanitizePostSlug(strings.Repeat("汉", 100))
+		if utf8.RuneCountInString(got) != 100 {
+			t.Errorf("100 个汉字都在上限内，不应被截断，实际码点数 %d", utf8.RuneCountInString(got))
 		}
-		if utf8.ValidString(got) {
-			t.Errorf("当前实现按字节截断多字节字符，截断结果应为非法 UTF-8（记录该行为）")
+		if !utf8.ValidString(got) {
+			t.Errorf("截断结果必须是合法 UTF-8，实际 %q", got)
+		}
+		if len(got) != 300 {
+			t.Errorf("100 个汉字应为 300 字节，实际 %d", len(got))
+		}
+
+		// 超过上限时按码点切，字节数不是判据
+		truncated := sanitizePostSlug(strings.Repeat("汉", 250))
+		if utf8.RuneCountInString(truncated) != 200 {
+			t.Errorf("应截到 200 个码点，实际 %d", utf8.RuneCountInString(truncated))
+		}
+		if !utf8.ValidString(truncated) {
+			t.Errorf("按码点截断后必须是合法 UTF-8，实际 %q", truncated)
+		}
+		if len(truncated) != 600 {
+			t.Errorf("200 个汉字应为 600 字节，实际 %d", len(truncated))
 		}
 	})
 }

@@ -51,7 +51,7 @@ func (h *CommentHandler) PostComment(c *gin.Context) {
 	if utf8.RuneCountInString(req.Content) > MaxContentLen ||
 		utf8.RuneCountInString(req.Author) > MaxAuthorLen ||
 		len(req.Email) > MaxEmailLen ||
-		len(req.PostSlug) > MaxPostSlugLen ||
+		utf8.RuneCountInString(req.PostSlug) > MaxPostSlugLen ||
 		len(req.URL) > MaxURLLen {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code": 400,
@@ -133,7 +133,14 @@ func (h *CommentHandler) PostComment(c *gin.Context) {
 
 	// 无感验证票据校验（管理员密钥已通过的博主不受影响）
 	if !isAdminVerified && utils.IsVerifyEnabled() {
-		if !utils.VerifyTicket(req.VerifyTicket, clientIP, req.PostSlug) {
+		// 票据里的 slug 是**净化后**的值（见 verify.go 里签发票据时传入的 sanitizePostSlug），
+		// 所以这里必须用同一套净化规则处理后才能比对 —— 否则只要文章标识里含有
+		// CheckContent 会改写的片段（例如 <script>…</script>），签出的票据就永远兑不掉，
+		// 真人会持续收到假 VERIFY_REQUIRED。
+		//
+		// 注意只对「票据比对」用净化值：评论落库仍用原始 req.PostSlug，
+		// 因为读取端是按原始 slug 查询的，改动存储口径会让评论查不出来。
+		if !utils.VerifyTicket(req.VerifyTicket, clientIP, sanitizePostSlug(req.PostSlug)) {
 			c.JSON(http.StatusForbidden, gin.H{
 				"code":    403,
 				"message": "Human verification failed or expired",
@@ -338,8 +345,8 @@ func (h *CommentHandler) GetComments(c *gin.Context) {
 		adminEmailHash = fmt.Sprintf("%x", sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(adminEmail)))))
 	}
 
-	// 无感验证公开配置（开关 + 按文章派生的蜜罐字段名）
-	verifyEnabled, verifyHoneypot := utils.GetPublicVerifyConfig(slug)
+	// 无感验证公开配置（开关 + 按文章派生的蜜罐字段名 + 协议版本）
+	verifyEnabled, verifyHoneypot, verifyVersion := utils.GetPublicVerifyConfig(slug)
 
 	// 1. 从 Repo 获取所有已审核评论 (status = 'approved')
 	allComments, err := h.Repo.GetByPostSlug(c.Request.Context(), slug)
@@ -406,6 +413,7 @@ func (h *CommentHandler) GetComments(c *gin.Context) {
 			"admin_email_hash":             adminEmailHash,
 			"verify_enabled":               verifyEnabled,
 			"verify_honeypot":              verifyHoneypot,
+			"verify_version":               verifyVersion,
 		},
 	})
 }

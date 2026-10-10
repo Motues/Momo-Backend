@@ -24,7 +24,8 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const Version = "1.5.0"
+// Version 与其余端保持一致；1.5.1 起人机验证升级到协议 v2（破坏性变更，详见 doc/update.md）
+const Version = "1.5.1"
 
 func main() {
 

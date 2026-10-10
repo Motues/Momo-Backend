@@ -1,7 +1,7 @@
 import type { Context } from "hono";
 import { getClientIP } from "../../utils/ip";
-import { createChallenge, isVerifyEnabled } from "../../utils/verify";
-import { checkContent } from "../../utils/security";
+import { createChallenge, isVerifyEnabled, VERIFY_PROTOCOL_VERSION } from "../../utils/verify";
+import { sanitizePostSlug } from "../../utils/security";
 import LogService from "../../utils/log";
 
 /**
@@ -9,13 +9,17 @@ import LogService from "../../utils/log";
  *
  * 请求体: { post_slug?: string }
  * 关闭验证时返回 enabled: false，前端据此不渲染验证框。
+ *
+ * 协议 v2：data.pow 为 HashWX 挑战参数（c/d/n/count）。
+ * v1 客户端读不到 v1 的 difficulty 字段，会在提交答案时收到 PROTOCOL_OUTDATED，
+ * 因此响应里同时给出 version，便于未来前端做前后端配套判断。
  */
 export default async (c: Context): Promise<Response> => {
   try {
     let postSlug = "";
     try {
       const data = await c.req.json();
-      postSlug = checkContent(String(data?.post_slug || "")).slice(0, 200);
+      postSlug = sanitizePostSlug(data?.post_slug);
     } catch {
       // 无请求体也允许，仅用于探测开关状态
     }
@@ -24,18 +28,21 @@ export default async (c: Context): Promise<Response> => {
       return c.json({
         code: 200,
         message: "Verification disabled",
-        data: { enabled: false },
+        data: { enabled: false, version: VERIFY_PROTOCOL_VERSION },
       });
     }
 
     const ip = getClientIP(c);
-    const challenge = await createChallenge(ip);
+    // post_slug 必须传进挑战：它会被签进载荷，从而把这份挑战绑定到该文章，
+    // 避免一次工作量证明被拿去兑换任意文章的票据。
+    const challenge = await createChallenge(ip, postSlug);
 
     return c.json({
       code: 200,
       message: "Challenge issued",
       data: {
         enabled: true,
+        version: VERIFY_PROTOCOL_VERSION,
         post_slug: postSlug,
         ...challenge,
       },

@@ -664,16 +664,33 @@ describe('Comments —— 人机验证（SilentVerify 集成）', () => {
 		const alertSpy = stubAlert();
 		const fetch = fetchMock(async (url, init) => {
 			if (url.includes('/api/verify/challenge')) {
-				return jsonResponse({ data: { enabled: true, prefix: 'pfx', sig: 'sig', difficulty: 1 } });
+				// 协议 v2：挑战参数在 data.pow 里。d=1 时 target 为 u64 上界，
+				// nonce=0 必然满足，因此这里能在不真正挖矿的前提下走通完整解题链路。
+				return jsonResponse({
+					data: {
+						enabled: true,
+						version: 2,
+						prefix: 'pfx',
+						sig: 'sig',
+						pow: { algo: 'hashwx', c: '00'.repeat(32), d: 1, n: 65536, count: 1 },
+					},
+				});
 			}
 			if (url.includes('/api/verify/solution')) return jsonResponse({ data: { ticket: 'TICKET-1' } });
 			if (init?.method === 'POST') return jsonResponse({ code: 200, message: 'ok' });
 			return jsonResponse(listBody([], { verify_enabled: 'true' }));
 		});
 		const { container } = renderComments();
-		// SilentVerify 会在提交解之前等待 320ms 的「人类耗时」阈值
 		await waitFor(() => expect(fetch.calls.some((c) => c.url.includes('/api/verify/solution'))), { timeout: 3000 });
 		await waitFor(() => expect(container.textContent).toContain('验证成功'), { timeout: 3000 });
+
+		// 提交体必须是 v2 的 nonces 数组
+		const solution = fetch.calls.find((c) => c.url.includes('/api/verify/solution'));
+		const solutionBody = JSON.parse(solution.init.body);
+		expect(Array.isArray(solutionBody.nonces)).toBe(true);
+		expect(solutionBody.nonces).toHaveLength(1);
+		expect(solutionBody.nonce).toBeUndefined();
+
 		// 有票据后，填了内容的发送按钮才应可用
 		await fireEvent.input(mainTextarea(container), { target: { value: '内容' } });
 		expect(sendButton(container).disabled).toBe(false);

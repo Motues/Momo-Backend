@@ -206,6 +206,13 @@ func TestIsTokenValidRejectsBadTokens(t *testing.T) {
 
 	valid := GenerateTempKey("momo")
 
+	// 「被篡改」必须真的改掉首字符：若合法 token 恰好以 f 开头，直接前置 f 会得到
+	// 与原文完全相同的串（约 1/16 的概率），让这个用例随机失败。
+	tampered := "f" + valid[1:]
+	if tampered == valid {
+		tampered = "0" + valid[1:]
+	}
+
 	for _, tc := range []struct {
 		name  string
 		token string
@@ -215,7 +222,7 @@ func TestIsTokenValidRejectsBadTokens(t *testing.T) {
 		{"随机串", "deadbeefdeadbeef"},
 		{"被追加字符的合法 token", valid + "0"},
 		{"被截断的合法 token", valid[:len(valid)-1]},
-		{"被篡改的合法 token", "f" + valid[1:]},
+		{"被篡改的合法 token", tampered},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if IsTokenValid(tc.token) {

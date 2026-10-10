@@ -36,6 +36,64 @@ export function checkContent(content: string): string {
         .replace(/<\/?(?:iframe|object|embed|frame|meta|link|base|form|input)\b[^>]*>/gi, '');
 }
 
+/** 文章标识（post_slug）的最大长度，单位是 **Unicode 码点** */
+export const MAX_POST_SLUG = 200;
+
+/**
+ * 统计 Unicode 码点数（不是 UTF-16 码元数、也不是字节数）。
+ *
+ * 逐字符扫描而不构造数组：超长输入时不会为了「数长度」先分配一个大数组。
+ * 成对的代理项算一个码点；孤立代理项也算一个（保留而不丢弃，见 truncateCodePoints）。
+ */
+export function countCodePoints(value: string): number {
+    let count = 0;
+    for (let i = 0; i < value.length; i++) {
+        const code = value.charCodeAt(i);
+        if (code >= 0xd800 && code <= 0xdbff && i + 1 < value.length) {
+            const next = value.charCodeAt(i + 1);
+            if (next >= 0xdc00 && next <= 0xdfff) i++;
+        }
+        count++;
+    }
+    return count;
+}
+
+/**
+ * 按 Unicode 码点截断。
+ *
+ * 为什么不用 `String.prototype.slice`：它按 UTF-16 码元切，正好切在代理对中间时会留下
+ * 一个孤立代理项——那串字符经 JSON 传输后在 Go 侧会变成 U+FFFD，三端口径就对不上了。
+ * 按码点截断既能保证不切坏字符，也能让 Go（按 rune）与 JS 得到完全一样的结果。
+ */
+export function truncateCodePoints(value: string, max: number): string {
+    if (max <= 0) return '';
+    let count = 0;
+    let end = 0;
+    for (let i = 0; i < value.length; ) {
+        const code = value.charCodeAt(i);
+        let size = 1;
+        if (code >= 0xd800 && code <= 0xdbff && i + 1 < value.length) {
+            const next = value.charCodeAt(i + 1);
+            if (next >= 0xdc00 && next <= 0xdfff) size = 2;
+        }
+        count++;
+        if (count > max) break;
+        i += size;
+        end = i;
+    }
+    return value.slice(0, end);
+}
+
+/**
+ * 文章标识的净化 + 截断（三端口径必须完全一致）。
+ *
+ * 挑战载荷里签的就是这个值，签发端与校验端只要有一处口径不同，就会出现
+ * 「合法访客被假拒绝」。Go 与 Worker 有同名同语义的实现。
+ */
+export function sanitizePostSlug(raw: unknown): string {
+    return truncateCodePoints(checkContent(String(raw ?? '')), MAX_POST_SLUG);
+}
+
 /**
  * 协议白名单校验（比黑名单正则可靠）。
  *

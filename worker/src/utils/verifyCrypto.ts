@@ -11,7 +11,9 @@
  * - IP 哈希：hex(SHA256("ip:" + secret + ":" + ip)) 取前 16 位
  * - 蜜罐字段名："v_" + hex(SHA256("hp:" + secret + ":" + slug)) 取前 10 位
  * - 签名：base64url(HMAC-SHA256(data, secret))
- * - 解题：SHA256(`${prefix}:${nonce}`) 的前导 0 比特数 >= difficulty
+ *
+ * 协议 v2 的第一层工作量证明（HashWX）不在本文件里：它需要 WASM，见 ./hashwx.ts。
+ * v1 的「SHA256(prefix:nonce) 前导 0 比特数」已随协议 v2 一起移除。
  */
 
 const encoder = new TextEncoder();
@@ -84,24 +86,4 @@ export async function hashVerifyIp(ip: string, secret: string): Promise<string> 
 /** 按文章派生的蜜罐字段名 */
 export async function honeypotFieldName(postSlug: string, secret: string): Promise<string> {
   return `v_${(await sha256Hex(`hp:${secret}:${postSlug}`)).slice(0, 10)}`;
-}
-
-/** 统计前导 0 比特数 */
-export function leadingZeroBits(bytes: Uint8Array): number {
-  let bits = 0;
-  for (let i = 0; i < bytes.length; i++) {
-    const byte = bytes[i];
-    if (byte === 0) {
-      bits += 8;
-      continue;
-    }
-    bits += Math.clz32(byte) - 24;
-    break;
-  }
-  return bits;
-}
-
-/** 计算某 nonce 的解题成果（前导 0 比特数） */
-export async function workFor(prefix: string, nonce: number): Promise<number> {
-  return leadingZeroBits(await sha256Bytes(`${prefix}:${nonce}`));
 }

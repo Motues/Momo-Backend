@@ -1,0 +1,22 @@
+// 临时配置（端到端验证完即删）：启用本地 D1 / KV 绑定，让 `wrangler dev` 能真正跑起来，
+// 从而验证生产代码里静态导入的 hashwx.wasm（vitest-pool-workers 覆盖不到这一段）。
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "momo-backend-worker-e2e",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-01-03",
+	"compatibility_flags": ["nodejs_compat"],
+	"d1_databases": [
+		{
+			"binding": "MOMO_DB",
+			"database_name": "MOMO_DB",
+			"database_id": "local-e2e-momo-db"
+		}
+	],
+	"kv_namespaces": [
+		{
+			"binding": "MOMO_AUTH_KV",
+			"id": "local-e2e-momo-kv"
+		}
+	]
+}

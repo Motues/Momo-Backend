@@ -116,6 +116,7 @@ export const getComments = async (c: Context<{ Bindings: Bindings }>) => {
           admin_email_hash: adminEmailHash,
           verify_enabled: verifyConfig.verify_enabled,
           verify_honeypot: verifyConfig.verify_honeypot,
+          verify_version: verifyConfig.verify_version,
         }
       })
     } else {
@@ -141,6 +142,7 @@ export const getComments = async (c: Context<{ Bindings: Bindings }>) => {
           admin_email_hash: adminEmailHash,
           verify_enabled: verifyConfig.verify_enabled,
           verify_honeypot: verifyConfig.verify_honeypot,
+          verify_version: verifyConfig.verify_version,
         }
       })
     }

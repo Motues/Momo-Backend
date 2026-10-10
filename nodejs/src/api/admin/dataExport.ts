@@ -54,6 +54,8 @@ export async function exportSettings(c: Context): Promise<Response> {
     verify_base_url: true,
     comment_verify_enabled: true,
     comment_verify_difficulty: true,
+    comment_verify_instr_enabled: true,
+    comment_verify_block_automated: true,
     trust_proxy: true,
   };
 

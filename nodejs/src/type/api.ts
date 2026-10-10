@@ -32,6 +32,7 @@ interface CommentsResponse {
     admin_email_hash?: string;
     verify_enabled?: string;
     verify_honeypot?: string;
+    verify_version?: string;
   }
 }
 
@@ -62,6 +63,7 @@ interface NestedCommentsResponse {
     admin_email_hash?: string;
     verify_enabled?: string;
     verify_honeypot?: string;
+    verify_version?: string;
   }
 }
 

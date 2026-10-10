@@ -30,6 +30,8 @@ export const exportSettings = async (c: Context<{ Bindings: Bindings }>) => {
     "verify_base_url",
     "comment_verify_enabled",
     "comment_verify_difficulty",
+    "comment_verify_instr_enabled",
+    "comment_verify_block_automated",
     "trust_proxy",
   ]);
 

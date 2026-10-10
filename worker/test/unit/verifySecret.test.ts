@@ -31,10 +31,12 @@ describe('签名密钥的首次生成', () => {
 		await seedSettings({ comment_verify_secret: 'f'.repeat(64), comment_verify_enabled: 'true' });
 
 		const { createChallenge } = await import('../../src/utils/verify?case=reuse');
-		const challenge = await createChallenge(testEnv, '1.2.3.4');
+		const challenge = await createChallenge(testEnv, '1.2.3.4', SLUG);
 		expect(challenge.sig).toBe(await hmacSHA256(challenge.prefix, 'f'.repeat(64)));
 
 		const payload = JSON.parse(new TextDecoder().decode(fromBase64url(challenge.prefix)));
+		expect(payload.v).toBe(2);
+		expect(payload.slug).toBe(SLUG);
 		expect(payload.iph).toMatch(/^[0-9a-f]{16}$/);
 		// 密钥没有被覆盖
 		expect(await rawSetting('comment_verify_secret')).toBe('f'.repeat(64));
@@ -45,7 +47,7 @@ describe('签名密钥的首次生成', () => {
 		await seedSettings({ comment_verify_secret: '' });
 
 		const { createChallenge } = await import('../../src/utils/verify?case=empty-secret');
-		await createChallenge(testEnv, '1.2.3.4');
+		await createChallenge(testEnv, '1.2.3.4', SLUG);
 
 		const persisted = await rawSetting('comment_verify_secret');
 		expect(persisted).toMatch(/^[0-9a-f]{64}$/);
@@ -65,12 +67,14 @@ describe('签名密钥的首次生成', () => {
 		await seedSettings({ comment_verify_difficulty: '8' });
 
 		const { createChallenge } = await import('../../src/utils/verify?case=no-persist');
-		const challenge = await createChallenge(testEnv, '1.2.3.4');
+		const challenge = await createChallenge(testEnv, '1.2.3.4', SLUG);
 
 		// 密钥写不进去，但挑战照常签发
 		expect(challenge.expires_in).toBe(600);
-		expect(challenge.difficulty).toBe(8);
+		// v1 旧值 8 按 2^8=256 迁移到 1000（下限），再按 count=4 均分 => d = 250
+		expect(challenge.pow.d).toBe(250);
 		const payload = JSON.parse(new TextDecoder().decode(fromBase64url(challenge.prefix)));
+		expect(payload.v).toBe(2);
 		expect(payload.iph).toMatch(/^[0-9a-f]{16}$/);
 		expect(await rawSettings()).toEqual({ comment_verify_difficulty: '8' });
 	});

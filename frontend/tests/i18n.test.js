@@ -55,6 +55,8 @@ const CONTRACT_KEYS = [
 	'verifySuccess',
 	'verifyFailed',
 	'verifyRetry',
+	'verifyUnsupported',
+	'verifyBackendOutdated',
 	'adminKey',
 	'adminKeyPlaceholder',
 ];

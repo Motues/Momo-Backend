@@ -241,3 +241,56 @@ export const MAX_AUTHOR = 100;
 export const MAX_EMAIL = 254;
 export const MAX_URL = 500;
 export const MAX_POST_SLUG = 200;
+
+/**
+ * 挑战 / 票据绑定的文章名净化口径（与 Node 的 `sanitizePostSlug` 完全一致）。
+ *
+ * 挑战签发（verifyChallenge）、答案校验（verifySolution）与提交评论时的票据校验
+ * **必须调用同一个函数**：若任何一处净化规则有差异，同一篇文章会得到两个不同的 slug，
+ * 表现为「明明是同一篇文章却 slug mismatch」或「签出的票据永远兑不掉」的假拒绝。
+ */
+export function sanitizePostSlug(raw: unknown): string {
+  return truncateCodePoints(checkContent(String(raw ?? "")), MAX_POST_SLUG);
+}
+
+/**
+ * 统计 Unicode 码点数（不是 UTF-16 码元数、也不是字节数）。
+ * 逐字符扫描而不构造数组，避免为「数长度」先分配大数组。
+ */
+export function countCodePoints(value: string): number {
+  let count = 0;
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff && i + 1 < value.length) {
+      const next = value.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) i++;
+    }
+    count++;
+  }
+  return count;
+}
+
+/**
+ * 按 Unicode 码点截断（三端必须一致）。
+ *
+ * 不用 `String.prototype.slice`：它按 UTF-16 码元切，正好切在代理对中间时会留下孤立代理项，
+ * 那串字符经 JSON 传输到 Go 会变成 U+FFFD，三端口径就对不上了。
+ */
+export function truncateCodePoints(value: string, max: number): string {
+  if (max <= 0) return '';
+  let count = 0;
+  let end = 0;
+  for (let i = 0; i < value.length; ) {
+    const code = value.charCodeAt(i);
+    let size = 1;
+    if (code >= 0xd800 && code <= 0xdbff && i + 1 < value.length) {
+      const next = value.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) size = 2;
+    }
+    count++;
+    if (count > max) break;
+    i += size;
+    end = i;
+  }
+  return value.slice(0, end);
+}

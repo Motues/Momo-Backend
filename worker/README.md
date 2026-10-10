@@ -287,3 +287,29 @@ cd ../worker
 ```bash
 pnpm run dev
 ```
+
+## 本地端到端验证（人机验证的 `.wasm` 路径）
+
+`pnpm test`（vitest-pool-workers）**覆盖不到真实 `.wasm` 路径**：workerd 禁止运行时编译 WASM，
+且测试池在本地无法解析 `.wasm` 模块，所以测试里用纯 JS 替身替换了哈希原语。
+改动第一层（HashWX）相关代码后，请用下面的步骤在真实运行时验证一遍。
+
+```bash
+cd worker
+
+# 1. 用本地 D1 建表（迁移只做 ALTER，不会建表）
+npx wrangler d1 execute MOMO_DB --local --file=./schemas/comment.sql --config=wrangler.e2e.jsonc
+
+# 2. 启动本地服务（另开一个终端）
+npx wrangler dev --config=wrangler.e2e.jsonc --port=8799 --ip=127.0.0.1
+
+# 3. 跑端到端脚本（会在真实 workerd 里走完
+#    「签发挑战 → 用同一份 hashwx.wasm 解题 → 兑换票据 → 提交评论」，
+#    并顺带断言挑战确实绑定到文章）
+node scripts/e2e-wrangler-dev.cjs
+```
+
+- `wrangler.e2e.jsonc` 是**仅供本地验证**的配置，用的是占位 database_id / KV id（`--local` 模式下可用），
+  不要用它部署。
+- 脚本依赖 `nodejs/dist/utils/hashwx.js`（Node 侧构建产物），首次运行前先在 `nodejs/` 执行 `pnpm build`。
+- 该脚本除了验证 WASM 路径，还会断言「为文章 A 签发的挑战用文章 B 兑换必须被拒（`slug mismatch`）」。

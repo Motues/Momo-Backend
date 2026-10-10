@@ -57,12 +57,28 @@ func clearSettingsTable() {
 	_, _ = settingsDB.Exec("DELETE FROM Settings")
 }
 
-// resetSettings 在用例开始前清空 Settings 表，并在用例结束后再次清空，
-// 避免某个用例写入的配置（如 trust_proxy、comment_verify_enabled）影响其他用例。
+// clearUsedChallenges 清空进程级防重放表。
+//
+// usedChallenges 是内存状态，不会被 clearSettingsTable 重置；用例重复运行
+// （-count=2）或同一进程内复用固定 challenge id 时，若不清理就会看到上一个
+// 用例留下的「挑战已使用」，让断言变成假失败。
+func clearUsedChallenges() {
+	usedChallengesMu.Lock()
+	usedChallenges = make(map[string]int64)
+	usedChallengesMu.Unlock()
+}
+
+// resetSettings 在用例开始前清空 Settings 表与防重放表，并在用例结束后再次清空，
+// 避免某个用例写入的配置（如 trust_proxy、comment_verify_enabled）或已兑换的挑战
+// 影响其他用例。
 func resetSettings(t *testing.T) {
 	t.Helper()
 	clearSettingsTable()
-	t.Cleanup(clearSettingsTable)
+	clearUsedChallenges()
+	t.Cleanup(func() {
+		clearSettingsTable()
+		clearUsedChallenges()
+	})
 }
 
 // setSetting 写入一条设置，失败直接终止用例

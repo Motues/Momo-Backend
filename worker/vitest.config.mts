@@ -34,8 +34,13 @@ export default defineWorkersConfig({
 			nodemailer: fileURLToPath(new URL('./test/stubs/nodemailer.ts', import.meta.url)),
 		},
 	},
+	// 生产代码里的 hashwx.ts 静态导入 ../../vendor/hashwx/hashwx.wasm（wrangler 的 CompiledWasm 规则）。
+	// vitest-pool-workers 在本地无法加载 .wasm 模块（相对 specifier 会被解析到 vite-node 包目录下，
+	// 报 ".../vite-node/vendor/hashwx.wasm?mf_vitest_force=CompiledWasm"），
+	// 因此测试用 vi.mock 整体替换 hashwx 模块，见 test/helpers/hashwxMock.ts。
 	test: {
 		include: ['test/**/*.test.ts'],
+		setupFiles: ['./test/helpers/hashwxMock.ts'],
 		poolOptions: {
 			workers: {
 				wrangler: { configPath: './wrangler.jsonc' },

@@ -1,0 +1,337 @@
+import hashwxModule from "../../vendor/hashwx/hashwx.wasm";
+import { toHex } from "./verifyCrypto";
+
+/**
+ * HashWX 工作量证明（第一层验证）— Cloudflare Worker 实现
+ *
+ * 算法来自 tevador/hashwx v1.0.0（LGPL-3.0，详见 vendor/hashwx/README.md）。
+ * 与本项目自有的 SHA-256 PoW 相比，HashWX 每个挑战都从一个种子生成**一次性函数**，
+ * 函数内部包含大量分支与 16KB 未对齐 scratchpad 访问，GPU 相对 CPU 的吞吐优势
+ * 从 SHA-256 的约 150 倍降到约 2 倍。
+ *
+ * 协议口径（三端与前端必须逐字节一致，见 doc/api.md）：
+ *   target = U64_MAX / d
+ *   seed(i, block) = SHA256(C(32字节) ‖ u8le(i) ‖ u64le(block))
+ *   找到 nonce 使 hash(seed(i, nonce / n), nonce) <= target
+ *   block 为 nonce / n 的整数除法（n 为每个函数覆盖的 nonce 数）
+ *
+ * 与 Cap 的差异（有意为之，不影响安全性）：
+ *   Cap 为每个子挑战签发独立的随机 C；这里只签发一个 C，第 i 个子挑战由
+ *   u8le(i) 参与派生。这样单个签名载荷就能覆盖全部子挑战，且派生规则更易跨语言对齐。
+ *
+ * 与 Node 实现（nodejs/src/utils/hashwx.ts）的唯一差别是 WASM 的装载方式与
+ * SHA-256 的调用方式，派生公式、取值范围与校验顺序完全一致：
+ *
+ * 1. **装载**：workerd 禁止运行时编译 WASM（`new WebAssembly.Module(bytes)` 会抛
+ *    `CompileError: Wasm code generation disallowed by embedder`），因此这里改为
+ *    静态导入 `../../vendor/hashwx/hashwx.wasm` —— wrangler 按 CompiledWasm 规则在构建期
+ *    编译好，运行时只需 `new WebAssembly.Instance(module)`。
+ * 2. **摘要**：workerd 只有异步的 WebCrypto，没有 `node:crypto` 的同步 createHash，
+ *    所以 `hashwxBlockSeed` 是 async 的。为了让 verify.ts 的「防重放 + 工作量校验 + 标记已用」
+ *    仍是一段不出现 await 的同步临界区，校验被拆成两阶段：
+ *    `prepareHashwxVerification`（异步：形状校验 + 种子派生）与
+ *    `checkHashwxEvidence`（同步：只做哈希比较）。`verifyHashwxSolutions` 是两者的组合入口。
+ *
+ * 服务端只用「解释模式」（HASHWX_INTERPRETED）：每次校验只执行一次哈希，
+ * 省掉生成内层模块的 JIT 开销，实测单次校验约 100–150µs。
+ */
+
+// ---------- 常量 ----------
+
+export const HASHWX_SEED_SIZE = 32;
+export const HASHWX_CHALLENGE_SIZE = 32;
+
+/** 每个生成函数覆盖的 nonce 数。浏览器端编译开销大，取值偏大以摊薄（与上游建议一致） */
+export const HASHWX_DEFAULT_NONCES_PER_HASH = 65536;
+
+/** 总期望哈希次数，按 count 均分到各子挑战 */
+export const HASHWX_DEFAULT_DIFFICULTY = 1_000_000;
+
+/** 子挑战个数。上游建议 4 个：总期望工作量不变，但能显著压平解题耗时的长尾 */
+export const HASHWX_DEFAULT_CHALLENGE_COUNT = 4;
+
+export const HASHWX_MAX_DIFFICULTY = 1_000_000_000;
+export const HASHWX_MAX_NONCES_PER_HASH = 1_048_576;
+export const HASHWX_MAX_CHALLENGE_COUNT = 64;
+
+const U64_MAX = (1n << 64n) - 1n;
+
+// ---------- WASM 装载 ----------
+
+interface HashwxExports {
+  memory: WebAssembly.Memory;
+  _initialize?: () => void;
+  hashwx_alloc: (type: number) => number;
+  hashwx_seed: (ctx: number) => number;
+  hashwx_make: (ctx: number, seedPtr: number) => void;
+  hashwx_exec: (ctx: number, nonce: bigint) => bigint;
+  hashwx_free: (ctx: number) => void;
+}
+
+const HASHWX_INTERPRETED = 0;
+
+interface HashwxHandle {
+  wasm: HashwxExports;
+  ctx: number;
+  seedPtr: number;
+}
+
+let cachedInstance: HashwxHandle | null = null;
+
+/**
+ * 惰性装载 WASM 并分配一个常驻上下文。
+ *
+ * 常驻上下文为什么在 Worker 里也安全：`hashwxHash` 全程同步（写种子 → make → exec），
+ * 中间没有任何 await，因此同一个 isolate 内并发处理的多个请求不可能在临界区里交叉。
+ * 若将来出现跨 await 的用法，必须改成上下文池。
+ */
+function getInstance(): HashwxHandle {
+  if (cachedInstance) return cachedInstance;
+
+  const wasm = new WebAssembly.Instance(hashwxModule, {}).exports as unknown as HashwxExports;
+  if (typeof wasm._initialize === "function") wasm._initialize();
+
+  const ctx = wasm.hashwx_alloc(HASHWX_INTERPRETED);
+  if (ctx <= 0) throw new Error(`hashwx_alloc 失败: ${ctx}`);
+
+  cachedInstance = { wasm, ctx, seedPtr: wasm.hashwx_seed(ctx) };
+  return cachedInstance;
+}
+
+/** 把 32 字节种子写入常驻 seed 缓冲区 */
+function writeSeed(seed: Uint8Array): void {
+  const { wasm, seedPtr } = getInstance();
+  if (seed.length !== HASHWX_SEED_SIZE) throw new Error(`seed 必须为 ${HASHWX_SEED_SIZE} 字节`);
+  new Uint8Array(wasm.memory.buffer, seedPtr, HASHWX_SEED_SIZE).set(seed);
+}
+
+/**
+ * 用一个 32 字节种子生成函数并对单个 nonce 求值。
+ *
+ * 这是最小可用的原语：**每次调用都会重新生成一次函数**（解释模式下生成约 2 万周期，
+ * 与单次哈希同量级）。校验时每个子挑战只调用一次，开销可以忽略；
+ * 但不要把它放进「遍历 nonce」的循环里——那会白白多花约 5 倍机器。
+ * 服务端不需要遍历 nonce，遍历只发生在客户端（见前端 hashwxCore.ts 的 SubChallengeSolver）。
+ */
+export function hashwxHash(seed: Uint8Array, nonce: bigint): bigint {
+  const { wasm, ctx, seedPtr } = getInstance();
+  if (nonce < 0n || nonce > U64_MAX) throw new Error("nonce 超出 u64 范围");
+  writeSeed(seed);
+  wasm.hashwx_make(ctx, seedPtr);
+  return BigInt.asUintN(64, wasm.hashwx_exec(ctx, nonce));
+}
+
+// ---------- 协议计算 ----------
+
+/** 目标阈值：U64_MAX / d */
+export function hashwxTarget(difficulty: number): bigint {
+  if (!Number.isInteger(difficulty) || difficulty < 1 || difficulty > HASHWX_MAX_DIFFICULTY) {
+    throw new Error(`难度必须是 [1, ${HASHWX_MAX_DIFFICULTY}] 内的整数`);
+  }
+  return U64_MAX / BigInt(difficulty);
+}
+
+/**
+ * 第 index 个子挑战、第 block 个哈希函数的种子。
+ * 口径：SHA256(C ‖ u8le(index) ‖ u64le(block))
+ */
+export async function hashwxBlockSeed(
+  challenge: Uint8Array,
+  index: number,
+  block: bigint
+): Promise<Uint8Array> {
+  if (challenge.length !== HASHWX_CHALLENGE_SIZE) {
+    throw new Error(`挑战必须为 ${HASHWX_CHALLENGE_SIZE} 字节`);
+  }
+  if (block < 0n || block > U64_MAX) throw new Error("block 超出 u64 范围");
+
+  const buf = new Uint8Array(HASHWX_CHALLENGE_SIZE + 1 + 8);
+  buf.set(challenge, 0);
+  buf[HASHWX_CHALLENGE_SIZE] = index & 0xff;
+  // u64le：与 Node 的 writeBigUInt64LE 同口径
+  let rest = block;
+  for (let i = 0; i < 8; i++) {
+    buf[HASHWX_CHALLENGE_SIZE + 1 + i] = Number(rest & 0xffn);
+    rest >>= 8n;
+  }
+
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", buf));
+}
+
+export interface HashwxSpec {
+  /** 32 字节挑战，hex 编码下发 */
+  c: string;
+  /** 每个子挑战的期望哈希次数 */
+  d: number;
+  /** 每个生成函数覆盖的 nonce 数 */
+  n: number;
+  /** 子挑战个数 */
+  count: number;
+}
+
+/**
+ * 构造挑战参数。difficulty 为总期望哈希次数，按 count 均分。
+ *
+ * 注意「约」：这里是 `Math.round(total / count)`，且每个子挑战至少为 1，
+ * 因此实际总工作量可能与配置值有偏差（例如 total=1001/count=4 → 实际 1000；
+ * total=1/count=8 → 实际 8）。这不影响安全——校验用的始终是服务端自己派生的同一个
+ * spec——但设置项说明与文档应写成「约 N 次」，不要承诺精确值。
+ *
+ * challenge 省略时随机生成；本项目由服务端从（密钥, 挑战 id）确定性派生后传入，
+ * 这样签名载荷不必携带挑战本身，校验时也能独立重算。
+ */
+export function mintHashwxSpec(
+  options: {
+    challenge?: Uint8Array;
+    difficulty?: number;
+    noncesPerHash?: number;
+    count?: number;
+  } = {}
+): HashwxSpec {
+  const total = options.difficulty ?? HASHWX_DEFAULT_DIFFICULTY;
+  const n = options.noncesPerHash ?? HASHWX_DEFAULT_NONCES_PER_HASH;
+  const count = options.count ?? HASHWX_DEFAULT_CHALLENGE_COUNT;
+
+  let challenge = options.challenge;
+  if (!challenge) {
+    challenge = new Uint8Array(HASHWX_CHALLENGE_SIZE);
+    crypto.getRandomValues(challenge);
+  }
+
+  if (challenge.length !== HASHWX_CHALLENGE_SIZE) {
+    throw new Error(`挑战必须为 ${HASHWX_CHALLENGE_SIZE} 字节`);
+  }
+  if (!Number.isInteger(total) || total < 1 || total > HASHWX_MAX_DIFFICULTY) {
+    throw new Error(`difficulty 必须是 [1, ${HASHWX_MAX_DIFFICULTY}] 内的整数`);
+  }
+  if (!Number.isInteger(n) || n < 1 || n > HASHWX_MAX_NONCES_PER_HASH) {
+    throw new Error(`noncesPerHash 必须是 [1, ${HASHWX_MAX_NONCES_PER_HASH}] 内的整数`);
+  }
+  if (!Number.isInteger(count) || count < 1 || count > HASHWX_MAX_CHALLENGE_COUNT) {
+    throw new Error(`count 必须是 [1, ${HASHWX_MAX_CHALLENGE_COUNT}] 内的整数`);
+  }
+
+  return {
+    c: toHex(challenge),
+    // 与 Cap 一致：把总难度均分到各子挑战，至少为 1
+    d: Math.max(1, Math.round(total / count)),
+    n,
+    count,
+  };
+}
+
+/** 解析下发的 hex 挑战；非法返回 null */
+export function parseHashwxChallenge(hex: unknown): Uint8Array | null {
+  if (typeof hex !== "string" || hex.length !== HASHWX_CHALLENGE_SIZE * 2) return null;
+  if (!/^[0-9a-fA-F]+$/.test(hex)) return null;
+
+  const bytes = new Uint8Array(HASHWX_CHALLENGE_SIZE);
+  for (let i = 0; i < HASHWX_CHALLENGE_SIZE; i++) {
+    bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+/** 把提交上来的 nonce 解析为 u64；接受数字或十进制字符串 */
+export function parseHashwxNonce(value: unknown): bigint | null {
+  if (typeof value === "bigint") return value >= 0n && value <= U64_MAX ? value : null;
+  if (typeof value === "number") {
+    if (!Number.isSafeInteger(value) || value < 0) return null;
+    return BigInt(value);
+  }
+  if (typeof value !== "string") return null;
+  // 20 位以内才可能落在 u64 范围内（u64 max 为 20 位）
+  if (!/^[0-9]{1,20}$/.test(value)) return null;
+  const parsed = BigInt(value);
+  return parsed <= U64_MAX ? parsed : null;
+}
+
+export type HashwxCheck = { ok: true } | { ok: false; reason: string };
+
+/** 同步比较阶段所需的全部材料（形状校验与种子派生都已在准备阶段完成） */
+export interface HashwxEvidence {
+  /** 目标阈值 U64_MAX / d */
+  target: bigint;
+  /** 每个子挑战的种子与已解析的 nonce，顺序与 spec.count 一致 */
+  items: Array<{ seed: Uint8Array; nonce: bigint }>;
+}
+
+export type HashwxPreparation = { ok: true; evidence: HashwxEvidence } | { ok: false; reason: string };
+
+/**
+ * 校验的第一阶段（**唯一含 await 的阶段**）：形状校验 + 逐个子挑战派生种子。
+ *
+ * 拆成两阶段只为 workerd：SHA-256 只能走异步 WebCrypto，而 verify.ts 的
+ * 「防重放 + 工作量校验 + 标记已用」必须是一段不出现 await 的同步临界区
+ * （否则并发提交同一挑战时两个请求会都通过查重、都标记成功）。把异步的种子派生
+ * 全部提到临界区之外，临界区里就只剩同步的哈希比较。
+ *
+ * 失败 reason 与 Node / Go 的同名实现逐字一致；调用方应在**防重放检查之后**再返回它，
+ * 以保持三端相同的 reason 优先级（已用过的挑战先报 challenge already used）。
+ *
+ * 注意 spec 必须来自**服务端签名过的载荷**，不能取自客户端提交，
+ * 否则攻击者可以自行降低难度。
+ */
+export async function prepareHashwxVerification(
+  spec: HashwxSpec,
+  nonces: unknown
+): Promise<HashwxPreparation> {
+  const challenge = parseHashwxChallenge(spec?.c);
+  if (!challenge) return { ok: false, reason: "malformed challenge" };
+
+  if (
+    !Number.isInteger(spec.n) ||
+    spec.n < 1 ||
+    spec.n > HASHWX_MAX_NONCES_PER_HASH ||
+    !Number.isInteger(spec.d) ||
+    spec.d < 1 ||
+    spec.d > HASHWX_MAX_DIFFICULTY ||
+    !Number.isInteger(spec.count) ||
+    spec.count < 1 ||
+    spec.count > HASHWX_MAX_CHALLENGE_COUNT
+  ) {
+    return { ok: false, reason: "malformed spec" };
+  }
+
+  if (!Array.isArray(nonces) || nonces.length !== spec.count) {
+    return { ok: false, reason: "solution count mismatch" };
+  }
+
+  const n = BigInt(spec.n);
+  const items: HashwxEvidence["items"] = [];
+
+  for (let i = 0; i < spec.count; i++) {
+    const nonce = parseHashwxNonce(nonces[i]);
+    if (nonce === null) return { ok: false, reason: "bad nonce" };
+    items.push({ seed: await hashwxBlockSeed(challenge, i, nonce / n), nonce });
+  }
+
+  return { ok: true, evidence: { target: hashwxTarget(spec.d), items } };
+}
+
+/**
+ * 校验的第二阶段：对每个子挑战重算一次哈希，全部命中才算通过。
+ *
+ * **全程同步，不含任何 await** —— 由 verify.ts 在防重放临界区内调用，
+ * 紧接其后就把挑战标记为已用。任何新增的 await 都会重新引入并发双重兑换。
+ */
+export function checkHashwxEvidence(evidence: HashwxEvidence): HashwxCheck {
+  for (const { seed, nonce } of evidence.items) {
+    if (hashwxHash(seed, nonce) > evidence.target) {
+      return { ok: false, reason: "insufficient work" };
+    }
+  }
+
+  return { ok: true };
+}
+
+/**
+ * prepare + check 的组合入口（等价于旧实现，签名不变）。
+ *
+ * verify.ts 走的是两阶段调用（为了临界区里不含 await）；本函数留给
+ * 不需要临界区语义的调用方与测试使用。
+ */
+export async function verifyHashwxSolutions(spec: HashwxSpec, nonces: unknown): Promise<HashwxCheck> {
+  const prepared = await prepareHashwxVerification(spec, nonces);
+  return prepared.ok ? checkHashwxEvidence(prepared.evidence) : prepared;
+}
