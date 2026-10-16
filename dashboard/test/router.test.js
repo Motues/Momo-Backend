@@ -15,6 +15,7 @@ const EXPECTED_ROUTES = [
 	{ path: '/settings/security', name: 'SecuritySettings', file: 'SecuritySettings.vue', auth: true },
 	{ path: '/settings/account', name: 'AccountSettings', file: 'AccountSettings.vue', auth: true },
 	{ path: '/settings/data', name: 'DataManagement', file: 'DataManagement.vue', auth: true },
+	{ path: '/settings/emoji', name: 'EmojiSettings', file: 'EmojiSettings.vue', auth: true },
 ];
 
 const findRecord = (path) => router.getRoutes().find((record) => record.path === path);

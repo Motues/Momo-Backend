@@ -100,6 +100,30 @@ Worker `worker/test/unit/vectors.origin-v1.test.ts`；接口层的「403 不落�
 `nodejs/test/api.comments.test.ts`、`go/internal/handler/http/comment_test.go`、
 `worker/test/api/comments.post.test.ts` 各自验证（Node/Worker 用假 SMTP 断言零发信）。
 
+### `emoji-v2.json`
+
+表情配置（`emoji_enabled` + `emoji_cdn_url`，格式见 [`doc/emoji.md`](../emoji.md)）的口径。
+由 `scripts/gen-emoji-vectors.js` 生成（仓库根目录执行，纯 Node 脚本，不依赖 nodejs 的依赖）。
+
+契约 v2 起，v1 的自定义表情包（`emoji_packs`）与公开接口 `GET /api/emoji` 已整体删除，
+评论区只剩一个由管理员配置的 OwO 格式来源，因此这份 fixture 只钉死四处口径：
+
+- **常量**（`defaults` / `limits`）：默认源 `https://open.motues.top/emoji/owo.json`、
+  默认开关 `"true"`、`emoji_cdn_url` 长度上限 500 码点 —— 三端常量必须与 fixture 逐字相同；
+- **写入路径校验**（`enabled` / `cdnUrl`）：`emoji_enabled` 归一化（`trim` + 转小写）后只允许
+  `""` / `"true"` / `"false"`；`emoji_cdn_url` 空串合法，其余必须 `http(s)` 且不超过 500 **码点**
+  （边界用例专门用 500 / 501 码点的长地址钉死单位，不是 UTF-16 码元、也不是字节）；
+- **错误口径**：非法值一律 400 且不落库，三端返回同样的中文文案；
+- **读取归一化**（`resolve`）：地址为空/只有空白 → 回落默认源；开关为空或无法识别 → fail-open 为启用；
+  `FALSE` 这类历史脏值同样判为关闭；**关闭时地址照常下发**（面板不会丢掉配置）。
+
+三端各自复算：Node `nodejs/test/vectors.emoji-v2.test.ts`、Go `go/internal/pkg/utils/emoji_vectors_test.go`、
+Worker `worker/test/unit/vectors.emoji-v2.test.ts`；接口层（设置写入校验与归一化、`GET /api/comments`
+下发两个字段、导出/导入往返）由 `nodejs/test/api.emoji.test.ts`、
+`go/internal/handler/http/emoji_test.go`、`worker/test/api/admin.emoji.test.ts` 各自验证。
+面板侧「保存前用浏览器拉取校验 OwO 格式」的护栏由 `dashboard/test/emojiUtils.test.js` 与
+`dashboard/test/emojiSettings.test.js` 覆盖。
+
 ## 重新生成
 
 **只有在有意修改协议时才需要重新生成**，并且必须同步更新所有语言的测试与 `doc/api.md`：
@@ -111,6 +135,11 @@ npx ts-node scripts/gen-verify-vectors.ts
 npx ts-node scripts/gen-sanitize-vectors.ts
 ```
 
+表情向量在仓库根目录生成（纯 Node 脚本，不依赖 nodejs 的依赖）：
+
+```bash
+node scripts/gen-emoji-vectors.js
+```
 脚本会打印全部生成值，便于人工核对。生成口径刻意在脚本里**独立复算**（而不是调用实现内部的私有函数），
 这样 fixture 同时也是一次对实现口径的独立复核。
 

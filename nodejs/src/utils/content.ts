@@ -2,6 +2,7 @@ import { Comment } from "../type/prisma";
 import { CommentsResponse, NestedCommentsResponse, NestedComment, CommentAdminResponse } from "../type/api";
 import { getAvatar } from "../utils/getAvatar";
 import { getSetting } from "../utils/settings";
+import { resolveEmojiConfig } from "../utils/emoji";
 import { getPublicVerifyConfig } from "../utils/verify";
 import crypto from "crypto";
 
@@ -27,6 +28,11 @@ async (comments: Comment[] | null, page: number, limit: number, nested: boolean,
     : "";
   // 无感验证公开配置（开关 + 按文章派生的蜜罐字段名）
   const verifyConfig = await getPublicVerifyConfig(postSlug);
+  // 表情配置：是否启用 + OwO 格式的表情来源地址（未配置时回落默认源，见 doc/emoji.md）
+  const emojiConfig = resolveEmojiConfig(
+    await getSetting("emoji_cdn_url"),
+    await getSetting("emoji_enabled")
+  );
 
   if(comments === null) {
     return {
@@ -46,6 +52,8 @@ async (comments: Comment[] | null, page: number, limit: number, nested: boolean,
         verify_enabled: verifyConfig.verify_enabled,
         verify_honeypot: verifyConfig.verify_honeypot,
         verify_version: verifyConfig.verify_version,
+        emoji_enabled: emojiConfig.enabled,
+        emoji_cdn_url: emojiConfig.url,
       }
     };
   }
@@ -78,6 +86,8 @@ async (comments: Comment[] | null, page: number, limit: number, nested: boolean,
         verify_enabled: verifyConfig.verify_enabled,
         verify_honeypot: verifyConfig.verify_honeypot,
         verify_version: verifyConfig.verify_version,
+        emoji_enabled: emojiConfig.enabled,
+        emoji_cdn_url: emojiConfig.url,
       }
     }
   } else {
@@ -119,6 +129,8 @@ async (comments: Comment[] | null, page: number, limit: number, nested: boolean,
         verify_enabled: verifyConfig.verify_enabled,
         verify_honeypot: verifyConfig.verify_honeypot,
         verify_version: verifyConfig.verify_version,
+        emoji_enabled: emojiConfig.enabled,
+        emoji_cdn_url: emojiConfig.url,
       }
     };
   }

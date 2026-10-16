@@ -75,6 +75,12 @@ const routes = [
     name: 'DataManagement',
     component: () => import('../views/DataManagement.vue'),
     meta: { requiresAuth: true }
+  },
+  {
+    path: '/settings/emoji',
+    name: 'EmojiSettings',
+    component: () => import('../views/EmojiSettings.vue'),
+    meta: { requiresAuth: true }
   }
 ]
 

@@ -33,6 +33,10 @@ interface CommentsResponse {
     verify_enabled?: string;
     verify_honeypot?: string;
     verify_version?: string;
+    /** 是否在评论区显示表情按钮："true" / "false"（未配置时为 "true"） */
+    emoji_enabled?: string;
+    /** OwO 格式（owo.json 同构）的表情来源地址；未配置时回落默认源 */
+    emoji_cdn_url?: string;
   }
 }
 
@@ -64,6 +68,10 @@ interface NestedCommentsResponse {
     verify_enabled?: string;
     verify_honeypot?: string;
     verify_version?: string;
+    /** 是否在评论区显示表情按钮："true" / "false"（未配置时为 "true"） */
+    emoji_enabled?: string;
+    /** OwO 格式（owo.json 同构）的表情来源地址；未配置时回落默认源 */
+    emoji_cdn_url?: string;
   }
 }
 

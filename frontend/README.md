@@ -9,7 +9,7 @@
 ```html
 <div id="momo-comment"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/@motues/momo-comment@1.6.x/dist/momo-comment.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@motues/momo-comment@1.7.x/dist/momo-comment.min.js"></script>
 <script>
     momo.init({
         el: '#momo-comment', // 评论容器的 id
@@ -30,10 +30,13 @@
 | 前端版本 | 需要搭配的后端 |
 |---|---|
 | 1.5.0 及更早 | v1 后端（旧版 SHA-256 无感验证） |
-| 1.6.0 及以后 | v2 后端（HashWX + Instrumentation 环境质询） |
+| 1.6.0 – 1.6.x | v2 后端（HashWX + Instrumentation 环境质询） |
+| 1.7.0 及以后 | v2 后端 + 表情配置契约 v2（`emoji_enabled` / `emoji_cdn_url`） |
 
 - 前端 1.6.0 连到仍是 v1 的后端时，验证框会明确显示「验证服务版本过旧，请联系博主升级」，而不是笼统的「验证失败」（且不会给出无用的重试按钮）。
 - 旧版前端 1.x 连到已升级 v2 的后端时，验证会失败（后端返回 `reason: "PROTOCOL_OUTDATED"`），请把页面里引用的 CDN 版本一起升级。
+- 1.7.0 起表情功能只依赖后端下发的 `emoji_cdn_url` + `emoji_enabled` 两个字段，**不再请求本站 `/api/emoji`**
+  （该接口与后端的自定义表情包功能已删除）。旧后端不下发 `emoji_enabled` 时按「启用」处理，因此新版前端仍能配合旧后端工作。
 - 第一层工作量证明需要浏览器支持 **WebAssembly**（iOS 15+ 及现代桌面浏览器）。不支持时验证框会提示「浏览器版本过低，不支持验证」，该浏览器将无法提交评论。
 - 验证在后台静默完成：优先使用 Web Worker 并行计算，宿主页面 CSP 不允许 Worker 时自动降级到主线程分片计算（页面仍可滚动、输入）。
 - 后端如果开启了「来源域名绑定」（`comment_verify_domain_enabled`），验证请求还会带上 `post_url` 作为来源声明之一；当前页面的域名不在后端的 `allow-origin` 白名单内时，验证框会显示「当前域名未通过验证，请在本站页面内评论」。这是后端的配置问题，**不需要升级前端**。
@@ -61,6 +64,36 @@
     --momo-button-border-color: #2e2e2e;
     --momo-button-hover-bg-color: #3c3c3c;
     --momo-link-color: #fff;
+}
+```
+
+## 表情
+
+评论输入框下方**左侧**的表情按钮会打开浮动面板，顶部标签栏来自后端配置的那一份 owo.json
+（OwO 格式，格式与短代码规则见 [doc/emoji.md](../doc/emoji.md)）：
+
+- **面板开在按钮下方**（不会盖住上面的输入框），高度按「按钮底边 → 视口底边」的剩余空间自适应：
+  底部空间小就压低面板、表情区改为纵向滚动，空间充足时最高 256px；窗口 resize / 页面滚动时重算。
+- **颜文字按内容宽度自适应**（换行排布），长短不一的颜文字不会被固定列宽的网格挤在一起；
+  图片类表情尺寸一致，用 2rem 等宽网格（列数随面板宽度 auto-fill，窄屏自动减列）。
+- 面板与标签栏都不做横向滚动（标签栏宽度不足时换行，超长颜文字在自身按钮内换行），
+  面板宽度固定为 `min(24rem, 100vw - 2rem)`：**切换标签不会改变宽度**，窄屏自动收窄。
+- **零第三方请求的首屏**：只读 `localStorage` 里 7 天内的 owo.json 缓存；缓存不存在或已过期时，
+  图片类表情先以 `:name:` 文本显示，**打开一次面板**后即恢复正常（首次打开面板时才真正拉取 owo.json）。
+- 拉取失败会回退旧缓存，并在面板内给出「重试」提示。
+- 站点可以在后台「系统设置 → 表情设置」里**关闭表情**（`emoji_enabled=false`，此时组件不渲染表情按钮），
+  或把来源换成任意 OwO 格式地址（例如 `https://open.motues.top/emoji/owo.json?group=Emoji` 只保留 Emoji 标签）。
+- 图片类表情插入的是 `:name:` 短代码，由组件在渲染时替换成内联小图：
+  `<code>` / `<pre>` 内不替换，未命中的短代码原样保留为文本（表情源换掉后老评论会优雅降级）。
+  跨包重名时（默认源里 `Bilibili` 与 `QQ` 有 33 个同名表情）靠前的包先占名、后来的包追加 `-2`，
+  因此**从 QQ 选的动图在评论里仍是那张动图**，不会被 Bilibili 的同名静图顶掉。
+- 表情项与未选中的标签都有 hover 高亮（面板底色恰好等于 `--button-hover-bg-color`，
+  所以高亮用的是文字色的半透明叠加，而不是复用 hover 底色）。
+- 面板底色默认跟随按钮 hover 底色，宿主可用 `--momo-panel-bg` 覆盖：
+
+```css
+:root {
+    --momo-panel-bg: #ffffff; /* 表情面板底色（暗色模式下可另设） */
 }
 ```
 

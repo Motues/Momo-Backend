@@ -15,3 +15,27 @@
   --button-hover-bg-color: var(--momo-button-hover-bg-color, #262626);
   --link-color: var(--momo-link-color, #57ace7);
 }
+
+
+.comment-container [data-aos][data-aos].aos-animate {
+  transform: none;
+}
+
+/*
+ * 自定义表情（评论正文里由 :name: 水合出来的内联小图）。
+ *
+ * 必须比 `.markdown-content :global(img)`（max-width/圆角/上下外边距）更具体，
+ * 否则表情会被当成普通配图撑成块级、并带上 0.5rem 的上下间距。
+ */
+.comment-container .markdown-content img.momo-emoji,
+.comment-container .markdown-preview img.momo-emoji,
+.comment-container img.momo-emoji {
+  display: inline-block;
+  width: 1.25em;
+  height: 1.25em;
+  max-width: none;
+  margin: 0 1px;
+  vertical-align: -0.2em;
+  border-radius: 2px;
+  object-fit: contain;
+}

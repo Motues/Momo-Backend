@@ -51,5 +51,13 @@ export interface Translation {
         verifyDomainBlocked: string;
         adminKey: string;
         adminKeyPlaceholder: string;
+        emoji: string;
+        emojiPanel: string;
+        emojiLoading: string;
+        emojiLoadFailed: string;
+        emojiRetry: string;
+        emojiEmpty: string;
+        emojiStale: string;
+        emojiClose: string;
     },
 }

@@ -60,6 +60,14 @@ const CONTRACT_KEYS = [
 	'verifyDomainBlocked',
 	'adminKey',
 	'adminKeyPlaceholder',
+	'emoji',
+	'emojiClose',
+	'emojiEmpty',
+	'emojiLoadFailed',
+	'emojiLoading',
+	'emojiPanel',
+	'emojiRetry',
+	'emojiStale',
 ];
 
 afterEach(() => {

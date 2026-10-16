@@ -3,6 +3,7 @@ import { getAllSettings, setSetting } from "../../utils/settings";
 import { sendTestEmail } from "../../utils/email";
 import { checkKey, extractToken, isValidIpBlacklistJson } from "../../utils/security";
 import { validateSpamSettings } from "../../utils/spam";
+import { normalizeEmojiEnabled, validateEmojiCdnUrl, validateEmojiEnabled } from "../../utils/emoji";
 import { applyTrustProxySetting, hasTrustProxyEnvOverride } from "../../utils/ip";
 import LogService from "../../utils/log";
 
@@ -43,6 +44,9 @@ const ALLOWED_SETTINGS = [
   "comment_verify_retention_days",
   "comment_verify_log_challenge",
   "trust_proxy",
+  // 表情：是否启用 + OwO 格式的表情来源地址（见 doc/emoji.md）
+  "emoji_enabled",
+  "emoji_cdn_url",
 ];
 
 // 按模块分组的设置键
@@ -51,6 +55,8 @@ const SETTINGS_GROUPS: Record<string, string[]> = {
   email: ["smtp_host", "smtp_port", "email_user", "email_password", "email_secure", "email_enabled", "email_verify_enabled", "verify_base_url", "reply_template", "notification_template"],
   security: ["allow_origin", "admin_comment_key", "admin_comment_key_enabled", "ip_blacklist", "email_blacklist", "comment_verify_enabled", "comment_verify_difficulty", "comment_verify_instr_enabled", "comment_verify_block_automated", "comment_verify_domain_enabled", "comment_verify_retention_days", "comment_verify_log_challenge", "trust_proxy"],
   account: ["admin_name"],
+  // 表情设置：启用开关 + 表情来源地址
+  emoji: ["emoji_enabled", "emoji_cdn_url"],
 };
 
 function checkAuth(c: Context): boolean {
@@ -129,6 +135,21 @@ export async function updateSettings(c: Context): Promise<Response> {
     return c.json({ code: 400, message: spamError }, 400);
   }
 
+  // 表情配置同样必须在入口校验：脏值会在公开接口下发时才暴露，这里拦下把问题定位在「保存」这一步
+  // （口径见 doc/emoji.md，三端一致）
+  if ("emoji_enabled" in body) {
+    const enabledError = validateEmojiEnabled(body.emoji_enabled);
+    if (enabledError) {
+      return c.json({ code: 400, message: enabledError }, 400);
+    }
+  }
+  if ("emoji_cdn_url" in body) {
+    const cdnError = validateEmojiCdnUrl(body.emoji_cdn_url);
+    if (cdnError) {
+      return c.json({ code: 400, message: cdnError }, 400);
+    }
+  }
+
   const smtpChanged =
     ("smtp_host" in body) || ("smtp_port" in body) ||
     ("email_user" in body) || ("email_password" in body);
@@ -137,6 +158,16 @@ export async function updateSettings(c: Context): Promise<Response> {
     if (value !== undefined && value !== null) {
       // Bug fix: 邮箱密码为空时不覆盖已有密码
       if (key === "email_password" && String(value) === "") continue;
+      // 地址两侧的空格会让前端 fetch 拿到一个畸形 URL，这里顺手归一化
+      if (key === "emoji_cdn_url") {
+        await setSetting(key, String(value).trim());
+        continue;
+      }
+      // 开关统一存归一化后的小写值（口径见 doc/emoji.md 第 3.1 节）
+      if (key === "emoji_enabled") {
+        await setSetting(key, normalizeEmojiEnabled(value));
+        continue;
+      }
       await setSetting(key, String(value));
     }
   }

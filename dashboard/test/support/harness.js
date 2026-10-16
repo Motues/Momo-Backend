@@ -27,6 +27,10 @@ export const DASHBOARD_ROUTES = [
 	{ path: '/settings/basic', name: 'basic', component: { template: '<div />' } },
 	{ path: '/settings/email', name: 'email', component: { template: '<div />' } },
 	{ path: '/settings/security', name: 'security', component: { template: '<div />' } },
+	{ path: '/settings/account', name: 'account', component: { template: '<div />' } },
+	{ path: '/settings/data', name: 'data', component: { template: '<div />' } },
+	// 表情设置页：Settings.vue 的入口卡片与 EmojiSettings 自身的回退链接都会用到
+	{ path: '/settings/emoji', name: 'emoji', component: { template: '<div />' } },
 ];
 
 /** 创建内存路由并跳到指定路径 */

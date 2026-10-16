@@ -74,6 +74,9 @@ var allowedSettings = map[string]bool{
 	"comment_verify_retention_days": true,
 	"comment_verify_log_challenge":  true,
 	"trust_proxy":                   true,
+	// 表情（OwO 来源，见 doc/emoji.md）：是否启用 + 表情来源地址
+	"emoji_enabled": true,
+	"emoji_cdn_url": true,
 }
 
 // IsAllowedSetting 判断某个设置键是否允许通过后台接口读写。

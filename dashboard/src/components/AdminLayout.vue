@@ -55,6 +55,7 @@
       </nav>
 
       <div class="p-4 border-t text-[10px] uppercase tracking-widest text-center border-gray-200 text-gray-500">
+        <VersionBadge class="mb-2" />
         Powered by Momo-Backend
       </div>
     </aside>
@@ -98,6 +99,7 @@
 import { ref, computed } from 'vue';
 import { useRoute } from 'vue-router';
 import request from '../utils/request';
+import VersionBadge from './VersionBadge.vue';
 
 const route = useRoute();
 
@@ -148,6 +150,7 @@ const pageTitle = computed(() => {
     '/settings/security': '安全设置',
     '/settings/account': '账户安全',
     '/settings/data': '数据管理',
+    '/settings/emoji': '表情设置',
   };
   const matched = Object.keys(map).find(path => route.path === path);
   return matched ? map[matched] : '管理后台';

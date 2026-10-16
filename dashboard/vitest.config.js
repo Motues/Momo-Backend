@@ -1,7 +1,15 @@
+import { readFileSync } from 'node:fs';
 import { defineConfig } from 'vitest/config';
 import vue from '@vitejs/plugin-vue';
 
+// 与 vite.config.js 保持一致：测试环境同样注入 __APP_VERSION__，
+// 否则用例里读到的是兜底值而不是真实版本号。
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf-8'));
+
 export default defineConfig({
+	define: {
+		__APP_VERSION__: JSON.stringify(pkg.version),
+	},
 	plugins: [vue()],
 	test: {
 		environment: 'happy-dom',

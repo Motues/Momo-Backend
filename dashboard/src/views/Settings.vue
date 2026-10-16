@@ -47,6 +47,15 @@
           <h2 class="text-lg font-semibold text-gray-800 mb-2">数据管理</h2>
           <p class="text-sm text-gray-500">导入导出评论数据和系统设置（JSON 格式）</p>
         </router-link>
+
+        <router-link to="/settings/emoji"
+          class="block bg-white rounded-lg shadow-sm border border-gray-200 p-8 hover:shadow-md hover:border-violet-200 transition-all group">
+          <div class="w-14 h-14 bg-violet-50 rounded-lg flex items-center justify-center mb-4 group-hover:bg-violet-100 transition-colors">
+            <i class="fa-solid fa-face-smile text-violet-500 text-2xl"></i>
+          </div>
+          <h2 class="text-lg font-semibold text-gray-800 mb-2">表情设置</h2>
+          <p class="text-sm text-gray-500">启用或关闭表情按钮，配置 OwO 格式的表情来源地址</p>
+        </router-link>
       </div>
     </div>
   </AdminLayout>

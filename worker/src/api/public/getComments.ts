@@ -3,6 +3,7 @@ import { Bindings } from '../../bindings'
 import { getCravatar } from '../../utils/getAvatar'
 import { getSetting } from '../../utils/settings'
 import { getPublicVerifyConfig } from '../../utils/verify'
+import { resolveEmojiConfig, EMOJI_CDN_URL_KEY, EMOJI_ENABLED_KEY } from '../../utils/emoji'
 import { toIsoString } from '../../utils/time'
 import { allowRequest } from '../../utils/rateLimit'
 
@@ -42,6 +43,12 @@ export const getComments = async (c: Context<{ Bindings: Bindings }>) => {
     : "";
   // 无感验证公开配置（开关 + 按文章派生的蜜罐字段名）
   const verifyConfig = await getPublicVerifyConfig(c.env, post_slug);
+  // 表情设置（契约 v2）：开关 + OwO 格式的来源地址，前端据此显示按钮并直接拉取 owo.json。
+  // 地址为空回落默认源；开关只有显式 "false" 才关闭，关闭时地址照常下发。
+  const emoji = resolveEmojiConfig(
+    await getSetting(c.env, EMOJI_CDN_URL_KEY),
+    await getSetting(c.env, EMOJI_ENABLED_KEY)
+  );
 
   try {
     // 1. 查询审核通过的评论
@@ -117,6 +124,8 @@ export const getComments = async (c: Context<{ Bindings: Bindings }>) => {
           verify_enabled: verifyConfig.verify_enabled,
           verify_honeypot: verifyConfig.verify_honeypot,
           verify_version: verifyConfig.verify_version,
+          emoji_enabled: emoji.enabled,
+          emoji_cdn_url: emoji.url,
         }
       })
     } else {
@@ -143,6 +152,8 @@ export const getComments = async (c: Context<{ Bindings: Bindings }>) => {
           verify_enabled: verifyConfig.verify_enabled,
           verify_honeypot: verifyConfig.verify_honeypot,
           verify_version: verifyConfig.verify_version,
+          emoji_enabled: emoji.enabled,
+          emoji_cdn_url: emoji.url,
         }
       })
     }

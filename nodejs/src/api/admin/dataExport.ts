@@ -64,6 +64,9 @@ export async function exportSettings(c: Context): Promise<Response> {
     comment_verify_retention_days: true,
     comment_verify_log_challenge: true,
     trust_proxy: true,
+    // 表情设置：启用开关 + 表情来源地址（非敏感，正常导出）
+    emoji_enabled: true,
+    emoji_cdn_url: true,
   };
 
   const filtered: Record<string, string> = {};

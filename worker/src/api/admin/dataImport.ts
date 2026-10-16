@@ -4,6 +4,7 @@ import { setSetting } from '../../utils/settings';
 import { checkContent, sanitizeUrl, isValidIpBlacklistJson, MAX_CONTENT, MAX_AUTHOR, MAX_EMAIL, MAX_URL, MAX_POST_SLUG } from '../../utils/security';
 import { parseMarkdown, sanitizeHtml } from '../../utils/markdown';
 import { validateSpamSettings } from '../../utils/spam';
+import { validateEmojiCdnUrl, validateEmojiEnabled, normalizeEmojiEnabled } from '../../utils/emoji';
 import { toMillis } from '../../utils/time';
 
 // 导入时不允许用空值覆盖已有值的敏感字段
@@ -111,6 +112,8 @@ export const importSettings = async (c: Context<{ Bindings: Bindings }>) => {
     "comment_verify_retention_days",
     "comment_verify_log_challenge",
     "trust_proxy",
+    "emoji_cdn_url",
+    "emoji_enabled",
   ]);
 
   if ("ip_blacklist" in body && !isValidIpBlacklistJson(String(body.ip_blacklist ?? ""))) {
@@ -123,12 +126,29 @@ export const importSettings = async (c: Context<{ Bindings: Bindings }>) => {
     return c.json({ code: 400, message: spamError }, 400);
   }
 
+  // 表情设置：导入文件同样不可信，必须与 PUT /admin/settings 同一套校验（口径见 doc/emoji.md）
+  if ("emoji_enabled" in body) {
+    const enabledError = validateEmojiEnabled(body.emoji_enabled);
+    if (enabledError) {
+      return c.json({ code: 400, message: enabledError }, 400);
+    }
+  }
+  if ("emoji_cdn_url" in body) {
+    const cdnError = validateEmojiCdnUrl(body.emoji_cdn_url);
+    if (cdnError) {
+      return c.json({ code: 400, message: cdnError }, 400);
+    }
+  }
+
   const updated: string[] = [];
   for (const [key, value] of Object.entries(body)) {
     if (!allowList.has(key) || value === undefined || value === null) continue;
     // 导出的敏感字段是空串：留空表示「未修改」，不得覆盖已有值
     if (SENSITIVE_SETTINGS.has(key) && String(value) === "") continue;
-    await setSetting(c.env, key, String(value));
+    // 与 PUT /admin/settings 一致：存归一化后的值（开关小写、地址去空格）
+    if (key === "emoji_enabled") await setSetting(c.env, key, normalizeEmojiEnabled(value));
+    else if (key === "emoji_cdn_url") await setSetting(c.env, key, String(value).trim());
+    else await setSetting(c.env, key, String(value));
     updated.push(key);
   }
 

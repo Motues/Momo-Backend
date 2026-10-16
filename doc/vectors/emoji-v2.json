@@ -1,0 +1,103 @@
+{
+  "version": 2,
+  "note": "表情配置契约 v2：不再有自定义表情包，只有「是否启用 + OwO 格式的表情来源」。constants（默认源 / 默认开关 / 长度上限）、写入路径校验与读取路径归一化三端必须逐条一致。由 scripts/gen-emoji-vectors.js 生成，请勿手改。",
+  "defaults": {
+    "cdnUrl": "https://open.motues.top/emoji/owo.json",
+    "enabled": "true"
+  },
+  "limits": {
+    "maxCdnUrlLen": 500
+  },
+  "enabled": {
+    "valid": [
+      "",
+      "   ",
+      "true",
+      "false",
+      " true ",
+      " TRUE ",
+      "False"
+    ],
+    "invalid": [
+      "1",
+      "0",
+      "yes",
+      "on",
+      "true1",
+      " false1",
+      "true false",
+      "null",
+      "2",
+      "否"
+    ]
+  },
+  "cdnUrl": {
+    "valid": [
+      "https://open.motues.top/emoji/owo.json",
+      "https://open.motues.top/emoji/owo.json?group=Emoji",
+      "http://example.com/owo.json",
+      "HTTPS://Example.COM/OWO.JSON",
+      "https://cdn.example.com/emoji/owo.json#frag",
+      "https://子目录.example.com/emoji/owo.json",
+      "  https://cdn.example.com/owo.json  ",
+      "",
+      "   ",
+      "https://cdn.example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ],
+    "invalid": [
+      "ftp://example.com/owo.json",
+      "javascript:alert(1)",
+      "data:application/json,{}",
+      "owo.json",
+      "//example.com/owo.json",
+      "https://cdn.example.com/a\"b.json",
+      "https://cdn.example.com/a<b>.json",
+      "<img src=x>",
+      "https://cdn.example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    ]
+  },
+  "resolve": [
+    {
+      "name": "两项都未配置：回落默认源 + 启用",
+      "storedUrl": "",
+      "storedEnabled": "",
+      "expectUrl": "https://open.motues.top/emoji/owo.json",
+      "expectEnabled": "true"
+    },
+    {
+      "name": "地址只有空白：同样回落默认源",
+      "storedUrl": "   ",
+      "storedEnabled": "   ",
+      "expectUrl": "https://open.motues.top/emoji/owo.json",
+      "expectEnabled": "true"
+    },
+    {
+      "name": "地址两侧空格被裁掉，开关原样下发",
+      "storedUrl": "  https://cdn.example.com/owo.json  ",
+      "storedEnabled": "true",
+      "expectUrl": "https://cdn.example.com/owo.json",
+      "expectEnabled": "true"
+    },
+    {
+      "name": "关闭时地址照常下发（面板不会丢掉配置）",
+      "storedUrl": "https://cdn.example.com/owo.json?group=Emoji",
+      "storedEnabled": "false",
+      "expectUrl": "https://cdn.example.com/owo.json?group=Emoji",
+      "expectEnabled": "false"
+    },
+    {
+      "name": "历史脏值大小写不敏感：FALSE 判为关闭",
+      "storedUrl": "https://cdn.example.com/owo.json",
+      "storedEnabled": "FALSE",
+      "expectUrl": "https://cdn.example.com/owo.json",
+      "expectEnabled": "false"
+    },
+    {
+      "name": "无法识别的开关值 fail-open 为启用",
+      "storedUrl": "https://cdn.example.com/owo.json",
+      "storedEnabled": "yes",
+      "expectUrl": "https://cdn.example.com/owo.json",
+      "expectEnabled": "true"
+    }
+  ]
+}

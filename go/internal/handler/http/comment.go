@@ -397,6 +397,9 @@ func (h *CommentHandler) GetComments(c *gin.Context) {
 	placeholderEmail := utils.GetSetting("placeholder_email")
 	placeholderContent := utils.GetSetting("placeholder_content")
 	placeholderURL := utils.GetSetting("placeholder_url")
+	// 表情配置（OwO 来源）：读取路径宽容归一化，未配置时回落默认源并 fail-open 为启用
+	emojiCdnURL, emojiEnabled := utils.ResolveEmojiConfig(
+		utils.GetSetting(utils.EmojiCdnURLKey), utils.GetSetting(utils.EmojiEnabledKey))
 	adminCommentKey := utils.GetSetting("admin_comment_key")
 	adminCommentKeyEnabled := utils.GetSetting("admin_comment_key_enabled")
 	adminCommentKeyConfigured := "false"
@@ -480,6 +483,8 @@ func (h *CommentHandler) GetComments(c *gin.Context) {
 			"verify_enabled":               verifyEnabled,
 			"verify_honeypot":              verifyHoneypot,
 			"verify_version":               verifyVersion,
+			"emoji_cdn_url":                emojiCdnURL,
+			"emoji_enabled":                emojiEnabled,
 		},
 	})
 }

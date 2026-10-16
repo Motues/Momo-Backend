@@ -247,7 +247,9 @@
     "admin_email_hash": "xxxxx",
     "verify_enabled": "false",
     "verify_honeypot": "",
-    "verify_version": "2"
+    "verify_version": "2",
+    "emoji_enabled": "true",
+    "emoji_cdn_url": "https://open.motues.top/emoji/owo.json"
   }
 }
 ```
@@ -299,7 +301,9 @@
     "admin_email_hash": "xxxxx",
     "verify_enabled": "false",
     "verify_honeypot": "",
-    "verify_version": "2"
+    "verify_version": "2",
+    "emoji_enabled": "true",
+    "emoji_cdn_url": "https://open.motues.top/emoji/owo.json"
   }
 }
 ```
@@ -710,6 +714,7 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
   - `email` — 邮件通知（SMTP 配置、邮箱验证、邮件模板）
   - `security` — 安全设置（CORS、评论密钥、IP/邮箱黑名单）
   - `account` — 账户信息（管理员名称）
+  - `emoji` — 表情设置（是否启用、OwO 格式的表情来源地址）
   - 不传则返回全部设置（向后兼容）；未知取值（含 `toString` 等原型链成员名）同样回退为全部设置
 
 **响应（成功）**：
@@ -753,7 +758,10 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
     "comment_verify_block_automated": "false",
     "comment_verify_domain_enabled": "false",
     "comment_verify_retention_days": "30",
-    "comment_verify_log_challenge": "true"
+    "comment_verify_log_challenge": "true",
+    "trust_proxy": "false",
+    "emoji_enabled": "true",
+    "emoji_cdn_url": "https://open.motues.top/emoji/owo.json"
   }
 }
 ```
@@ -843,6 +851,26 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
 }
 ```
 
+`GET /admin/settings?type=emoji`（表情设置分组）
+
+```json
+{
+  "code": 200,
+  "message": "Settings fetched",
+  "data": {
+    "emoji_enabled": "true",
+    "emoji_cdn_url": "https://open.motues.top/emoji/owo.json"
+  }
+}
+```
+
+* `emoji_enabled`：是否在评论区显示表情按钮，取 `"true"` / `"false"`（默认 `"true"`）。
+  写入时 `trim` + 转小写后落库，只接受 `"true"` / `"false"` / 空串，其余返回 `400`。
+* `emoji_cdn_url`：OwO 格式（owo.json 同构）的表情来源地址，必须 `http`/`https` 且不超过 500 码点；
+  **留空表示未配置**，读取时回落默认源 `https://open.motues.top/emoji/owo.json`。
+  关闭表情请用 `emoji_enabled = "false"`（关闭后地址照常随评论列表下发，配置不会丢失）。
+* 详细口径（含面板保存前的 OwO 格式在线校验）见 [emoji.md](./emoji.md)。
+
 **响应（失败）**：
 ```json
 {
@@ -888,7 +916,9 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
   "comment_verify_domain_enabled": "true",
   "comment_verify_retention_days": "30",
   "comment_verify_log_challenge": "true",
-  "trust_proxy": "false"
+  "trust_proxy": "false",
+  "emoji_enabled": "true",
+  "emoji_cdn_url": "https://open.motues.top/emoji/owo.json"
 }
 ```
 
@@ -914,6 +944,8 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
 >   默认 `"false"`，只使用 TCP 连接对端地址；部署在 Nginx / Cloudflare 之后时必须设为 `"true"`。
 >   开启后 `x-forwarded-for` 取最右一跳。该项也可由环境变量 `TRUST_PROXY`（Node）或
 >   `config.yaml` 中的 `TRUST_PROXY`（Go）强制指定，此时页面设置不生效，详见各后端 README
+> - `emoji_enabled` / `emoji_cdn_url`：评论区表情的启用开关与 **OwO 格式**来源地址，
+>   口径见 [emoji.md](./emoji.md)；`emoji_packs` 已在契约 v2 中删除，提交它会返回 `400`
 
 > **邮件模板可用占位符**（三端一致：替换为 **HTML 转义后**的值，未匹配的 `{{...}}` 保持原样）：
 > - 回复模板：`{{toName}}` `{{replyAuthor}}` `{{postTitle}}` `{{parentComment}}` `{{replyContent}}` `{{postUrl}}`

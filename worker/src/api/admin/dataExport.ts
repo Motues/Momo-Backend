@@ -40,6 +40,9 @@ export const exportSettings = async (c: Context<{ Bindings: Bindings }>) => {
     "comment_verify_retention_days",
     "comment_verify_log_challenge",
     "trust_proxy",
+    // 表情设置：启用开关 + OwO 格式的表情来源（非敏感，正常导出）
+    "emoji_cdn_url",
+    "emoji_enabled",
   ]);
 
   const filtered: Record<string, string> = {};

@@ -4,6 +4,7 @@ import { getAllSettings, getSetting, setSetting } from '../../utils/settings';
 import { sendTestEmail } from '../../utils/email';
 import { isValidIpBlacklistJson } from '../../utils/security';
 import { validateSpamSettings } from '../../utils/spam';
+import { validateEmojiCdnUrl, validateEmojiEnabled, normalizeEmojiEnabled } from '../../utils/emoji';
 
 // 敏感字段：读取时始终置空。comment_verify_secret 由系统自动生成，不对外开放读写
 const SENSITIVE_KEYS = new Set(["admin_password", "email_password", "admin_comment_key", "comment_verify_secret"]);
@@ -41,6 +42,9 @@ const ALLOWED_SETTINGS = new Set([
   "comment_verify_retention_days",
   "comment_verify_log_challenge",
   "trust_proxy",
+  // 表情设置：启用开关 + OwO 格式的表情来源（见 doc/emoji.md）
+  "emoji_enabled",
+  "emoji_cdn_url",
 ]);
 
 const SETTINGS_GROUPS: Record<string, string[]> = {
@@ -48,6 +52,8 @@ const SETTINGS_GROUPS: Record<string, string[]> = {
   email: ["smtp_host", "smtp_port", "email_user", "email_password", "email_secure", "email_enabled", "email_verify_enabled", "verify_base_url", "reply_template", "notification_template"],
   security: ["allow_origin", "admin_comment_key", "admin_comment_key_enabled", "ip_blacklist", "email_blacklist", "comment_verify_enabled", "comment_verify_difficulty", "comment_verify_instr_enabled", "comment_verify_block_automated", "comment_verify_domain_enabled", "comment_verify_retention_days", "comment_verify_log_challenge", "trust_proxy"],
   account: ["admin_name"],
+  // 表情设置：启用开关 + OwO 格式的表情来源地址
+  emoji: ["emoji_cdn_url", "emoji_enabled"],
 };
 
 export const getSettings = async (c: Context<{ Bindings: Bindings }>) => {
@@ -103,12 +109,35 @@ export const updateSettings = async (c: Context<{ Bindings: Bindings }>) => {
     return c.json({ code: 400, message: spamError }, 400);
   }
 
+  // 表情设置（口径见 doc/emoji.md）：开关只接受 true/false，地址必须是 http/https
+  if ("emoji_enabled" in body) {
+    const enabledError = validateEmojiEnabled(body.emoji_enabled);
+    if (enabledError) {
+      return c.json({ code: 400, message: enabledError }, 400);
+    }
+  }
+  if ("emoji_cdn_url" in body) {
+    const cdnError = validateEmojiCdnUrl(body.emoji_cdn_url);
+    if (cdnError) {
+      return c.json({ code: 400, message: cdnError }, 400);
+    }
+  }
+
   const smtpChanged = "smtp_host" in body || "smtp_port" in body || "email_user" in body || "email_password" in body;
 
   for (const [key, value] of Object.entries(body)) {
     if (value !== undefined && value !== null) {
       // Bug fix: 邮箱密码为空时不覆盖已有密码
       if (key === "email_password" && String(value) === "") continue;
+      // 开关与地址都存归一化后的值：脏值（" TRUE " / 两侧带空格的 URL）会在前端炸
+      if (key === "emoji_enabled") {
+        await setSetting(c.env, key, normalizeEmojiEnabled(value));
+        continue;
+      }
+      if (key === "emoji_cdn_url") {
+        await setSetting(c.env, key, String(value).trim());
+        continue;
+      }
       await setSetting(c.env, key, String(value));
     }
   }

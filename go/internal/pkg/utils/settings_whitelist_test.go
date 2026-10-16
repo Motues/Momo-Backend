@@ -43,6 +43,9 @@ var canonicalSettingKeys = []string{
 	"email_secure",
 	"email_user",
 	"email_verify_enabled",
+	// 表情设置：是否启用 + OwO 来源地址（与 Node/Worker 同步，见 doc/emoji.md）
+	"emoji_cdn_url",
+	"emoji_enabled",
 	"ip_blacklist",
 	"notification_template",
 	"placeholder_content",

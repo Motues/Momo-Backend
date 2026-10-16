@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeAll, beforeEach } from 'vitest';
 import { render, fireEvent, waitFor, cleanup } from '@testing-library/svelte';
 import Comments from '../src/comment/Comments.svelte';
+import { EMOJI_CACHE_PREFIX } from '../src/emoji/owo';
 import { makeComment, jsonResponse, stubAlert, findButton, sha256HexOf, patchHappyDomAnimation } from './helpers';
 
 beforeAll(patchHappyDomAnimation);
@@ -361,6 +362,99 @@ describe('Comments —— 后端下发的展示配置', () => {
 		await fireEvent.input(container.querySelector('#email'), { target: { value: 'admin@example.com' } });
 		await new Promise((r) => setTimeout(r, 20));
 		expect(container.querySelector('#admin-key')).toBeNull();
+	});
+
+	it('emoji_enabled="false" 时不渲染表情按钮，也不请求任何表情地址', async () => {
+		const fetch = fetchMock(async () =>
+			jsonResponse(
+				listBody([makeComment()], { emoji_enabled: 'false', emoji_cdn_url: 'https://cdn.example.com/owo.json' })
+			)
+		);
+		const { container } = renderComments();
+		await waitFor(() => expect(container.textContent).toContain('1 条评论'));
+
+		expect(container.querySelector('[data-test="emoji-trigger"]')).toBeNull();
+		// 只请求了评论列表：既没有第三方 owo.json，也没有本站 /api/emoji
+		expect(fetch.calls.map((c) => c.url)).toEqual([
+			`${API_URL}/api/comments?post_slug=${encodeURIComponent(POST_SLUG)}&nested=true&page=1&limit=20`,
+		]);
+
+		// 回复框同样不渲染表情按钮
+		await fireEvent.click(findButton(container, '回复'));
+		await waitFor(() => expect(container.querySelector('#reply-author-1')).toBeTruthy());
+		expect(container.querySelector('[data-test="emoji-trigger"]')).toBeNull();
+	});
+
+	it('emoji_cdn_url 为空时不渲染表情按钮（关闭与空地址等价）', async () => {
+		fetchMock(async () => jsonResponse(listBody([], { emoji_enabled: 'true', emoji_cdn_url: '' })));
+		const { container } = renderComments();
+		await waitFor(() => expect(container.textContent).toContain('0 条评论'));
+		expect(container.querySelector('[data-test="emoji-trigger"]')).toBeNull();
+	});
+
+	it('emoji_enabled 缺失（默认启用）且有地址时渲染表情按钮，但首屏不拉取该地址', async () => {
+		const fetch = fetchMock(async () =>
+			jsonResponse(listBody([], { emoji_cdn_url: 'https://cdn.example.com/owo.json' }))
+		);
+		const { container } = renderComments();
+		await waitFor(() => expect(container.textContent).toContain('0 条评论'));
+
+		expect(container.querySelector('[data-test="emoji-trigger"]')).toBeTruthy();
+		// 首屏零第三方请求：owo.json 只在首次打开面板时才拉
+		expect(fetch.calls.length).toBe(1);
+		expect(fetch.calls[0].url.startsWith(API_URL)).toBe(true);
+	});
+
+	it('emoji_enabled 只认字符串 "false"：布尔 false 视为启用（记录现状）', async () => {
+		fetchMock(async () =>
+			jsonResponse(listBody([], { emoji_enabled: false, emoji_cdn_url: 'https://cdn.example.com/owo.json' }))
+		);
+		const { container } = renderComments();
+		await waitFor(() => expect(container.textContent).toContain('0 条评论'));
+		expect(container.querySelector('[data-test="emoji-trigger"]')).toBeTruthy();
+	});
+
+	it('本地已有新鲜缓存时首屏同步水合评论正文里的短代码（打开面板之前，零请求）', async () => {
+		const cdn = 'https://cdn.example.com/owo.json';
+		const png = 'https://cdn.example.com/emoji/doge.png';
+		localStorage.setItem(
+			`${EMOJI_CACHE_PREFIX}${cdn}`,
+			JSON.stringify({
+				savedAt: Date.now(),
+				packs: { Bilibili: { type: 'image', container: [{ icon: `<img src="${png}">`, text: 'doge' }] } },
+			})
+		);
+		const fetch = fetchMock(async () =>
+			jsonResponse(
+				listBody([makeComment({ contentHtml: '<p>看这个 :doge: 表情</p>' })], { emoji_cdn_url: cdn })
+			)
+		);
+		const { container } = renderComments({ postSlug: POST_SLUG });
+
+		await waitFor(() => expect(container.querySelector('img.momo-emoji')).toBeTruthy());
+		expect(container.querySelector('img.momo-emoji').getAttribute('src')).toBe(png);
+		expect(container.textContent).toContain('看这个');
+		// 只有评论列表那一次请求：首屏不拉 owo.json、不拉本站表情接口
+		expect(fetch.calls.length).toBe(1);
+	});
+
+	it('缓存过期时首屏不水合（短代码保持纯文本），也没有额外请求', async () => {
+		const cdn = 'https://cdn.example.com/owo.json';
+		localStorage.setItem(
+			`${EMOJI_CACHE_PREFIX}${cdn}`,
+			JSON.stringify({
+				savedAt: Date.now() - 8 * 24 * 60 * 60 * 1000,
+				packs: { Bilibili: { type: 'image', container: [{ icon: `<img src="https://cdn.example.com/a.png">`, text: 'doge' }] } },
+			})
+		);
+		const fetch = fetchMock(async () =>
+			jsonResponse(listBody([makeComment({ contentHtml: '<p>看这个 :doge: 表情</p>' })], { emoji_cdn_url: cdn }))
+		);
+		const { container } = renderComments();
+
+		await waitFor(() => expect(container.textContent).toContain('看这个 :doge: 表情'));
+		expect(container.querySelector('img.momo-emoji')).toBeNull();
+		expect(fetch.calls.length).toBe(1);
 	});
 });
 

@@ -3,6 +3,7 @@ import { db, schema } from "../../orm/client";
 import { setSetting } from "../../utils/settings";
 import { checkKey, extractToken, checkContent, sanitizeUrl, sanitizeHtml, isValidIpBlacklistJson } from "../../utils/security";
 import { validateSpamSettings } from "../../utils/spam";
+import { normalizeEmojiEnabled, validateEmojiCdnUrl, validateEmojiEnabled } from "../../utils/emoji";
 import { parseMarkdown } from "../../utils/markdown";
 import { applyTrustProxySetting } from "../../utils/ip";
 import LogService from "../../utils/log";
@@ -189,6 +190,8 @@ export async function importSettings(c: Context): Promise<Response> {
     "comment_verify_retention_days",
     "comment_verify_log_challenge",
     "trust_proxy",
+    "emoji_enabled",
+    "emoji_cdn_url",
   ]);
 
   if ("ip_blacklist" in body && !isValidIpBlacklistJson(String((body as any).ip_blacklist ?? ""))) {
@@ -204,11 +207,36 @@ export async function importSettings(c: Context): Promise<Response> {
     return c.json({ code: 400, message: spamError }, 400);
   }
 
+  // 表情配置：导入文件同样不可信，必须逐项校验（口径见 doc/emoji.md）
+  if ("emoji_enabled" in (body as Record<string, unknown>)) {
+    const enabledError = validateEmojiEnabled((body as Record<string, unknown>).emoji_enabled);
+    if (enabledError) {
+      return c.json({ code: 400, message: enabledError }, 400);
+    }
+  }
+  if ("emoji_cdn_url" in (body as Record<string, unknown>)) {
+    const cdnError = validateEmojiCdnUrl((body as Record<string, unknown>).emoji_cdn_url);
+    if (cdnError) {
+      return c.json({ code: 400, message: cdnError }, 400);
+    }
+  }
+
   const updated: string[] = [];
   for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
     if (!allowedSettings.has(key) || value === undefined || value === null) continue;
     // 导出的敏感字段是空串：留空表示「未修改」，不得覆盖已有值
     if (SENSITIVE_SETTINGS.includes(key) && String(value) === "") continue;
+    // 与 PUT /admin/settings 一致：地址去空格、开关归一化为小写
+    if (key === "emoji_cdn_url") {
+      await setSetting(key, String(value).trim());
+      updated.push(key);
+      continue;
+    }
+    if (key === "emoji_enabled") {
+      await setSetting(key, normalizeEmojiEnabled(value));
+      updated.push(key);
+      continue;
+    }
     await setSetting(key, String(value));
     updated.push(key);
   }

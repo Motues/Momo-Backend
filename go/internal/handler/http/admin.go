@@ -100,6 +100,8 @@ func (h *CommentHandler) GetSettings(c *gin.Context) {
 		"email":    {"smtp_host", "smtp_port", "email_user", "email_password", "email_secure", "email_enabled", "email_verify_enabled", "verify_base_url", "reply_template", "notification_template"},
 		"security": {"allow_origin", "admin_comment_key", "admin_comment_key_enabled", "ip_blacklist", "email_blacklist", "comment_verify_enabled", "comment_verify_difficulty", "comment_verify_instr_enabled", "comment_verify_block_automated", "comment_verify_domain_enabled", "comment_verify_retention_days", "comment_verify_log_challenge", "trust_proxy"},
 		"account":  {"admin_name"},
+		// 表情设置：是否启用 + OwO 来源地址（见 doc/emoji.md）
+		"emoji": {"emoji_enabled", "emoji_cdn_url"},
 	}
 
 	// 支持按 type 参数过滤
@@ -182,12 +184,34 @@ func (h *CommentHandler) UpdateSettings(c *gin.Context) {
 		return
 	}
 
+	// 表情开关只接受 true / false（归一化后），否则前端会拿到一个无法解释的值（口径见 doc/emoji.md）
+	if raw, ok := body["emoji_enabled"]; ok {
+		if msg := utils.ValidateEmojiEnabled(raw); msg != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": msg})
+			return
+		}
+	}
+	if raw, ok := body["emoji_cdn_url"]; ok {
+		if msg := utils.ValidateEmojiCdnURL(raw); msg != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": msg})
+			return
+		}
+	}
+
 	smtpChanged := body["smtp_host"] != "" || body["smtp_port"] != "" || body["email_user"] != "" || body["email_password"] != ""
 
 	for key, value := range body {
 		// Bug fix: 邮箱密码为空时不覆盖已有密码
 		if key == "email_password" && value == "" {
 			continue
+		}
+		// 地址两侧的空格会让前端 fetch 拿到一个畸形 URL，这里顺手归一化；
+		// 开关同样存归一化后的值（小写、去空白），读取路径才不必反复纠错
+		if key == "emoji_cdn_url" {
+			value = strings.TrimSpace(value)
+		}
+		if key == "emoji_enabled" {
+			value = utils.NormalizeEmojiEnabled(value)
 		}
 		if err := utils.SetSetting(key, value); err != nil {
 			log.Printf("[ERROR] Failed to update setting %s: %v", key, err)
@@ -846,6 +870,8 @@ func (h *CommentHandler) ExportSettings(c *gin.Context) {
 		"comment_verify_retention_days":  true,
 		"comment_verify_log_challenge":   true,
 		"trust_proxy":                    true,
+		// 表情设置：是否启用 + 来源地址（非敏感，正常导出）
+		"emoji_cdn_url": true, "emoji_enabled": true,
 	}
 	for key := range allowList {
 		if val, ok := all[key]; ok {
@@ -1066,6 +1092,8 @@ func (h *CommentHandler) ImportSettings(c *gin.Context) {
 		"trust_proxy":                    true,
 		"allow_origin":                   true, "email_enabled": true,
 		"reply_template": true, "notification_template": true,
+		// 表情设置：是否启用 + 来源地址（非敏感，正常导入）
+		"emoji_cdn_url": true, "emoji_enabled": true,
 	}
 
 	// 黑名单格式校验：非法条目会让规则失效甚至误伤全部 IP，必须在入口拦下
@@ -1083,6 +1111,20 @@ func (h *CommentHandler) ImportSettings(c *gin.Context) {
 		return
 	}
 
+	// 表情设置：导入文件同样不可信，必须按同一套口径校验（见 doc/emoji.md 第 3.1 节）
+	if raw, ok := body["emoji_enabled"]; ok {
+		if msg := utils.ValidateEmojiEnabled(raw); msg != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": msg})
+			return
+		}
+	}
+	if raw, ok := body["emoji_cdn_url"]; ok {
+		if msg := utils.ValidateEmojiCdnURL(raw); msg != "" {
+			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": msg})
+			return
+		}
+	}
+
 	// 契约与 Node/Worker 对齐（C12）：返回已更新的键名数组；空字符串照写（用于清空配置），
 	// 仅导出时被置空的敏感字段留空表示「未修改」
 	updated := make([]string, 0)
@@ -1092,6 +1134,13 @@ func (h *CommentHandler) ImportSettings(c *gin.Context) {
 		}
 		if (key == "email_password" || key == "admin_comment_key") && value == "" {
 			continue
+		}
+		// 与 PUT /admin/settings 一致：地址去两侧空格，开关存归一化后的值
+		if key == "emoji_cdn_url" {
+			value = strings.TrimSpace(value)
+		}
+		if key == "emoji_enabled" {
+			value = utils.NormalizeEmojiEnabled(value)
 		}
 		if err := utils.SetSetting(key, value); err == nil {
 			updated = append(updated, key)
