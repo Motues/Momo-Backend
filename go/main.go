@@ -20,12 +20,10 @@ import (
 	"momo-backend-go/internal/repository/sqlite"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jmoiron/sqlx"
 	_ "modernc.org/sqlite"
 )
 
-// Version 与其余端保持一致；1.6.0 起人机验证升级到协议 v2（破坏性变更，详见 doc/update.md）
-const Version = "1.7.0"
+const Version = "1.8.0"
 
 func main() {
 
@@ -62,7 +60,9 @@ func main() {
 	}
 
 	// 3. 连接数据库并初始化表结构
-	db, err := sqlx.Connect("sqlite", dbPath)
+	//    统一走 sqlite.OpenDB：DSN 里带上 busy_timeout（后台发信 goroutine 也会写 MailLog，
+	//    见 internal/repository/sqlite/db.go 的说明）
+	db, err := sqlite.OpenDB(dbPath)
 	if err != nil {
 		log.Fatalf("数据库连接失败: %v", err)
 	}
