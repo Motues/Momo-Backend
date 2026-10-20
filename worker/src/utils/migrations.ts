@@ -72,6 +72,109 @@ const MIGRATIONS: Migration[] = [
     description: 'VerifyRecord 增加 origin 列（来源域名绑定：记录解题/被拒的来源域名）',
     statements: [`ALTER TABLE VerifyRecord ADD COLUMN origin TEXT`],
   },
+  {
+    /**
+     * 历史链接批量更新（LinkSyncRequest）。
+     *
+     * 与 schemas/comment.sql 里的定义逐字一致：新库用那份建表，已部署的 D1
+     * 靠这条迁移补齐。纯 CREATE ... IF NOT EXISTS，非破坏性，可安全自动执行。
+     */
+    id: '0004_link_sync_request',
+    description: '新增 LinkSyncRequest 表：历史评论链接批量更新的待确认记录',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS LinkSyncRequest (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         email TEXT NOT NULL,
+         new_url TEXT NOT NULL,
+         token TEXT NOT NULL UNIQUE,
+         expires_at TEXT NOT NULL,
+         confirmed INTEGER NOT NULL DEFAULT 0,
+         created_at TEXT NOT NULL
+       )`,
+      `CREATE INDEX IF NOT EXISTS idx_lsr_email ON LinkSyncRequest(email)`,
+      `CREATE INDEX IF NOT EXISTS idx_lsr_token ON LinkSyncRequest(token)`,
+    ],
+  },
+  {
+    /**
+     * 休眠链接的人工确认（TrustedLink）。
+     *
+     * 与 schemas/comment.sql 里的定义逐字一致：新库用那份建表，已部署的 D1
+     * 靠这条迁移补齐。纯 CREATE ... IF NOT EXISTS，非破坏性，可安全自动执行。
+     */
+    id: '0005_trusted_link',
+    description: '新增 TrustedLink 表：管理员对休眠链接的人工确认（到期自动恢复休眠）',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS TrustedLink (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         email TEXT NOT NULL,
+         url TEXT NOT NULL,
+         expires_at TEXT NOT NULL,
+         created_at TEXT NOT NULL
+       )`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_tl_email_url ON TrustedLink(email, url)`,
+      `CREATE INDEX IF NOT EXISTS idx_tl_email ON TrustedLink(email)`,
+    ],
+  },
+  {
+    /**
+     * TrustedLink 增加 source 列：区分「管理员人工确认」与「评论者本人从提醒页确认」。
+     *
+     * 与 schemas/comment.sql 里的定义一致：新库由那份 DDL 直接建出该列（默认 'admin'），
+     * 已部署的 D1 靠这条迁移补齐。纯新增列，旧行为 'admin'。
+     */
+    id: '0006_trusted_link_source',
+    description: `TrustedLink 增加 source 列（admin = 管理员确认 / self = 本人从提醒页确认）`,
+    statements: [`ALTER TABLE TrustedLink ADD COLUMN source TEXT NOT NULL DEFAULT 'admin'`],
+  },
+  {
+    /**
+     * 邮件发送日志（MailLog）。
+     *
+     * 与 schemas/comment.sql 里的定义逐字一致：新库用那份建表，已部署的 D1
+     * 靠这条迁移补齐。纯 CREATE ... IF NOT EXISTS，非破坏性，可安全自动执行。
+     */
+    id: '0007_mail_log',
+    description: '新增 MailLog 表：邮件发送日志（保留最近 30 天）',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS MailLog (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         type TEXT NOT NULL,
+         recipient TEXT NOT NULL,
+         subject TEXT NOT NULL,
+         status TEXT NOT NULL,
+         error TEXT,
+         created_at TEXT NOT NULL
+       )`,
+      `CREATE INDEX IF NOT EXISTS idx_ml_created ON MailLog(created_at)`,
+      `CREATE INDEX IF NOT EXISTS idx_ml_status ON MailLog(status)`,
+    ],
+  },
+  {
+    /**
+     * 休眠提醒状态机（DormantNotice）。
+     *
+     * 与 schemas/comment.sql 里的定义逐字一致：新库用那份建表，已部署的 D1
+     * 靠这条迁移补齐。纯 CREATE ... IF NOT EXISTS，非破坏性，可安全自动执行。
+     */
+    id: '0008_dormant_notice',
+    description: '新增 DormantNotice 表：休眠链接提醒的状态机',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS DormantNotice (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         email TEXT NOT NULL,
+         url TEXT NOT NULL,
+         last_comment_at INTEGER NOT NULL,
+         token TEXT NOT NULL UNIQUE,
+         expires_at TEXT NOT NULL,
+         notified_at TEXT NOT NULL,
+         notify_count INTEGER NOT NULL DEFAULT 1
+       )`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_dn_email_url ON DormantNotice(email, url)`,
+      `CREATE INDEX IF NOT EXISTS idx_dn_token ON DormantNotice(token)`,
+      `CREATE INDEX IF NOT EXISTS idx_dn_email ON DormantNotice(email)`,
+    ],
+  },
 ];
 
 const SCHEMA_MIGRATION_DDL = `

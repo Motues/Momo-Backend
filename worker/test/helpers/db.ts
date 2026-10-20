@@ -20,12 +20,16 @@ export type TestBindings = {
 
 export const testEnv = env as unknown as TestBindings;
 
-/** schemas/comment.sql 中定义的五张表 */
+/** schemas/comment.sql 中定义的表 */
 export const EXPECTED_TABLES = [
 	'Comment',
+	'DormantNotice',
 	'EmailVerification',
+	'LinkSyncRequest',
+	'MailLog',
 	'SchemaMigration',
 	'Settings',
+	'TrustedLink',
 	'VerifyRecord',
 ];
 
@@ -364,8 +368,232 @@ export async function countVerifyRecords(): Promise<number> {
 	return row?.count ?? 0;
 }
 
-/* ------------------------------- KV 辅助 --------------------------------- */
+/* ----------------------------- LinkSyncRequest 表 --------------------------- */
 
+export interface SeedLinkSyncInput {
+	email?: string;
+	new_url?: string;
+	token?: string;
+	/** ISO 字符串；默认 24 小时后过期 */
+	expires_at?: string;
+	confirmed?: number;
+}
+
+/** 播种一条历史链接同步记录，返回自增 id */
+export async function seedLinkSyncRequest(input: SeedLinkSyncInput = {}): Promise<number> {
+	const row = {
+		email: 'alice@example.com',
+		new_url: 'https://new.example.com',
+		token: 'lsr-token-1',
+		expires_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+		confirmed: 0,
+		...input,
+	};
+	const result = await testEnv.MOMO_DB.prepare(
+		`INSERT INTO LinkSyncRequest (email, new_url, token, expires_at, confirmed, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`
+	)
+		.bind(row.email, row.new_url, row.token, row.expires_at, row.confirmed, new Date().toISOString())
+		.run();
+	return Number(result.meta.last_row_id);
+}
+
+export interface LinkSyncRow {
+	id: number;
+	email: string;
+	new_url: string;
+	token: string;
+	expires_at: string;
+	confirmed: number;
+	created_at: string;
+}
+
+/** 读取全部 LinkSyncRequest（按 id 升序） */
+export async function allLinkSyncRequests(): Promise<LinkSyncRow[]> {
+	const { results } = await testEnv.MOMO_DB.prepare(
+		'SELECT * FROM LinkSyncRequest ORDER BY id ASC'
+	).all<LinkSyncRow>();
+	return results ?? [];
+}
+
+/* ------------------------------ TrustedLink 表 ----------------------------- */
+
+export interface SeedTrustedLinkInput {
+	email?: string;
+	url?: string;
+	/** ISO 字符串；默认 30 天后过期 */
+	expires_at?: string;
+	/** ISO 字符串；默认「现在」 */
+	created_at?: string;
+	/** 确认来源：'admin'（默认，与建表默认值一致）/ 'self' */
+	source?: string;
+}
+
+/** 播种一条人工确认记录（TrustedLink），返回自增 id */
+export async function seedTrustedLink(input: SeedTrustedLinkInput = {}): Promise<number> {
+	const row = {
+		email: 'alice@example.com',
+		url: 'https://alice.example.com',
+		expires_at: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString(),
+		created_at: new Date().toISOString(),
+		source: 'admin',
+		...input,
+	};
+	const result = await testEnv.MOMO_DB.prepare(
+		`INSERT INTO TrustedLink (email, url, expires_at, created_at, source)
+     VALUES (?, ?, ?, ?, ?)`
+	)
+		.bind(row.email, row.url, row.expires_at, row.created_at, row.source)
+		.run();
+	return Number(result.meta.last_row_id);
+}
+
+export interface TrustedLinkRow {
+	id: number;
+	email: string;
+	url: string;
+	expires_at: string;
+	created_at: string;
+	source: string;
+}
+
+/** 读取全部 TrustedLink（按 id 升序） */
+export async function allTrustedLinks(): Promise<TrustedLinkRow[]> {
+	const { results } = await testEnv.MOMO_DB.prepare(
+		'SELECT * FROM TrustedLink ORDER BY id ASC'
+	).all<TrustedLinkRow>();
+	return results ?? [];
+}
+
+/* -------------------------------- MailLog 表 ------------------------------- */
+
+export interface SeedMailLogInput {
+	/** verify / link_sync / dormant_notice / comment_notify / reply_notify / test */
+	type?: string;
+	recipient?: string;
+	subject?: string;
+	/** sent / failed */
+	status?: string;
+	error?: string | null;
+	/** ISO 字符串；默认「现在」 */
+	created_at?: string;
+}
+
+/** 播种一行邮件日志（MailLog），返回自增 id */
+export async function seedMailLog(input: SeedMailLogInput = {}): Promise<number> {
+	const row = {
+		type: 'test',
+		recipient: 'admin@example.com',
+		subject: 'SMTP 配置验证',
+		status: 'sent',
+		error: null,
+		created_at: new Date().toISOString(),
+		...input,
+	};
+	const result = await testEnv.MOMO_DB.prepare(
+		`INSERT INTO MailLog (type, recipient, subject, status, error, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`
+	)
+		.bind(row.type, row.recipient, row.subject, row.status, row.error, row.created_at)
+		.run();
+	return Number(result.meta.last_row_id);
+}
+
+export interface MailLogRow {
+	id: number;
+	type: string;
+	recipient: string;
+	subject: string;
+	status: string;
+	error: string | null;
+	created_at: string;
+}
+
+/** 读取全部邮件日志（按 id 升序） */
+export async function allMailLogs(): Promise<MailLogRow[]> {
+	const { results } = await testEnv.MOMO_DB.prepare('SELECT * FROM MailLog ORDER BY id ASC').all<MailLogRow>();
+	return results ?? [];
+}
+
+/** 邮件日志条数 */
+export async function countMailLogs(): Promise<number> {
+	const row = await testEnv.MOMO_DB.prepare('SELECT COUNT(*) as count FROM MailLog').first<{ count: number }>();
+	return row?.count ?? 0;
+}
+
+/* ----------------------------- DormantNotice 表 ---------------------------- */
+
+export interface SeedDormantNoticeInput {
+	email?: string;
+	url?: string;
+	/** 发提醒时该邮箱「最后一条评论」的毫秒时间戳 */
+	last_comment_at?: number;
+	token?: string;
+	/** ISO 字符串；默认 30 天后过期 */
+	expires_at?: string;
+	/** ISO 字符串；默认「现在」 */
+	notified_at?: string;
+	notify_count?: number;
+}
+
+/** 播种一条休眠提醒记录（DormantNotice），返回自增 id */
+export async function seedDormantNotice(input: SeedDormantNoticeInput = {}): Promise<number> {
+	const row = {
+		email: 'alice@example.com',
+		url: 'https://alice.example.com',
+		last_comment_at: 1730000000000,
+		token: 'dn-token-1',
+		expires_at: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString(),
+		notified_at: new Date().toISOString(),
+		notify_count: 1,
+		...input,
+	};
+	const result = await testEnv.MOMO_DB.prepare(
+		`INSERT INTO DormantNotice (email, url, last_comment_at, token, expires_at, notified_at, notify_count)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+	)
+		.bind(
+			row.email,
+			row.url,
+			row.last_comment_at,
+			row.token,
+			row.expires_at,
+			row.notified_at,
+			row.notify_count
+		)
+		.run();
+	return Number(result.meta.last_row_id);
+}
+
+export interface DormantNoticeRowShape {
+	id: number;
+	email: string;
+	url: string;
+	last_comment_at: number;
+	token: string;
+	expires_at: string;
+	notified_at: string;
+	notify_count: number;
+}
+
+/** 读取全部休眠提醒记录（按 id 升序） */
+export async function allDormantNotices(): Promise<DormantNoticeRowShape[]> {
+	const { results } = await testEnv.MOMO_DB.prepare(
+		'SELECT * FROM DormantNotice ORDER BY id ASC'
+	).all<DormantNoticeRowShape>();
+	return results ?? [];
+}
+
+/** 按 token 读取一条休眠提醒记录 */
+export async function getDormantNoticeByToken(
+	token: string
+): Promise<DormantNoticeRowShape | null> {
+	return await testEnv.MOMO_DB.prepare('SELECT * FROM DormantNotice WHERE token = ?')
+		.bind(token)
+		.first<DormantNoticeRowShape>();
+}
+
+/* ------------------------------- KV 辅助 --------------------------------- */
 /** 列出 KV 中的键名（可按前缀过滤） */
 export async function kvKeys(prefix = ''): Promise<string[]> {
 	const listed = await testEnv.MOMO_AUTH_KV.list({ prefix });

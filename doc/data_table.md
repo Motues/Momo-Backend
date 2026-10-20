@@ -57,7 +57,13 @@
 | key | 说明 |
 |-----|------|
 | `site_name` | 站点名称 |
-| `admin_email` | 管理员邮箱 |
+| `admin_email` | 管理员邮箱（**旧键**：`admin_emails` 为空时回落成单元素列表） |
+| `admin_emails` | 管理员邮箱列表（JSON 数组，最多 10 个，trim + 小写 + 去重）：列表里的人都是博主，见 `doc/admin_emails.md` |
+| `notify_email` | 通知收件邮箱（新评论通知与测试邮件的收件人）；必须命中 `admin_emails`，未配置或不在列表时回落列表第一个 |
+| `link_security_enabled` | 链接安全审查（休眠链接）总开关，默认 `"false"`；**fail-closed**，只有 `"true"` 才算开启 |
+| `link_dormant_days` | 多久没来评论就标记为休眠（整数 1–3650，默认 `"30"`），见 `doc/link_security.md` |
+| `link_sync_enabled` | 历史链接批量更新开关，默认 `"false"`（还要求 `email_verify_enabled = "true"`） |
+| `link_dormant_notice_enabled` | 链接进入休眠时是否给评论者发提醒邮件，默认 `"false"`（还要求 `link_security_enabled` 与 `email_verify_enabled` 都为 `"true"`），见 `doc/link_security.md` 第 2.7 节 |
 | `admin_name` | 管理员用户名 |
 | `admin_password` | 管理员密码（bcrypt 哈希） |
 | `smtp_host` | SMTP 服务器地址 |
@@ -66,6 +72,7 @@
 | `email_password` | 邮箱密码 |
 | `email_secure` | 是否使用 SSL/TLS 加密 |
 | `email_enabled` | 是否启用邮件通知 |
+| `mail_log_retention_days` | 外发邮件日志（`MailLog`）保留天数，默认 `"30"`；`"0"` 表示永久保留，只能是 0–3650 的整数。写入时存规范化后的十进制，超期记录在写下一封邮件日志时自动清理 |
 | `reply_template` | 回复通知邮件模板 |
 | `notification_template` | 新评论通知邮件模板 |
 | `comment_auto_approve` | 是否自动审核通过 |
@@ -121,6 +128,119 @@
 
 ---
 
+## 表：`LinkSyncRequest`
+
+历史链接批量更新的**待确认记录**（见 `doc/link_security.md` 第 3.3 节）。
+评论者提交新网址后系统发一封确认邮件；只有确认链接被打开、且 `token`/`email` 都匹配时，
+才会把该邮箱所有历史评论的 `url` 改成新网址。
+
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | 自增 ID |
+| `email` | TEXT | NOT NULL | 归一化（`trim` + 小写）后的邮箱：**身份凭据** |
+| `new_url` | TEXT | NOT NULL | 新网址（已过 `sanitizeUrl`：只可能是 http/https/mailto/相对路径） |
+| `token` | TEXT | NOT NULL UNIQUE | 一次性确认令牌 |
+| `expires_at` | TEXT | NOT NULL | 过期时间（ISO 8601 UTC，**24 小时**） |
+| `confirmed` | INTEGER | NOT NULL DEFAULT 0 | 是否已确认（0/1，单次使用） |
+| `created_at` | TEXT | NOT NULL | 创建时间（ISO 8601 UTC） |
+
+### 索引
+
+| 索引名 | 字段 | 说明 |
+|--------|------|------|
+| `idx_lsr_email` | `email` | 同一邮箱的待确认记录查询与作废 |
+| `idx_lsr_token` | `token` | 确认端点的令牌查找 |
+
+> **写入语义**：同一邮箱只保留一条有效待确认记录（写新记录前先删掉旧的未确认记录，
+> 让旧邮件里的链接立刻失效）；过期的未确认记录由写路径惰性清理。
+
+---
+
+## 表：`TrustedLink`
+
+**休眠链接的人工确认**记录（见 `doc/link_security.md` 第 2.4 / 2.5 节）。
+管理员在后台用户列表点「确认安全」后写入一条记录，该 `(email, url)` 在 `expires_at` 之前
+不再被判为休眠；到期自动恢复休眠（读取时实时比较，无定时任务）。
+
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | 自增 ID |
+| `email` | TEXT | NOT NULL | 归一化（`trim` + 小写）后的邮箱：与休眠判定的身份口径一致 |
+| `url` | TEXT | NOT NULL | 网址（已过 `sanitizeUrl`）；与评论里的 `url` **逐字相等**才算命中 |
+| `expires_at` | TEXT | NOT NULL | 到期时间（ISO 8601 UTC，`YYYY-MM-DDTHH:mm:ss.sssZ`）= 确认时刻 + 当时的 `link_dormant_days` 天 |
+| `created_at` | TEXT | NOT NULL | 本次确认时间（同一格式；重复确认会刷新） |
+| `source` | TEXT | NOT NULL DEFAULT `'admin'` | 确认来源：`admin` 管理员在用户列表人工确认 / `self` 评论者本人从提醒邮件确认 |
+
+### 索引
+
+| 索引名 | 字段 | 说明 |
+|--------|------|------|
+| `idx_tl_email_url` | `email` + `url`（**UNIQUE**） | 确认是幂等 upsert：同一对只留一行，重复确认刷新到期时间 |
+| `idx_tl_email` | `email` | 按邮箱批量取「本页涉及的确认记录」（一次查询，避免 N+1） |
+
+> **过期判定在应用层**：`expires_at` 只接受写入格式本身（`YYYY-MM-DDTHH:mm:ss.sssZ`），
+> 格式不符 / 无法解析一律视为**已过期**（fail-closed，不豁免休眠）——
+> 因为 JS 的 `Date.parse` 比 Go 的 `time.Parse(RFC3339)` 宽容，只按「能解析就算」两端会不一致。
+> 该口径由 `doc/vectors/link-security-v1.json` 的 `trust` 段钉死。
+
+---
+
+## 表：`DormantNotice`
+
+**休眠链接提醒邮件**的状态机（见 `doc/link_security.md` 第 2.7 节）。
+本仓库三端都没有定时任务，休眠是「读取公开评论列表时实时推导」的；当某条链接刚进入休眠
+且还没提醒过时，读取路径会异步发一封提醒邮件并在这里落一条记录，保证
+**同一个休眠周期只提醒一次**（锚点是该邮箱的「最后评论时间」）。该记录同时承载
+提醒页令牌：确认或换链接后即被删除，所以旧邮件里的链接随之失效。
+
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | 自增 ID |
+| `email` | TEXT | NOT NULL | 归一化（`trim` + 小写）后的邮箱 |
+| `url` | TEXT | NOT NULL | 触发休眠的那个网址 |
+| `last_comment_at` | INTEGER | NOT NULL | 发提醒时该邮箱「最后一条评论」的毫秒时间戳（判断是否同一休眠周期） |
+| `token` | TEXT | NOT NULL UNIQUE | 提醒页令牌（每次发信都会换新的） |
+| `expires_at` | TEXT | NOT NULL | 提醒页有效期（ISO 8601 UTC）= 发信时刻 + `link_dormant_days` 天 |
+| `notified_at` | TEXT | NOT NULL | 本次提醒时间（同一格式） |
+| `notify_count` | INTEGER | NOT NULL DEFAULT 1 | 该 `(email, url)` 累计提醒次数 |
+
+### 索引
+
+| 索引名 | 字段 | 说明 |
+|--------|------|------|
+| `idx_dn_email_url` | `email` + `url`（**UNIQUE**） | 一个 `(邮箱, 网址)` 只留一行（重复提醒时刷新令牌与有效期） |
+| `idx_dn_token` | `token` | 提醒页按令牌查找 |
+| `idx_dn_email` | `email` | 按本页邮箱集合批量取记录（一次查询，避免 N+1） |
+
+---
+
+## 表：`MailLog`
+
+**外发邮件日志**（管理面板「邮件管理」页的数据源，口径见 `doc/mail.md` 第 6 节）。
+
+只记**真正尝试发送**的邮件：SMTP 未配置、`email_enabled = "false"` 导致的「跳过」不记。
+写入发生在三端各自由此一个底层发送函数里，发送失败同样记一行并带错误信息
+（错误照旧抛给调用方，日志不改变发送语义）。默认保留 **30 天**，写入时顺手清理过期行。
+
+| 字段 | 类型 | 约束 | 说明 |
+|------|------|------|------|
+| `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | 自增 ID |
+| `type` | TEXT | NOT NULL | `verify` / `link_sync` / `dormant_notice` / `comment_notify` / `reply_notify` / `test` |
+| `recipient` | TEXT | NOT NULL | 收件人；多个用 `, ` 连接（**一次实际发送 = 一行**） |
+| `subject` | TEXT | NOT NULL | 实际发出的主题 |
+| `status` | TEXT | NOT NULL | `sent` / `failed` |
+| `error` | TEXT | — | 失败原因（成功时为 NULL，写库前截断到 500 字符） |
+| `created_at` | TEXT | NOT NULL | 发送时间（ISO 8601 UTC，`YYYY-MM-DDTHH:mm:ss.sssZ`） |
+
+### 索引
+
+| 索引名 | 字段 | 说明 |
+|--------|------|------|
+| `idx_ml_created` | `created_at` | 列表倒序 + 保留期清理 |
+| `idx_ml_status` | `status` | 按成功/失败筛选 |
+
+---
+
 ## 表：`VerifyRecord`
 
 评论无感验证（人机验证）的**认证记录**。一次完整认证最多产生三条记录：
@@ -152,17 +272,6 @@
 | `idx_vr_created` | `created_at` | 时间窗口统计与过期清理 |
 | `idx_vr_event` | `event` | 按事件类型筛选/计数 |
 | `idx_vr_cid` | `challenge_id` | 串联同一次认证的签发与结果 |
-
-> **建表方式（三端一致）**: Node 见 `nodejs/src/orm/migrations.ts` 的 `SCHEMA_DDL`，
-> Go 见 `go/internal/repository/sqlite/comment.go` 的 `InitSchema`，
-> Worker 见 `worker/schemas/comment.sql` 与启动自迁移 `0002_verify_record_table`
-> （`worker/src/utils/migrations.ts`）。三者都是 `CREATE TABLE IF NOT EXISTS`，
-> 已有部署重启（Node/Go）或下次请求（Worker）即自动补表。
->
-> **`origin` 列是后加的**（来源域名绑定）：三端各有一条补列迁移
-> （Node `0002_verify_record_origin`、Worker 同批版本化迁移、Go 的启动自迁移），
-> 对旧库执行 `ALTER TABLE ... ADD COLUMN "origin" TEXT`；新库由建表 DDL 直接带上该列，
-> 此时补列迁移会撞上 `duplicate column name`，按「已应用」处理（见 Node 的迁移执行器）。
 
 ### 统计口径
 

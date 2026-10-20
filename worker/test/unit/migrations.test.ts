@@ -21,8 +21,22 @@ const ISO_MILLIS = 1709618828000;
 const MIGRATION_ID = '0001_pub_date_to_millis';
 const MIGRATION_ID_VERIFY_RECORD = '0002_verify_record_table';
 const MIGRATION_ID_VERIFY_RECORD_ORIGIN = '0003_verify_record_origin';
+const MIGRATION_ID_LINK_SYNC = '0004_link_sync_request';
+const MIGRATION_ID_TRUSTED_LINK = '0005_trusted_link';
+const MIGRATION_ID_TRUSTED_LINK_SOURCE = '0006_trusted_link_source';
+const MIGRATION_ID_MAIL_LOG = '0007_mail_log';
+const MIGRATION_ID_DORMANT_NOTICE = '0008_dormant_notice';
 /** 已发布的迁移 id 列表（顺序即执行顺序）：新增迁移时必须同步这里 */
-const MIGRATION_IDS = [MIGRATION_ID, MIGRATION_ID_VERIFY_RECORD, MIGRATION_ID_VERIFY_RECORD_ORIGIN];
+const MIGRATION_IDS = [
+	MIGRATION_ID,
+	MIGRATION_ID_VERIFY_RECORD,
+	MIGRATION_ID_VERIFY_RECORD_ORIGIN,
+	MIGRATION_ID_LINK_SYNC,
+	MIGRATION_ID_TRUSTED_LINK,
+	MIGRATION_ID_TRUSTED_LINK_SOURCE,
+	MIGRATION_ID_MAIL_LOG,
+	MIGRATION_ID_DORMANT_NOTICE,
+];
 
 /** 读取某条评论 pub_date 的 SQLite 存储类型（integer / text / real / null） */
 async function typeofPubDate(id: number): Promise<string | null> {
@@ -194,6 +208,227 @@ describe('ensureMigrated —— 0003_verify_record_origin', () => {
 		expect((await migrationRows()).map((row) => row.id)).toEqual(MIGRATION_IDS);
 		// 且不会重复加列
 		expect((await verifyRecordColumns()).filter((name) => name === 'origin')).toHaveLength(1);
+	});
+});
+
+describe('ensureMigrated —— 0004_link_sync_request', () => {
+	it('为升级前的旧库补齐 LinkSyncRequest 表与两个索引（无需手工执行 SQL）', async () => {
+		await createSchema();
+		// 模拟升级前已有的 D1：有 Comment / SchemaMigration，但没有 LinkSyncRequest
+		await testEnv.MOMO_DB.prepare('DROP TABLE IF EXISTS LinkSyncRequest').run();
+		expect(await tableExists('LinkSyncRequest')).toBe(false);
+
+		const { ensureMigrated } = await import('../../src/utils/migrations?case=link-sync');
+		await ensureMigrated(env);
+
+		expect(await tableExists('LinkSyncRequest')).toBe(true);
+
+		const { results } = await testEnv.MOMO_DB.prepare(
+			"SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'LinkSyncRequest' ORDER BY name"
+		).all<{ name: string }>();
+		// token 的 UNIQUE 约束会带来一个 sqlite_autoindex_*，这里只断言显式建立的两个索引
+		const explicit = (results ?? [])
+			.map((row) => row.name)
+			.filter((name) => !name.startsWith('sqlite_autoindex_'));
+		expect(explicit).toEqual(['idx_lsr_email', 'idx_lsr_token']);
+
+		expect((await migrationRows()).map((row) => row.id)).toEqual(MIGRATION_IDS);
+	});
+
+	it('也可以直接写入一条待确认记录（表结构可用）', async () => {
+		await createSchema();
+		const { seedLinkSyncRequest } = await import('../helpers/db');
+		const expiresAt = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+		const id = await seedLinkSyncRequest({
+			email: 'norm@example.com',
+			new_url: 'https://new.example.com',
+			token: 'tok-1',
+			expires_at: expiresAt,
+		});
+		const row = await testEnv.MOMO_DB.prepare('SELECT * FROM LinkSyncRequest WHERE id = ?')
+			.bind(id)
+			.first<{ email: string; new_url: string; confirmed: number; expires_at: string }>();
+		expect(row).toMatchObject({
+			email: 'norm@example.com',
+			new_url: 'https://new.example.com',
+			confirmed: 0,
+			expires_at: expiresAt,
+		});
+	});
+});
+
+describe('ensureMigrated —— 0005_trusted_link', () => {
+	it('为升级前的旧库补齐 TrustedLink 表与两个索引（无需手工执行 SQL）', async () => {
+		await createSchema();
+		// 模拟升级前已有的 D1：有 Comment / SchemaMigration，但没有 TrustedLink
+		await testEnv.MOMO_DB.prepare('DROP TABLE IF EXISTS TrustedLink').run();
+		expect(await tableExists('TrustedLink')).toBe(false);
+
+		const { ensureMigrated } = await import('../../src/utils/migrations?case=trusted-link');
+		await ensureMigrated(env);
+
+		expect(await tableExists('TrustedLink')).toBe(true);
+
+		const { results } = await testEnv.MOMO_DB.prepare(
+			"SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'TrustedLink' ORDER BY name"
+		).all<{ name: string }>();
+		// (email, url) 的 UNIQUE 会带来一个 sqlite_autoindex_*，这里只断言显式建立的两个索引
+		const explicit = (results ?? [])
+			.map((row) => row.name)
+			.filter((name) => !name.startsWith('sqlite_autoindex_'));
+		expect(explicit).toEqual(['idx_tl_email', 'idx_tl_email_url']);
+
+		expect((await migrationRows()).map((row) => row.id)).toEqual(MIGRATION_IDS);
+	});
+
+	it('也可以直接写入一条人工确认记录（表结构可用）', async () => {
+		await createSchema();
+		const { seedTrustedLink } = await import('../helpers/db');
+		const expiresAt = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString();
+		const id = await seedTrustedLink({
+			email: 'norm@example.com',
+			url: 'https://norm.example.com',
+			expires_at: expiresAt,
+		});
+		const row = await testEnv.MOMO_DB.prepare('SELECT * FROM TrustedLink WHERE id = ?')
+			.bind(id)
+			.first<{ email: string; url: string; expires_at: string }>();
+		expect(row).toMatchObject({
+			email: 'norm@example.com',
+			url: 'https://norm.example.com',
+			expires_at: expiresAt,
+		});
+	});
+});
+
+describe('ensureMigrated —— 0006_trusted_link_source', () => {
+	/** TrustedLink 当前的全部列名 */
+	async function trustedLinkColumns(): Promise<string[]> {
+		const { results } = await testEnv.MOMO_DB.prepare('PRAGMA table_info(TrustedLink)').all<{
+			name: string;
+		}>();
+		return (results ?? []).map((row) => row.name);
+	}
+
+	it('为升级前的旧表补上 source 列，且旧行默认 admin（无需手工执行 SQL）', async () => {
+		await createSchema();
+		// 模拟升级前的 TrustedLink：source 列之前的结构
+		await testEnv.MOMO_DB.prepare('DROP TABLE IF EXISTS TrustedLink').run();
+		await testEnv.MOMO_DB.prepare(
+			`CREATE TABLE TrustedLink (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         email TEXT NOT NULL,
+         url TEXT NOT NULL,
+         expires_at TEXT NOT NULL,
+         created_at TEXT NOT NULL
+       )`
+		).run();
+		await testEnv.MOMO_DB.prepare(
+			`INSERT INTO TrustedLink (email, url, expires_at, created_at) VALUES (?, ?, ?, ?)`
+		)
+			.bind('a@x.com', 'https://a.example.com', new Date(Date.now() + 86400000).toISOString(), new Date().toISOString())
+			.run();
+		expect(await trustedLinkColumns()).not.toContain('source');
+
+		const { ensureMigrated } = await import('../../src/utils/migrations?case=trusted-source');
+		await ensureMigrated(env);
+
+		expect(await trustedLinkColumns()).toContain('source');
+		const row = await testEnv.MOMO_DB.prepare('SELECT source FROM TrustedLink').first<{
+			source: string;
+		}>();
+		expect(row?.source).toBe('admin');
+		expect((await migrationRows()).map((r) => r.id)).toEqual(MIGRATION_IDS);
+	});
+
+	it('列已由建表 DDL 建出时容忍 duplicate column name（新库不会反复报错）', async () => {
+		await createSchema();
+		expect(await trustedLinkColumns()).toContain('source');
+
+		const { ensureMigrated } = await import('../../src/utils/migrations?case=trusted-source-dup');
+		await expect(ensureMigrated(env)).resolves.toBeUndefined();
+
+		expect((await migrationRows()).map((r) => r.id)).toEqual(MIGRATION_IDS);
+		expect((await trustedLinkColumns()).filter((name) => name === 'source')).toHaveLength(1);
+	});
+});
+
+describe('ensureMigrated —— 0007_mail_log', () => {
+	it('为升级前的旧库补齐 MailLog 表与两个索引（无需手工执行 SQL）', async () => {
+		await createSchema();
+		// 模拟升级前已有的 D1：有 Comment / SchemaMigration，但没有 MailLog
+		await testEnv.MOMO_DB.prepare('DROP TABLE IF EXISTS MailLog').run();
+		expect(await tableExists('MailLog')).toBe(false);
+
+		const { ensureMigrated } = await import('../../src/utils/migrations?case=mail-log');
+		await ensureMigrated(env);
+
+		expect(await tableExists('MailLog')).toBe(true);
+
+		const { results } = await testEnv.MOMO_DB.prepare(
+			"SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'MailLog' ORDER BY name"
+		).all<{ name: string }>();
+		const explicit = (results ?? [])
+			.map((row) => row.name)
+			.filter((name) => !name.startsWith('sqlite_autoindex_'));
+		expect(explicit).toEqual(['idx_ml_created', 'idx_ml_status']);
+
+		expect((await migrationRows()).map((row) => row.id)).toEqual(MIGRATION_IDS);
+	});
+
+	it('也可以直接写入一行邮件日志（表结构可用）', async () => {
+		await createSchema();
+		const { seedMailLog } = await import('../helpers/db');
+		const id = await seedMailLog({ type: 'dormant_notice', status: 'failed', error: 'boom' });
+		const row = await testEnv.MOMO_DB.prepare('SELECT * FROM MailLog WHERE id = ?')
+			.bind(id)
+			.first<{ type: string; status: string; error: string }>();
+		expect(row).toMatchObject({ type: 'dormant_notice', status: 'failed', error: 'boom' });
+	});
+});
+
+describe('ensureMigrated —— 0008_dormant_notice', () => {
+	it('为升级前的旧库补齐 DormantNotice 表与三个索引（无需手工执行 SQL）', async () => {
+		await createSchema();
+		// 模拟升级前已有的 D1：有 Comment / SchemaMigration，但没有 DormantNotice
+		await testEnv.MOMO_DB.prepare('DROP TABLE IF EXISTS DormantNotice').run();
+		expect(await tableExists('DormantNotice')).toBe(false);
+
+		const { ensureMigrated } = await import('../../src/utils/migrations?case=dormant-notice');
+		await ensureMigrated(env);
+
+		expect(await tableExists('DormantNotice')).toBe(true);
+
+		const { results } = await testEnv.MOMO_DB.prepare(
+			"SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'DormantNotice' ORDER BY name"
+		).all<{ name: string }>();
+		// token 的 UNIQUE 与 (email, url) 的 UNIQUE 各带来一个 sqlite_autoindex_*，这里只断言显式索引
+		const explicit = (results ?? [])
+			.map((row) => row.name)
+			.filter((name) => !name.startsWith('sqlite_autoindex_'));
+		expect(explicit).toEqual(['idx_dn_email', 'idx_dn_email_url', 'idx_dn_token']);
+
+		expect((await migrationRows()).map((row) => row.id)).toEqual(MIGRATION_IDS);
+	});
+
+	it('也可以直接写入一条提醒记录（表结构可用）', async () => {
+		await createSchema();
+		const { seedDormantNotice } = await import('../helpers/db');
+		const id = await seedDormantNotice({
+			email: 'norm@example.com',
+			url: 'https://norm.example.com',
+			token: 'tok-dn',
+			notify_count: 2,
+		});
+		const row = await testEnv.MOMO_DB.prepare('SELECT * FROM DormantNotice WHERE id = ?')
+			.bind(id)
+			.first<{ email: string; url: string; token: string; notify_count: number }>();
+		expect(row).toMatchObject({
+			email: 'norm@example.com',
+			url: 'https://norm.example.com',
+			token: 'tok-dn',
+			notify_count: 2,
+		});
 	});
 });
 

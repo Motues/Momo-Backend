@@ -44,6 +44,89 @@ var migrations = []Migration{
 			`ALTER TABLE VerifyRecord ADD COLUMN origin TEXT`,
 		},
 	},
+	{
+		ID:          "0003_link_sync_request",
+		Description: "新增 LinkSyncRequest 表（历史链接批量更新的待确认记录，见 doc/link_security.md 第 3.3 节）",
+		// 纯新增表：CREATE TABLE IF NOT EXISTS 在旧库上补表，在新库上（InitSchema 已建出）
+		// 是空操作 —— 因此这条迁移在任何库上都会成功并被记录。
+		Statements: []string{
+			`CREATE TABLE IF NOT EXISTS LinkSyncRequest (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				email TEXT NOT NULL,
+				new_url TEXT NOT NULL,
+				token TEXT NOT NULL UNIQUE,
+				expires_at TEXT NOT NULL,
+				confirmed INTEGER NOT NULL DEFAULT 0,
+				created_at TEXT NOT NULL
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_lsr_email ON LinkSyncRequest(email)`,
+			`CREATE INDEX IF NOT EXISTS idx_lsr_token ON LinkSyncRequest(token)`,
+		},
+	},
+	{
+		ID:          "0004_trusted_link",
+		Description: "新增 TrustedLink 表（休眠链接的人工确认，见 doc/link_security.md 第 4 节）",
+		// 纯新增表：CREATE TABLE IF NOT EXISTS 在旧库上补表，在新库上（InitSchema 已建出）
+		// 是空操作 —— 因此这条迁移在任何库上都会成功并被记录。
+		Statements: []string{
+			`CREATE TABLE IF NOT EXISTS TrustedLink (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				email TEXT NOT NULL,
+				url TEXT NOT NULL,
+				expires_at TEXT NOT NULL,
+				created_at TEXT NOT NULL
+			)`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_tl_email_url ON TrustedLink(email, url)`,
+			`CREATE INDEX IF NOT EXISTS idx_tl_email ON TrustedLink(email)`,
+		},
+	},
+	{
+		ID:          "0005_trusted_link_source",
+		Description: "TrustedLink 增加 source 列（admin 管理员确认 / self 本人从提醒邮件确认）",
+		// 纯新增列：旧库上的历史记录都是管理员点出来的，默认 'admin'；新库由 InitSchema 直接建出。
+		// 与 0002 一样，新库上会撞上 duplicate column name，按已应用处理。
+		Statements: []string{
+			`ALTER TABLE TrustedLink ADD COLUMN source TEXT NOT NULL DEFAULT 'admin'`,
+		},
+	},
+	{
+		ID:          "0006_mail_log",
+		Description: "新增 MailLog 表（邮件发送日志，见 doc/mail.md）",
+		// 纯新增表：CREATE TABLE IF NOT EXISTS 在旧库上补表，在新库上是空操作。
+		Statements: []string{
+			`CREATE TABLE IF NOT EXISTS MailLog (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				type TEXT NOT NULL,
+				recipient TEXT NOT NULL,
+				subject TEXT NOT NULL,
+				status TEXT NOT NULL,
+				error TEXT,
+				created_at TEXT NOT NULL
+			)`,
+			`CREATE INDEX IF NOT EXISTS idx_ml_created ON MailLog(created_at)`,
+			`CREATE INDEX IF NOT EXISTS idx_ml_status ON MailLog(status)`,
+		},
+	},
+	{
+		ID:          "0007_dormant_notice",
+		Description: "新增 DormantNotice 表（休眠链接提醒的状态机）",
+		// 纯新增表：CREATE TABLE IF NOT EXISTS 在旧库上补表，在新库上是空操作。
+		Statements: []string{
+			`CREATE TABLE IF NOT EXISTS DormantNotice (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				email TEXT NOT NULL,
+				url TEXT NOT NULL,
+				last_comment_at INTEGER NOT NULL,
+				token TEXT NOT NULL UNIQUE,
+				expires_at TEXT NOT NULL,
+				notified_at TEXT NOT NULL,
+				notify_count INTEGER NOT NULL DEFAULT 1
+			)`,
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_dn_email_url ON DormantNotice(email, url)`,
+			`CREATE INDEX IF NOT EXISTS idx_dn_token ON DormantNotice(token)`,
+			`CREATE INDEX IF NOT EXISTS idx_dn_email ON DormantNotice(email)`,
+		},
+	},
 }
 
 const schemaMigrationDDL = `

@@ -77,9 +77,16 @@ export function countComments(): number {
 export function resetTables(): void {
   db.run(sql`DELETE FROM "Comment"`);
   db.run(sql`DELETE FROM "EmailVerification"`);
+  // 历史链接批量更新的待确认记录：文件内共享数据，必须一起清理
+  db.run(sql`DELETE FROM "LinkSyncRequest"`);
   // 认证记录同样按文件隔离：验证类用例的埋点会持续写入这张表，
   // 不清理会让「恰好 N 条」这类断言在后续用例里出现假失败
   db.run(sql`DELETE FROM "VerifyRecord"`);
+  // 休眠链接的人工确认记录：会改变 urlDormant 的判定结果，必须一起清理
+  db.run(sql`DELETE FROM "TrustedLink"`);
+  // 休眠提醒的状态机 + 外发邮件日志：同样按文件隔离（提醒只发一次、日志条数都会被断言）
+  db.run(sql`DELETE FROM "DormantNotice"`);
+  db.run(sql`DELETE FROM "MailLog"`);
 }
 
 /** 删除若干配置项，用于用例之间的隔离 */
@@ -228,11 +235,13 @@ export async function startFakeSmtp(): Promise<FakeSmtp> {
   };
 }
 
-/** 解码 MIME 正文：支持 base64 与 quoted-printable（含软换行） */
+/** 解码 MIME 正文：支持 base64 与 quoted-printable（含软换行、SMTP 点填充还原） */
 export function decodeMessage(raw: string): string {
   const separator = raw.indexOf("\r\n\r\n");
   const headers = separator >= 0 ? raw.slice(0, separator) : "";
-  const body = separator >= 0 ? raw.slice(separator + 4) : raw;
+  // SMTP 的点填充：以 "." 开头的行发送时被写成 ".."，接收端要还原（否则
+  // quoted-printable 折行正好落在 "." 前时，正文里会凭空多出一个点）
+  const body = (separator >= 0 ? raw.slice(separator + 4) : raw).replace(/^\.\./gm, ".");
 
   if (/content-transfer-encoding:\s*base64/i.test(headers)) {
     return Buffer.from(body.replace(/\r\n/g, ""), "base64").toString("utf8");

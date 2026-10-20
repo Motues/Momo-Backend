@@ -53,6 +53,63 @@ const SCHEMA_DDL = `
     "applied_at" TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
+  -- 历史链接批量更新的待确认记录，见 doc/link_security.md 第 3.3 节
+  -- 纯新增表：靠 IF NOT EXISTS 在每次启动时补齐，已有数据库无需手工迁移
+  CREATE TABLE IF NOT EXISTS "LinkSyncRequest" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "email" TEXT NOT NULL,
+    "new_url" TEXT NOT NULL,
+    "token" TEXT NOT NULL UNIQUE,
+    "expires_at" TEXT NOT NULL,
+    "confirmed" INTEGER NOT NULL DEFAULT 0,
+    "created_at" TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_lsr_email ON "LinkSyncRequest"("email");
+  CREATE INDEX IF NOT EXISTS idx_lsr_token ON "LinkSyncRequest"("token");
+
+  -- 休眠链接的人工确认记录，见 doc/link_security.md 第 2.5 节
+  -- 纯新增表：靠 IF NOT EXISTS 在每次启动时补齐，已有数据库无需手工迁移
+  CREATE TABLE IF NOT EXISTS "TrustedLink" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "email" TEXT NOT NULL,
+    "url" TEXT NOT NULL,
+    "expires_at" TEXT NOT NULL,
+    "created_at" TEXT NOT NULL,
+    -- admin = 管理员人工确认；self = 评论者本人从提醒邮件确认
+    "source" TEXT NOT NULL DEFAULT 'admin'
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_tl_email_url ON "TrustedLink"("email", "url");
+  CREATE INDEX IF NOT EXISTS idx_tl_email ON "TrustedLink"("email");
+
+  -- 休眠链接提醒邮件，见 doc/link_security.md 第 2.7 节
+  -- 纯新增表：靠 IF NOT EXISTS 在每次启动时补齐，已有数据库无需手工迁移
+  CREATE TABLE IF NOT EXISTS "DormantNotice" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "email" TEXT NOT NULL,
+    "url" TEXT NOT NULL,
+    "last_comment_at" INTEGER NOT NULL,
+    "token" TEXT NOT NULL UNIQUE,
+    "expires_at" TEXT NOT NULL,
+    "notified_at" TEXT NOT NULL,
+    "notify_count" INTEGER NOT NULL DEFAULT 1
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_dn_email_url ON "DormantNotice"("email", "url");
+  CREATE INDEX IF NOT EXISTS idx_dn_token ON "DormantNotice"("token");
+  CREATE INDEX IF NOT EXISTS idx_dn_email ON "DormantNotice"("email");
+
+  -- 外发邮件日志（管理面板「邮件管理」），只记真正尝试发送的邮件，保留 30 天
+  CREATE TABLE IF NOT EXISTS "MailLog" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "type" TEXT NOT NULL,
+    "recipient" TEXT NOT NULL,
+    "subject" TEXT NOT NULL,
+    "status" TEXT NOT NULL,
+    "error" TEXT,
+    "created_at" TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ml_created ON "MailLog"("created_at");
+  CREATE INDEX IF NOT EXISTS idx_ml_status ON "MailLog"("status");
+
   -- 评论无感验证（人机验证）的认证记录，见 doc/data_table.md
   -- 纯新增表：靠 IF NOT EXISTS 在每次启动时补齐，已有数据库无需手工迁移
   CREATE TABLE IF NOT EXISTS "VerifyRecord" (
@@ -112,6 +169,83 @@ const MIGRATIONS: Migration[] = [
     description: "VerifyRecord 增加 origin 列（来源域名绑定：记录解题/被拒的来源域名）",
     // 纯新增列，旧行为 NULL；新库由 SCHEMA_DDL 直接建出该列
     sql: `ALTER TABLE "VerifyRecord" ADD COLUMN "origin" TEXT;`,
+  },
+  {
+    id: "0003_link_sync_request",
+    description: "新增 LinkSyncRequest 表（历史链接批量更新的待确认记录）",
+    // 纯新增表：走 IF NOT EXISTS，新库由 SCHEMA_DDL 直接建出，旧库在这里补齐
+    sql: `
+      CREATE TABLE IF NOT EXISTS "LinkSyncRequest" (
+        "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        "email" TEXT NOT NULL,
+        "new_url" TEXT NOT NULL,
+        "token" TEXT NOT NULL UNIQUE,
+        "expires_at" TEXT NOT NULL,
+        "confirmed" INTEGER NOT NULL DEFAULT 0,
+        "created_at" TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_lsr_email ON "LinkSyncRequest"("email");
+      CREATE INDEX IF NOT EXISTS idx_lsr_token ON "LinkSyncRequest"("token");
+    `,
+  },
+  {
+    id: "0004_trusted_link",
+    description: "新增 TrustedLink 表（休眠链接的人工确认记录）",
+    // 纯新增表：同上，新库由 SCHEMA_DDL 直接建出，旧库在这里补齐。
+    // (email, url) 唯一索引同时充当「确认幂等 upsert」的落点
+    sql: `
+      CREATE TABLE IF NOT EXISTS "TrustedLink" (
+        "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        "email" TEXT NOT NULL,
+        "url" TEXT NOT NULL,
+        "expires_at" TEXT NOT NULL,
+        "created_at" TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_tl_email_url ON "TrustedLink"("email", "url");
+      CREATE INDEX IF NOT EXISTS idx_tl_email ON "TrustedLink"("email");
+    `,
+  },
+  {
+    id: "0005_trusted_link_source",
+    description: "TrustedLink 增加 source 列（区分管理员人工确认与本人自助确认）",
+    // 纯新增列，旧行为 'admin'；新库由 SCHEMA_DDL 直接建出该列
+    sql: `ALTER TABLE "TrustedLink" ADD COLUMN "source" TEXT NOT NULL DEFAULT 'admin';`,
+  },
+  {
+    id: "0006_dormant_notice",
+    description: "新增 DormantNotice 表（休眠链接提醒邮件的状态机）",
+    sql: `
+      CREATE TABLE IF NOT EXISTS "DormantNotice" (
+        "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        "email" TEXT NOT NULL,
+        "url" TEXT NOT NULL,
+        "last_comment_at" INTEGER NOT NULL,
+        "token" TEXT NOT NULL UNIQUE,
+        "expires_at" TEXT NOT NULL,
+        "notified_at" TEXT NOT NULL,
+        "notify_count" INTEGER NOT NULL DEFAULT 1
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_dn_email_url ON "DormantNotice"("email", "url");
+      CREATE INDEX IF NOT EXISTS idx_dn_token ON "DormantNotice"("token");
+      CREATE INDEX IF NOT EXISTS idx_dn_email ON "DormantNotice"("email");
+    `,
+  },
+  {
+    id: "0007_mail_log",
+    description: "新增 MailLog 表（外发邮件日志，面板「邮件管理」的数据源）",
+    sql: `
+      CREATE TABLE IF NOT EXISTS "MailLog" (
+        "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        "type" TEXT NOT NULL,
+        "recipient" TEXT NOT NULL,
+        "subject" TEXT NOT NULL,
+        "status" TEXT NOT NULL,
+        "error" TEXT,
+        "created_at" TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_ml_created ON "MailLog"("created_at");
+      CREATE INDEX IF NOT EXISTS idx_ml_status ON "MailLog"("status");
+    `,
   },
 ];
 

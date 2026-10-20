@@ -17,7 +17,7 @@ const migrationID = "0001_pub_date_to_millis"
 // newMigrationDB 创建一个只有 Comment 表的临时库（用于单独验证 RunMigrations）
 func newMigrationDB(t *testing.T) *sqlx.DB {
 	t.Helper()
-	db, err := sqlx.Connect("sqlite", filepath.Join(t.TempDir(), "migrate.db"))
+	db, err := OpenDB(filepath.Join(t.TempDir(), "migrate.db"))
 	if err != nil {
 		t.Fatalf("连接测试数据库失败: %v", err)
 	}
@@ -80,6 +80,15 @@ func schemaMigrationCount(t *testing.T, db *sqlx.DB) int {
 // ---------------------------------------------------------------------------
 // 迁移
 // ---------------------------------------------------------------------------
+//
+// 计数口径说明：0003_link_sync_request / 0004_trusted_link / 0006_mail_log /
+// 0007_dormant_notice 都是**纯新增表**迁移（CREATE TABLE IF NOT EXISTS），在任何库上都会
+// 成功并被记录；0005_trusted_link_source 是纯新增列（TrustedLink 已由 0004 建出）；
+// 0001 需要 Comment 表、0002 需要 VerifyRecord 表，缺表时失败且不记录。
+// 因此「只有 Comment 表」的旧库上会记录 6 条（除 0002 外全部）。
+
+// baseMigrationCount 只建出 Comment 表时应当被记录的迁移条数
+const baseMigrationCount = 6
 
 // TestRunMigrationsConvertsISODateStringsToMillis 覆盖当前 schema（INTEGER 亲和性）：
 // ISO 字符串必须被改写为毫秒整数，且数值列不受影响。
@@ -168,8 +177,8 @@ func TestRunMigrationsIsIdempotent(t *testing.T) {
 		if err := RunMigrations(db); err != nil {
 			t.Fatalf("第 %d 次 RunMigrations 失败: %v", i+1, err)
 		}
-		if n := schemaMigrationCount(t, db); n != 1 {
-			t.Fatalf("第 %d 次执行后迁移记录应仍为 1 条，实际 %d 条", i+1, n)
+		if n := schemaMigrationCount(t, db); n != baseMigrationCount {
+			t.Fatalf("第 %d 次执行后迁移记录应仍为 %d 条，实际 %d 条", i+1, baseMigrationCount, n)
 		}
 	}
 
@@ -202,8 +211,8 @@ func TestRunMigrationsSkipsAppliedMigration(t *testing.T) {
 	if got, _ := pubDateOf(t, db, 1); got != "2024-03-05T06:07:08.000Z" {
 		t.Errorf("已记录的迁移不应再次执行，实际值 %q", got)
 	}
-	if n := schemaMigrationCount(t, db); n != 1 {
-		t.Errorf("迁移记录应仍为 1 条，实际 %d 条", n)
+	if n := schemaMigrationCount(t, db); n != baseMigrationCount {
+		t.Errorf("迁移记录应仍为 %d 条（0001 已预置，0002 缺表失败，其余成功），实际 %d 条", baseMigrationCount, n)
 	}
 }
 
@@ -215,8 +224,9 @@ func TestRunMigrationsWithoutCommentTable(t *testing.T) {
 	if err := RunMigrations(db); err != nil {
 		t.Fatalf("迁移失败不应让 RunMigrations 返回错误（避免服务起不来），实际 %v", err)
 	}
-	if n := schemaMigrationCount(t, db); n != 0 {
-		t.Errorf("迁移语句失败时不应记录为已应用，实际 %d 条", n)
+	// 0001 / 0002 因缺表失败不记录；0003 / 0004 / 0005 / 0006 / 0007 都能在任何库上成功
+	if n := schemaMigrationCount(t, db); n != 5 {
+		t.Errorf("缺表时只应记录 5 条（纯新增表 + 新增列），实际 %d 条", n)
 	}
 
 	// 补齐表结构后再次执行应成功并记录
@@ -225,8 +235,8 @@ func TestRunMigrationsWithoutCommentTable(t *testing.T) {
 	if err := RunMigrations(db); err != nil {
 		t.Fatalf("RunMigrations 失败: %v", err)
 	}
-	if n := schemaMigrationCount(t, db); n != 1 {
-		t.Errorf("补齐表结构后应记录 1 条迁移，实际 %d 条", n)
+	if n := schemaMigrationCount(t, db); n != baseMigrationCount {
+		t.Errorf("补齐表结构后应记录 %d 条迁移，实际 %d 条", baseMigrationCount, n)
 	}
 	if got, _ := pubDateOf(t, db, 1); got != "1709618828000" {
 		t.Errorf("补齐表结构后迁移应生效，实际 %q", got)
@@ -311,8 +321,8 @@ func TestRunMigrationsOnEmptyLegacyTable(t *testing.T) {
 	if err := RunMigrations(db); err != nil {
 		t.Fatalf("RunMigrations 失败: %v", err)
 	}
-	if n := schemaMigrationCount(t, db); n != 1 {
-		t.Errorf("空表也应记录 1 条迁移，实际 %d 条", n)
+	if n := schemaMigrationCount(t, db); n != baseMigrationCount {
+		t.Errorf("空表也应记录 %d 条迁移，实际 %d 条", baseMigrationCount, n)
 	}
 }
 
@@ -375,8 +385,8 @@ func TestRunMigrationsAddsVerifyRecordOrigin(t *testing.T) {
 	if !hasVerifyRecordColumn(t, db, "origin") {
 		t.Fatalf("迁移后 VerifyRecord 应带上 origin 列")
 	}
-	if n := schemaMigrationCount(t, db); n != 2 {
-		t.Errorf("两条迁移都应被记录，实际 %d 条", n)
+	if n := schemaMigrationCount(t, db); n != len(migrations) {
+		t.Errorf("全部迁移都应被记录（%d 条），实际 %d 条", len(migrations), n)
 	}
 
 	// 历史行保持 NULL
@@ -397,8 +407,8 @@ func TestRunMigrationsAddsVerifyRecordOrigin(t *testing.T) {
 		if err := RunMigrations(db); err != nil {
 			t.Fatalf("第 %d 次重复执行失败: %v", i+1, err)
 		}
-		if n := schemaMigrationCount(t, db); n != 2 {
-			t.Fatalf("重复执行后迁移记录应仍为 2 条，实际 %d 条", n)
+		if n := schemaMigrationCount(t, db); n != len(migrations) {
+			t.Fatalf("重复执行后迁移记录应仍为 %d 条，实际 %d 条", len(migrations), n)
 		}
 	}
 }
@@ -422,7 +432,7 @@ func TestRunMigrationsToleratesExistingVerifyRecordOrigin(t *testing.T) {
 	if err := RunMigrations(db); err != nil {
 		t.Fatalf("RunMigrations 失败: %v", err)
 	}
-	if n := schemaMigrationCount(t, db); n != 2 {
+	if n := schemaMigrationCount(t, db); n != len(migrations) {
 		t.Errorf("列已存在时应按已应用处理并记录，实际 %d 条", n)
 	}
 
@@ -433,5 +443,464 @@ func TestRunMigrationsToleratesExistingVerifyRecordOrigin(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("origin 列应恰好一个，实际 %d 个", count)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 0003_link_sync_request
+// ---------------------------------------------------------------------------
+
+const linkSyncMigrationID = "0003_link_sync_request"
+
+// tableExists 判断某个表是否存在
+func tableExists(t *testing.T, db *sqlx.DB, name string) bool {
+	t.Helper()
+	var count int
+	if err := db.Get(&count,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, name); err != nil {
+		t.Fatalf("查询表 %s 是否存在失败: %v", name, err)
+	}
+	return count > 0
+}
+
+// columnNamesOf 返回某个表的全部列名
+func columnNamesOf(t *testing.T, db *sqlx.DB, table string) map[string]bool {
+	t.Helper()
+	var names []string
+	if err := db.Select(&names, `SELECT name FROM pragma_table_info(?)`, table); err != nil {
+		t.Fatalf("读取表 %s 的列失败: %v", table, err)
+	}
+	result := make(map[string]bool, len(names))
+	for _, name := range names {
+		result[name] = true
+	}
+	return result
+}
+
+// indexNamesOf 返回某个表的全部索引名
+func indexNamesOf(t *testing.T, db *sqlx.DB, table string) map[string]bool {
+	t.Helper()
+	var names []string
+	if err := db.Select(&names, `SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = ?`, table); err != nil {
+		t.Fatalf("读取表 %s 的索引失败: %v", table, err)
+	}
+	result := make(map[string]bool, len(names))
+	for _, name := range names {
+		result[name] = true
+	}
+	return result
+}
+
+// TestRunMigrationsCreatesLinkSyncRequest 旧库必须被补上 LinkSyncRequest 表与两个索引
+func TestRunMigrationsCreatesLinkSyncRequest(t *testing.T) {
+	db := newMigrationDB(t)
+	createLegacyCommentTable(t, db, "INTEGER")
+
+	// 前置条件：旧库里还没有这张表
+	if tableExists(t, db, "LinkSyncRequest") {
+		t.Fatalf("前置条件：旧库不应有 LinkSyncRequest 表")
+	}
+
+	if err := RunMigrations(db); err != nil {
+		t.Fatalf("RunMigrations 失败: %v", err)
+	}
+	if !tableExists(t, db, "LinkSyncRequest") {
+		t.Fatalf("迁移后应存在 LinkSyncRequest 表")
+	}
+
+	// 表结构（doc/link_security.md 第 3.3 节）
+	columns := columnNamesOf(t, db, "LinkSyncRequest")
+	for _, column := range []string{"id", "email", "new_url", "token", "expires_at", "confirmed", "created_at"} {
+		if !columns[column] {
+			t.Errorf("LinkSyncRequest 缺少列 %s（实际列：%v）", column, columns)
+		}
+	}
+
+	indexes := indexNamesOf(t, db, "LinkSyncRequest")
+	for _, index := range []string{"idx_lsr_email", "idx_lsr_token"} {
+		if !indexes[index] {
+			t.Errorf("LinkSyncRequest 缺少索引 %s（实际索引：%v）", index, indexes)
+		}
+	}
+
+	// token 必须唯一
+	if _, err := db.Exec(`INSERT INTO LinkSyncRequest (email, new_url, token, expires_at, created_at)
+		VALUES ('a@b.com', 'https://x', 'tok', '2030-01-01T00:00:00.000Z', '2030-01-01T00:00:00.000Z')`); err != nil {
+		t.Fatalf("写入记录失败: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO LinkSyncRequest (email, new_url, token, expires_at, created_at)
+		VALUES ('a@b.com', 'https://y', 'tok', '2030-01-01T00:00:00.000Z', '2030-01-01T00:00:00.000Z')`); err == nil {
+		t.Errorf("token 应唯一，重复写入必须失败")
+	}
+
+	// confirmed 默认 0
+	var confirmed int
+	if err := db.Get(&confirmed, `SELECT confirmed FROM LinkSyncRequest WHERE token = 'tok'`); err != nil {
+		t.Fatalf("读取 confirmed 失败: %v", err)
+	}
+	if confirmed != 0 {
+		t.Errorf("confirmed 默认值应为 0，实际 %d", confirmed)
+	}
+
+	// 幂等：重复执行不得报错，也不得重复记录
+	for i := 0; i < 2; i++ {
+		if err := RunMigrations(db); err != nil {
+			t.Fatalf("第 %d 次重复执行失败: %v", i+1, err)
+		}
+		if n := schemaMigrationCount(t, db); n != baseMigrationCount {
+			t.Fatalf("重复执行后迁移记录应仍为 %d 条，实际 %d 条", baseMigrationCount, n)
+		}
+	}
+}
+
+// TestInitSchemaCreatesLinkSyncRequest 新库由 InitSchema 直接建出该表，
+// 随后的迁移是空操作（CREATE TABLE IF NOT EXISTS）—— 必须成功并记录。
+func TestInitSchemaCreatesLinkSyncRequest(t *testing.T) {
+	db := newMigrationDB(t)
+
+	if err := InitSchema(db); err != nil {
+		t.Fatalf("InitSchema 失败: %v", err)
+	}
+	if !tableExists(t, db, "LinkSyncRequest") {
+		t.Fatalf("InitSchema 应建出 LinkSyncRequest 表")
+	}
+
+	// 全部迁移都应记录（新库上 0002 命中的是 duplicate column name 分支，
+	// 0003 命中的是 IF NOT EXISTS 空操作，两者都按已应用处理）
+	if n := schemaMigrationCount(t, db); n != len(migrations) {
+		t.Errorf("新库应记录全部 %d 条迁移，实际 %d 条", len(migrations), n)
+	}
+
+	// 再跑一次不会产生重复表或额外记录
+	if err := RunMigrations(db); err != nil {
+		t.Fatalf("RunMigrations 失败: %v", err)
+	}
+	if n := schemaMigrationCount(t, db); n != len(migrations) {
+		t.Errorf("重复执行后迁移记录应仍为 %d 条，实际 %d 条", len(migrations), n)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 0004_trusted_link
+// ---------------------------------------------------------------------------
+
+const trustedLinkMigrationID = "0004_trusted_link"
+
+// TestRunMigrationsCreatesTrustedLink 旧库必须被补上 TrustedLink 表与两个索引，
+// 且 (email, url) 唯一（幂等 upsert 的 ON CONFLICT 目标）。
+func TestRunMigrationsCreatesTrustedLink(t *testing.T) {
+	db := newMigrationDB(t)
+	createLegacyCommentTable(t, db, "INTEGER")
+
+	// 前置条件：旧库里还没有这张表
+	if tableExists(t, db, "TrustedLink") {
+		t.Fatalf("前置条件：旧库不应有 TrustedLink 表")
+	}
+
+	if err := RunMigrations(db); err != nil {
+		t.Fatalf("RunMigrations 失败: %v", err)
+	}
+	if !tableExists(t, db, "TrustedLink") {
+		t.Fatalf("迁移后应存在 TrustedLink 表")
+	}
+
+	// 表结构（规范第 2 节）
+	columns := columnNamesOf(t, db, "TrustedLink")
+	for _, column := range []string{"id", "email", "url", "expires_at", "created_at"} {
+		if !columns[column] {
+			t.Errorf("TrustedLink 缺少列 %s（实际列：%v）", column, columns)
+		}
+	}
+
+	indexes := indexNamesOf(t, db, "TrustedLink")
+	for _, index := range []string{"idx_tl_email_url", "idx_tl_email"} {
+		if !indexes[index] {
+			t.Errorf("TrustedLink 缺少索引 %s（实际索引：%v）", index, indexes)
+		}
+	}
+
+	// (email, url) 唯一：同一对重复写入必须失败
+	const insert = `INSERT INTO TrustedLink (email, url, expires_at, created_at)
+		VALUES (?, ?, '2030-01-01T00:00:00.000Z', '2030-01-01T00:00:00.000Z')`
+	if _, err := db.Exec(insert, "a@b.com", "https://a.example.com"); err != nil {
+		t.Fatalf("写入记录失败: %v", err)
+	}
+	if _, err := db.Exec(insert, "a@b.com", "https://a.example.com"); err == nil {
+		t.Errorf("(email, url) 应唯一，重复写入必须失败")
+	}
+	// 同一邮箱的不同网址、同一网址的不同邮箱都各占一行
+	if _, err := db.Exec(insert, "a@b.com", "https://other.example.com"); err != nil {
+		t.Errorf("同一邮箱的不同网址应可各写一行: %v", err)
+	}
+	if _, err := db.Exec(insert, "c@d.com", "https://a.example.com"); err != nil {
+		t.Errorf("同一网址的不同邮箱应可各写一行: %v", err)
+	}
+
+	// 幂等：重复执行不得报错，也不得重复记录
+	for i := 0; i < 2; i++ {
+		if err := RunMigrations(db); err != nil {
+			t.Fatalf("第 %d 次重复执行失败: %v", i+1, err)
+		}
+		if n := schemaMigrationCount(t, db); n != baseMigrationCount {
+			t.Fatalf("重复执行后迁移记录应仍为 %d 条，实际 %d 条", baseMigrationCount, n)
+		}
+	}
+}
+
+// TestInitSchemaCreatesTrustedLink 新库由 InitSchema 直接建出该表，
+// 随后的迁移是空操作（CREATE TABLE IF NOT EXISTS）—— 必须成功并记录。
+func TestInitSchemaCreatesTrustedLink(t *testing.T) {
+	db := newMigrationDB(t)
+
+	if err := InitSchema(db); err != nil {
+		t.Fatalf("InitSchema 失败: %v", err)
+	}
+	if !tableExists(t, db, "TrustedLink") {
+		t.Fatalf("InitSchema 应建出 TrustedLink 表")
+	}
+	if n := schemaMigrationCount(t, db); n != len(migrations) {
+		t.Errorf("新库应记录全部 %d 条迁移，实际 %d 条", len(migrations), n)
+	}
+
+	// 唯一索引必须被建出来（否则 upsert 的 ON CONFLICT 会报错）
+	if _, err := db.Exec(`INSERT INTO TrustedLink (email, url, expires_at, created_at)
+		VALUES ('a@b.com', 'https://a.example.com', '2030-01-01T00:00:00.000Z', '2030-01-01T00:00:00.000Z')
+		ON CONFLICT(email, url) DO UPDATE SET expires_at = excluded.expires_at`); err != nil {
+		t.Fatalf("ON CONFLICT(email, url) 应命中唯一索引: %v", err)
+	}
+}
+
+// TestTrustedLinkMigrationIsDeclared 0004 的声明必须与迁移表一致（ID 不可改，只能新增）
+func TestTrustedLinkMigrationIsDeclared(t *testing.T) {
+	var declared *Migration
+	for i := range migrations {
+		if migrations[i].ID == trustedLinkMigrationID {
+			declared = &migrations[i]
+			break
+		}
+	}
+	if declared == nil {
+		t.Fatalf("代码中找不到迁移 %s", trustedLinkMigrationID)
+	}
+	if declared.Description == "" {
+		t.Errorf("迁移 %s 的描述不应为空", trustedLinkMigrationID)
+	}
+	if len(declared.Statements) == 0 {
+		t.Errorf("迁移 %s 应有至少一条语句", trustedLinkMigrationID)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 0005_trusted_link_source / 0006_mail_log / 0007_dormant_notice
+// ---------------------------------------------------------------------------
+
+const trustedLinkSourceMigrationID = "0005_trusted_link_source"
+
+// createLegacyTrustedLinkTable 建出**没有 source 列**的旧表（0005 的目标形态）
+func createLegacyTrustedLinkTable(t *testing.T, db *sqlx.DB) {
+	t.Helper()
+	if _, err := db.Exec(`CREATE TABLE TrustedLink (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		email TEXT NOT NULL,
+		url TEXT NOT NULL,
+		expires_at TEXT NOT NULL,
+		created_at TEXT NOT NULL
+	)`); err != nil {
+		t.Fatalf("创建旧版 TrustedLink 表失败: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO TrustedLink (email, url, expires_at, created_at)
+		VALUES ('a@b.com', 'https://a.example.com', '2030-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`); err != nil {
+		t.Fatalf("写入历史记录失败: %v", err)
+	}
+}
+
+// TestRunMigrationsAddsTrustedLinkSource 旧库必须被补上 source 列，历史行默认为 admin
+// （历史记录都是管理员在后台点出来的）。
+func TestRunMigrationsAddsTrustedLinkSource(t *testing.T) {
+	db := newMigrationDB(t)
+	createLegacyCommentTable(t, db, "INTEGER")
+	createLegacyTrustedLinkTable(t, db)
+
+	if columnNamesOf(t, db, "TrustedLink")["source"] {
+		t.Fatalf("前置条件：旧表不应有 source 列")
+	}
+
+	if err := RunMigrations(db); err != nil {
+		t.Fatalf("RunMigrations 失败: %v", err)
+	}
+	if !columnNamesOf(t, db, "TrustedLink")["source"] {
+		t.Fatalf("迁移后 TrustedLink 应带上 source 列")
+	}
+
+	var source string
+	if err := db.Get(&source, `SELECT source FROM TrustedLink WHERE email = 'a@b.com'`); err != nil {
+		t.Fatalf("读取历史行的 source 失败: %v", err)
+	}
+	if source != "admin" {
+		t.Errorf("历史行的 source 默认值应为 admin，实际 %q", source)
+	}
+
+	// 幂等：重复执行不得报错，也不得重复记录
+	for i := 0; i < 2; i++ {
+		if err := RunMigrations(db); err != nil {
+			t.Fatalf("第 %d 次重复执行失败: %v", i+1, err)
+		}
+		if n := schemaMigrationCount(t, db); n != baseMigrationCount {
+			t.Fatalf("重复执行后迁移记录应仍为 %d 条，实际 %d 条", baseMigrationCount, n)
+		}
+	}
+
+	// 声明必须存在且描述非空
+	var declared *Migration
+	for i := range migrations {
+		if migrations[i].ID == trustedLinkSourceMigrationID {
+			declared = &migrations[i]
+			break
+		}
+	}
+	if declared == nil {
+		t.Fatalf("代码中找不到迁移 %s", trustedLinkSourceMigrationID)
+	}
+	if declared.Description == "" || len(declared.Statements) == 0 {
+		t.Errorf("迁移 %s 的声明不完整: %+v", trustedLinkSourceMigrationID, declared)
+	}
+}
+
+const mailLogMigrationID = "0006_mail_log"
+
+// TestRunMigrationsCreatesMailLog 旧库必须被补上 MailLog 表与两个索引
+func TestRunMigrationsCreatesMailLog(t *testing.T) {
+	db := newMigrationDB(t)
+	createLegacyCommentTable(t, db, "INTEGER")
+
+	if tableExists(t, db, "MailLog") {
+		t.Fatalf("前置条件：旧库不应有 MailLog 表")
+	}
+
+	if err := RunMigrations(db); err != nil {
+		t.Fatalf("RunMigrations 失败: %v", err)
+	}
+	if !tableExists(t, db, "MailLog") {
+		t.Fatalf("迁移后应存在 MailLog 表")
+	}
+
+	columns := columnNamesOf(t, db, "MailLog")
+	for _, column := range []string{"id", "type", "recipient", "subject", "status", "error", "created_at"} {
+		if !columns[column] {
+			t.Errorf("MailLog 缺少列 %s（实际列：%v）", column, columns)
+		}
+	}
+
+	indexes := indexNamesOf(t, db, "MailLog")
+	for _, index := range []string{"idx_ml_created", "idx_ml_status"} {
+		if !indexes[index] {
+			t.Errorf("MailLog 缺少索引 %s（实际索引：%v）", index, indexes)
+		}
+	}
+
+	// error 允许为 NULL（成功行），created_at 必填
+	if _, err := db.Exec(`INSERT INTO MailLog (type, recipient, subject, status, created_at)
+		VALUES ('test', 'a@b.com', 's', 'sent', '2026-01-01T00:00:00.000Z')`); err != nil {
+		t.Fatalf("写入成功行失败: %v", err)
+	}
+	var nullErrors int
+	if err := db.Get(&nullErrors, `SELECT COUNT(*) FROM MailLog WHERE error IS NULL`); err != nil {
+		t.Fatalf("统计空 error 失败: %v", err)
+	}
+	if nullErrors != 1 {
+		t.Errorf("成功行的 error 应为 NULL，实际满足的行数 %d", nullErrors)
+	}
+
+	var declared *Migration
+	for i := range migrations {
+		if migrations[i].ID == mailLogMigrationID {
+			declared = &migrations[i]
+			break
+		}
+	}
+	if declared == nil || declared.Description == "" {
+		t.Fatalf("代码中缺少迁移 %s 的声明", mailLogMigrationID)
+	}
+}
+
+const dormantNoticeMigrationID = "0007_dormant_notice"
+
+// TestRunMigrationsCreatesDormantNotice 旧库必须被补上 DormantNotice 表与三个索引，
+// 且 token 唯一、(email, url) 唯一（upsert 的 ON CONFLICT 目标）。
+func TestRunMigrationsCreatesDormantNotice(t *testing.T) {
+	db := newMigrationDB(t)
+	createLegacyCommentTable(t, db, "INTEGER")
+
+	if tableExists(t, db, "DormantNotice") {
+		t.Fatalf("前置条件：旧库不应有 DormantNotice 表")
+	}
+
+	if err := RunMigrations(db); err != nil {
+		t.Fatalf("RunMigrations 失败: %v", err)
+	}
+	if !tableExists(t, db, "DormantNotice") {
+		t.Fatalf("迁移后应存在 DormantNotice 表")
+	}
+
+	columns := columnNamesOf(t, db, "DormantNotice")
+	for _, column := range []string{
+		"id", "email", "url", "last_comment_at", "token", "expires_at", "notified_at", "notify_count",
+	} {
+		if !columns[column] {
+			t.Errorf("DormantNotice 缺少列 %s（实际列：%v）", column, columns)
+		}
+	}
+
+	indexes := indexNamesOf(t, db, "DormantNotice")
+	for _, index := range []string{"idx_dn_email_url", "idx_dn_token", "idx_dn_email"} {
+		if !indexes[index] {
+			t.Errorf("DormantNotice 缺少索引 %s（实际索引：%v）", index, indexes)
+		}
+	}
+
+	const insert = `INSERT INTO DormantNotice (email, url, last_comment_at, token, expires_at, notified_at)
+		VALUES ('a@b.com', 'https://a.example.com', 1, ?, '2030-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`
+	if _, err := db.Exec(insert, "tok-1"); err != nil {
+		t.Fatalf("写入记录失败: %v", err)
+	}
+	if _, err := db.Exec(insert, "tok-2"); err == nil {
+		t.Errorf("(email, url) 应唯一，重复写入必须失败")
+	}
+	if _, err := db.Exec(`INSERT INTO DormantNotice (email, url, last_comment_at, token, expires_at, notified_at)
+		VALUES ('c@d.com', 'https://c.example.com', 1, 'tok-1', '2030-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`); err == nil {
+		t.Errorf("token 应唯一，重复写入必须失败")
+	}
+
+	// notify_count 默认 1
+	var count int
+	if err := db.Get(&count, `SELECT notify_count FROM DormantNotice WHERE token = 'tok-1'`); err != nil {
+		t.Fatalf("读取 notify_count 失败: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("notify_count 默认值应为 1，实际 %d", count)
+	}
+
+	// ON CONFLICT(email, url) 必须命中唯一索引，且 notify_count 自增
+	if _, err := db.Exec(`INSERT INTO DormantNotice (email, url, last_comment_at, token, expires_at, notified_at)
+		VALUES ('a@b.com', 'https://a.example.com', 2, 'tok-3', '2030-01-01T00:00:00.000Z', '2026-01-02T00:00:00.000Z')
+		ON CONFLICT(email, url) DO UPDATE SET notify_count = DormantNotice.notify_count + 1`); err != nil {
+		t.Fatalf("ON CONFLICT(email, url) 应命中唯一索引: %v", err)
+	}
+	if err := db.Get(&count, `SELECT notify_count FROM DormantNotice WHERE token = 'tok-1'`); err != nil {
+		t.Fatalf("读取 notify_count 失败: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("重复写入后 notify_count 应自增为 2，实际 %d", count)
+	}
+
+	var declared *Migration
+	for i := range migrations {
+		if migrations[i].ID == dormantNoticeMigrationID {
+			declared = &migrations[i]
+			break
+		}
+	}
+	if declared == nil || declared.Description == "" {
+		t.Fatalf("代码中缺少迁移 %s 的声明", dormantNoticeMigrationID)
 	}
 }
