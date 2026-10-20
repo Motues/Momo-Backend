@@ -124,6 +124,88 @@ Worker `worker/test/unit/vectors.emoji-v2.test.ts`；接口层（设置写入校
 面板侧「保存前用浏览器拉取校验 OwO 格式」的护栏由 `dashboard/test/emojiUtils.test.js` 与
 `dashboard/test/emojiSettings.test.js` 覆盖。
 
+### `emoji-v3.json`
+
+**多来源**表情契约（`emoji_cdn_urls`，契约 v3，格式见 [`doc/emoji.md`](../emoji.md)）。
+由 `scripts/gen-emoji-v3-vectors.js` 生成。v2 那份 fixture 保持不动（它钉死的是单地址键，至今仍然有效）。
+
+契约 v3 只新增一个键，这份 fixture 钉死三处：
+
+- **常量**：每个地址 500 码点、最多 5 个地址；
+- **写入校验**（`cdnUrls.valid` / `cdnUrls.invalid`）：JSON 数组、每项必须是字符串、
+  trim + 去空后不超过 5 个、每项必须 `http(s)` —— **五条错误文案**（`errors`）三端逐字一致；
+- **读取归一化**（`resolve`）：数组为空/坏值 → 回落旧键 `emoji_cdn_url` → 再回落默认源；
+  读取宽容（非字符串与空串丢弃、超过 5 个截断到前 5 个）；开关仍 fail-open。
+
+三端各自复算：Node `nodejs/test/vectors.emoji-v3.test.ts`、Go、Worker 的同名 fixture 测试
+（`vectors.emoji-v3.test.ts` / `emoji_v3_vectors_test.go`）。
+
+### `admin-emails-v1.json`
+
+**多管理员邮箱**契约（`admin_emails` + `notify_email`，口径见 [`doc/admin_emails.md`](../admin_emails.md)）。
+由 `scripts/gen-admin-emails-vectors.js` 生成。
+
+- `email.valid` / `email.invalid`：邮箱判定（先 `trim` 再匹配，长度 ≤254）；
+- `parse`：读取路径的宽容解析（坏值→`[]`、非字符串与非法邮箱丢弃、去重保序、截断到 10 个）；
+- `resolve`：管理员列表（为空时回落旧键 `admin_email`）与通知收件人（必须命中列表，否则回落第一个）；
+- `errors`：六条写入错误文案（含 `notify_email` 的两条）。
+
+### `link-security-v1.json`
+
+**链接安全审查**契约（参见 [`doc/link_security.md`](../link_security.md)）。
+由 `scripts/gen-link-security-vectors.js` 生成。
+
+- `switches` / `days`：三个设置键的写入校验与读取归一化 —— 两个开关 **fail-closed**
+  （只有 `"true"` 才算开启，与表情开关的 fail-open 刻意相反），
+  天数是 1–3650 的整数（脏值回退 30、超上限夹取到 3650）；
+- `dormant`：休眠判定逐条钉死 —— 功能开关、是否留有网址、**严格大于** N 天，
+  以及「最后评论时间未知不标记」这条 fail-open 兜底；
+- `emailNormalize`：休眠分组用的邮箱归一化（同一个人必须落到同一组）；
+- `trust.active`：**人工确认的有效期判定** —— 落库的是绝对时间 `expires_at`，读取时
+  「**严格大于**当前时间」才算有效（`== now` 视为已过期），且只接受
+  `YYYY-MM-DDTHH:mm:ss.sssZ` 这一种格式：空值 / `2026-11-17` / 缺毫秒 / 带时区偏移 /
+  数字串一律 **fail-closed**（不豁免休眠）。这条刻意写死，是因为 JS 的 `Date.parse`
+  比 Go 的 `time.Parse(RFC3339)` 宽容得多，只按「能解析就算」两端会给出不同答案；
+- `trust.dormantOverride`：人工确认对休眠判定的**豁免**（`trusted === true` → 不标记；
+  功能关闭时一切都不标记）；
+- `notice.needNotify`：**休眠提醒邮件的状态机** —— 什么时候该给评论者发提醒。
+  `需要发提醒 = 当前休眠 && (没有记录 || 记录已过期 || 记录里的最后评论时间 ≠ 当前最后评论时间)`。
+  锚点是「该邮箱最后一条评论的时间」：他没再评论 = 同一个休眠周期（只提醒一次）；
+  他后来又评论过 = 新的休眠周期（再提醒一次）。三端各自实现这份状态机，
+  任何一端把「时间相同」写成「一律再发」都会导致重复轰炸用户邮箱。
+
+三端各自复算：Node `nodejs/test/vectors.link-security-v1.test.ts`、
+Go `go/internal/pkg/utils/link_security_vectors_test.go`、
+Worker `worker/test/unit/vectors.link-security-v1.test.ts`。`trust` 段是**追加**的，
+旧端的测试文件不读它也不会报错，便于三端分批升级。
+
+### `stats-distribution-v1.json`
+
+**管理后台数据统计页的客户端分布**口径（设备 / 浏览器 / 操作系统）。由
+`scripts/gen-stats-distribution-vectors.js` 生成。
+
+`Comment.browser` / `Comment.os` 存的是 `<名称> <版本号>`（`Chrome 145.0.0.0`、`Windows 10`），
+`Comment.device` 存的是 `model || type || vendor`（桌面端为空串，移动端是机型码）。
+直接按原值分组会让同一个浏览器的每个版本各占一档，榜单失去信息量。因此三端在 SQL 分组之后
+统一归一化，这份 fixture 钉死三处：
+
+- **去版本号**：尾部「空格 + 以数字开头的 token」才算版本号（`Chrome 145.0.0.0` → `Chrome`、
+  `Mobile Safari 17.0` → `Mobile Safari`），只有名称时原样保留，首尾空白要吃掉；
+- **未知档**：`null` / 空串 / 纯空白 / 整条原始 UA（`Mozilla/…` 或含 `AppleWebKit`）→ `未知`
+  —— 历史版本与导入数据里存在这种脏值，不能拿它去截版本号；
+- **设备归类**：空值 → `桌面`（ua-parser 对桌面端不下发 `device`）、iPad/tablet → `平板`、
+  **移动关键词优先于桌面关键词**（`Windows Phone` 是手机，先判桌面会算错）、
+  其余桌面关键词 → `桌面`、只剩机型码（`ABR-AL60`）→ `移动`。
+
+排序与截断同样属于契约：合并后按 `count` 降序、并列时按 `name` 升序（Unicode 码点），最多取 5 档
+—— JS 的 `Map` 插入序与 Go 的 `map` 遍历序天然不同，不写死排序三端就会给出不同的排行榜。
+
+三端各自复算：Node `nodejs/test/vectors.stats-distribution-v1.test.ts`、
+Go `go/internal/pkg/utils/stats_distribution_vectors_test.go`、
+Worker `worker/test/unit/vectors.stats-distribution-v1.test.ts`；接口层（窗口指标、Top 文章、
+动态流的条数与排序）由 `nodejs/test/api.admin.stats.test.ts`、
+`go/internal/handler/http/admin_users_test.go`、`worker/test/api/admin.stats.test.ts` 各自验证。
+
 ## 重新生成
 
 **只有在有意修改协议时才需要重新生成**，并且必须同步更新所有语言的测试与 `doc/api.md`：
@@ -139,6 +221,10 @@ npx ts-node scripts/gen-sanitize-vectors.ts
 
 ```bash
 node scripts/gen-emoji-vectors.js
+node scripts/gen-emoji-v3-vectors.js
+node scripts/gen-admin-emails-vectors.js
+node scripts/gen-link-security-vectors.js
+node scripts/gen-stats-distribution-vectors.js
 ```
 脚本会打印全部生成值，便于人工核对。生成口径刻意在脚本里**独立复算**（而不是调用实现内部的私有函数），
 这样 fixture 同时也是一次对实现口径的独立复核。

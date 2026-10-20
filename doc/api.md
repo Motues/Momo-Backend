@@ -7,6 +7,9 @@
 | POST | `/api/comments` | 提交评论 |
 | GET | `/api/comments` | 获取评论 |
 | GET | `/api/verify-email/verify` | 验证邮箱（从邮件链接访问，返回 HTML 页面） |
+| GET | `/api/link-dormant/notice` | 休眠链接提醒页（从邮件链接访问，返回 HTML 页面） |
+| POST | `/api/link-dormant/confirm` | 确认休眠链接仍在使用（从邮件表单提交，返回 HTML 结果页） |
+| POST | `/api/link-dormant/update` | 在提醒页提交新链接（从邮件表单提交，返回 HTML 结果页） |
 | POST | `/api/verify/challenge` | 签发人机验证挑战（无感验证） |
 | POST | `/api/verify/solution` | 提交人机验证答案并换取票据 |
 | POST | `/admin/login` | 登录 |
@@ -21,10 +24,13 @@
 | GET | `/admin/stats/overview` | 统计概览 |
 | GET | `/admin/verify/overview` | 认证记录统计概览（无感验证的签发/通过/失败） |
 | GET | `/admin/verify/records` | 认证记录明细（分页 + 筛选） |
-| GET | `/admin/stats/users` | 用户列表（支持按昵称/邮箱搜索） |
+| GET | `/admin/stats/users` | 用户列表（支持按昵称/邮箱搜索、邮箱验证与网站链接状态筛选） |
 | GET | `/admin/stats/users/comments` | 用户的评论 |
 | POST | `/admin/users/blacklist` | 将用户（按邮箱）加入黑名单 |
 | DELETE | `/admin/users/blacklist` | 将用户（按邮箱）移出黑名单 |
+| POST | `/admin/links/trust` | 人工确认休眠链接安全（有效期 = `link_dormant_days` 天） |
+| DELETE | `/admin/links/trust` | 撤销人工确认 |
+| GET | `/admin/mails` | 外发邮件日志（管理面板「邮件管理」） |
 | GET | `/admin/data/export/comments` | 导出评论数据 |
 | GET | `/admin/data/export/settings` | 导出系统设置 |
 | POST | `/admin/data/import/comments` | 导入评论数据 |
@@ -208,8 +214,8 @@
 > **限流**：同一 IP 每分钟最多请求 120 次，超出返回 `429`。
 > 客户端 IP 的判定方式见各后端 README 中的 `TRUST_PROXY` 说明。
 >
-> **隐私**：响应中不包含评论者邮箱；`admin_email_hash` 仅在后台开启「博主评论密钥」
-> （`admin_comment_key_enabled = "true"`）时才下发，否则为空字符串。
+> **隐私**：响应中不包含评论者邮箱；`admin_email_hash` / `admin_email_hashes` 仅在后台开启「博主评论密钥」
+> （`admin_comment_key_enabled = "true"`）时才下发，否则为空字符串 / 空数组。
 
 **响应（成功）**：
 `GET /api/comments?post_slug=...&nested=false`
@@ -229,7 +235,8 @@
         "contentHtml": "<p>写得真好！</p>",
         "pubDate": "2025-10-23T10:00:00Z",
         "parentId": null,
-        "isBlogger": false
+        "isBlogger": false,
+        "urlDormant": false
       }
     ],
     "pagination": {
@@ -245,11 +252,13 @@
     "placeholder_url": "https://",
     "admin_comment_key_configured": "false",
     "admin_email_hash": "xxxxx",
+    "admin_email_hashes": ["xxxxx", "yyyyy"],
     "verify_enabled": "false",
     "verify_honeypot": "",
     "verify_version": "2",
     "emoji_enabled": "true",
-    "emoji_cdn_url": "https://open.motues.top/emoji/owo.json"
+    "emoji_cdn_url": "https://open.motues.top/emoji/owo.json",
+    "emoji_cdn_urls": ["https://open.motues.top/emoji/owo.json"]
   }
 }
 ```
@@ -281,6 +290,7 @@
             "contentHtml": "<p>同意</p>",
             "pubDate": "2025-10-23T11:00:00Z",
             "isBlogger": false,
+            "urlDormant": false,
             "replies": []
           }
         ]
@@ -299,11 +309,13 @@
     "placeholder_url": "https://",
     "admin_comment_key_configured": "false",
     "admin_email_hash": "xxxxx",
+    "admin_email_hashes": ["xxxxx", "yyyyy"],
     "verify_enabled": "false",
     "verify_honeypot": "",
     "verify_version": "2",
     "emoji_enabled": "true",
-    "emoji_cdn_url": "https://open.motues.top/emoji/owo.json"
+    "emoji_cdn_url": "https://open.motues.top/emoji/owo.json",
+    "emoji_cdn_urls": ["https://open.motues.top/emoji/owo.json"]
   }
 }
 ```
@@ -318,6 +330,27 @@
 ```
 ---
 
+### 评论对象字段说明（`GET /api/comments`）
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` / `author` / `avatar` / `contentText` / `contentHtml` / `pubDate` | — | 既有字段 |
+| `url` | string \| null | 评论者个人网站（已过协议白名单：http/https/mailto/相对路径） |
+| `parentId` | number \| null | 回复的父评论（仅平面结构 `nested=false` 有） |
+| `replies` | array | 子评论（仅嵌套结构 `nested=true` 有） |
+| `isBlogger` | boolean | 该评论者邮箱是否命中**管理员邮箱列表** |
+| `urlDormant` | boolean | **链接安全审查**：该评论的个人网址是否处于「休眠」。功能关闭、没有网址、无法判定、或该链接被管理员**人工确认**且未过期时恒为 `false`（见 [link_security.md](./link_security.md) 第 2 节） |
+
+> **读取这个接口有一个副作用**：当本页出现「刚进入休眠」的链接时，服务端会**异步**给评论者本人
+> 发一封提醒邮件（他可以确认仍在用或换新链接）。邮件不影响响应内容与时延，且同一次休眠只会提醒一次
+> （每个请求最多 3 封）。见 [link_security.md](./link_security.md) 第 2.7 节。
+
+`data` 里与评论列表同级的元信息还包含：
+- `emoji_cdn_urls`（数组）/ `emoji_cdn_url`（= 第一个地址，兼容旧前端）；
+- `admin_email_hashes`（数组，仅管理员密钥开启时下发）/ `admin_email_hash`（= 通知邮箱的哈希，兼容旧前端）。
+
+---
+
 ### 验证邮箱（GET `/api/verify-email/verify`）
 
 > 从验证邮件链接中访问，返回 HTML 页面，非 JSON 接口。用于完成邮箱验证流程。
@@ -329,6 +362,31 @@
 **成功**：返回 HTML 页面，显示"邮箱验证成功！共 N 条评论已通过审核。"
 
 **失败**：返回 HTML 页面，显示具体的错误原因（链接无效、已过期等）。
+
+---
+
+### 确认链接同步（GET `/api/link-sync/confirm`）
+
+> 从**链接同步确认邮件**里点开的链接，返回 HTML 页面，非 JSON 接口。
+> 用于把某位评论者的**所有历史评论**的个人网址改成他新提交的网址。
+> 口径见 [link_security.md](./link_security.md)；令牌一次性、24 小时有效。
+
+**查询参数**：
+- `token`：确认令牌（必需）
+- `email`：邮箱地址（必需，必须与令牌匹配）
+
+**结果页文案**：
+
+| 情形 | 文案 |
+|---|---|
+| 缺少参数 | `缺少确认参数` |
+| 令牌/邮箱不匹配 | `确认链接无效` |
+| 已经确认过 | `该链接同步已完成` |
+| 已过期 | `确认链接已过期，请重新提交评论以获取新的确认邮件` |
+| 正常 | `链接同步完成！共 N 条历史评论的网址已更新` |
+
+> 批量更新只改 `url` 字段（不动评论正文），跳过 `rejected` / `deleted` 与本来没有网址的评论，
+> 幂等（重复确认不会产生额外写入）。
 
 ---
 
@@ -760,8 +818,15 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
     "comment_verify_retention_days": "30",
     "comment_verify_log_challenge": "true",
     "trust_proxy": "false",
+    "admin_emails": "[\"admin@example.com\"]",
+    "notify_email": "admin@example.com",
     "emoji_enabled": "true",
-    "emoji_cdn_url": "https://open.motues.top/emoji/owo.json"
+    "emoji_cdn_url": "https://open.motues.top/emoji/owo.json",
+    "emoji_cdn_urls": "[\"https://open.motues.top/emoji/owo.json\"]",
+    "link_security_enabled": "false",
+    "link_dormant_days": "30",
+    "link_sync_enabled": "false",
+    "link_dormant_notice_enabled": "false"
   }
 }
 ```
@@ -784,6 +849,8 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
   "data": {
     "site_name": "Momo Blog",
     "admin_email": "admin@example.com",
+    "admin_emails": "[\"admin@example.com\"]",
+    "notify_email": "admin@example.com",
     "comment_auto_approve": "true",
     "comment_spam_keywords": "",
     "comment_spam_max_links": "0",
@@ -812,6 +879,7 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
     "email_secure": "true",
     "email_enabled": "true",
     "email_verify_enabled": "false",
+    "mail_log_retention_days": "30",
     "reply_template": "",
     "notification_template": ""
   }
@@ -859,17 +927,37 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
   "message": "Settings fetched",
   "data": {
     "emoji_enabled": "true",
+    "emoji_cdn_urls": "[\"https://open.motues.top/emoji/owo.json\"]",
     "emoji_cdn_url": "https://open.motues.top/emoji/owo.json"
+  }
+}
+```
+
+`GET /admin/settings?type=link`（链接安全审查分组）
+
+```json
+{
+  "code": 200,
+  "message": "Settings fetched",
+  "data": {
+    "link_security_enabled": "false",
+    "link_dormant_days": "30",
+    "link_sync_enabled": "false",
+    "link_dormant_notice_enabled": "false"
   }
 }
 ```
 
 * `emoji_enabled`：是否在评论区显示表情按钮，取 `"true"` / `"false"`（默认 `"true"`）。
   写入时 `trim` + 转小写后落库，只接受 `"true"` / `"false"` / 空串，其余返回 `400`。
-* `emoji_cdn_url`：OwO 格式（owo.json 同构）的表情来源地址，必须 `http`/`https` 且不超过 500 码点；
-  **留空表示未配置**，读取时回落默认源 `https://open.motues.top/emoji/owo.json`。
+* `emoji_cdn_urls`：**OwO 格式来源地址数组**（JSON 数组字符串，最多 5 个，每个必须 `http`/`https`
+  且不超过 500 码点）。数组为空表示未配置 → 回落 `emoji_cdn_url` → 再回落默认源。
+* `emoji_cdn_url`：契约 v2 的单地址键，v3 起只作为兼容/回落保留（面板不再写它）。
   关闭表情请用 `emoji_enabled = "false"`（关闭后地址照常随评论列表下发，配置不会丢失）。
-* 详细口径（含面板保存前的 OwO 格式在线校验）见 [emoji.md](./emoji.md)。
+* 详细口径（含多来源拼接合并与面板保存前的在线校验）见 [emoji.md](./emoji.md)。
+* `link_security_enabled` / `link_dormant_days` / `link_sync_enabled` / `link_dormant_notice_enabled`：
+  休眠链接、历史链接批量更新与休眠提醒邮件，口径见 [link_security.md](./link_security.md)
+  （三个开关 **fail-closed**：只有 `"true"` 才算开启）。
 
 **响应（失败）**：
 ```json
@@ -917,8 +1005,15 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
   "comment_verify_retention_days": "30",
   "comment_verify_log_challenge": "true",
   "trust_proxy": "false",
+  "admin_emails": "[\"admin@example.com\",\"editor@example.com\"]",
+  "notify_email": "admin@example.com",
   "emoji_enabled": "true",
-  "emoji_cdn_url": "https://open.motues.top/emoji/owo.json"
+  "emoji_cdn_urls": "[\"https://open.motues.top/emoji/owo.json\"]",
+  "emoji_cdn_url": "https://open.motues.top/emoji/owo.json",
+  "link_security_enabled": "true",
+  "link_dormant_days": "30",
+  "link_sync_enabled": "false",
+  "link_dormant_notice_enabled": "true"
 }
 ```
 
@@ -930,6 +1025,9 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
 > - `comment_verify_instr_enabled` 开启第二层环境质询，默认 `"false"`；`comment_verify_block_automated` 控制命中自动化特征时是否拒绝，默认 `"false"`（只记录日志）
 > - `comment_verify_domain_enabled` 开启**来源域名绑定**，默认 `"false"`：挑战签发、答案兑换与评论提交都要求来源命中 `allow_origin` 白名单，白名单为空或含 `*` 时一律拒绝（fail-closed）。它挡的是浏览器侧跨域滥用与跨站点搬运凭证，**挡不住伪造请求头的服务端转发**（见「人机验证」章节第六节）
 > - `comment_verify_retention_days` 是认证记录（`VerifyRecord`）的保留天数，默认 `"30"`；`"0"` 表示永久保留，上限 3650
+> - `mail_log_retention_days` 是外发邮件日志（`MailLog`）的保留天数，默认 `"30"`；`"0"` 表示永久保留，
+>   只能是 0–3650 的整数（否则 `400 mail_log_retention_days 必须是 0-3650 之间的整数`），
+>   写入时存规范化后的十进制（`" 045 "` → `"45"`）
 > - `comment_verify_log_challenge` 控制是否记录「签发挑战」事件，默认 `"true"`；设为 `"false"` 只记录通过/失败以降低写入量
 > - `admin_password` **不在允许写入的字段中**，直接提交会返回 `400`；修改密码请使用 `PUT /admin/password`（需要提供旧凭据）
 > - `ip_blacklist` 会被校验格式，必须是「合法 IP 或 CIDR」组成的 JSON 数组，否则返回 `400`
@@ -944,12 +1042,27 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
 >   默认 `"false"`，只使用 TCP 连接对端地址；部署在 Nginx / Cloudflare 之后时必须设为 `"true"`。
 >   开启后 `x-forwarded-for` 取最右一跳。该项也可由环境变量 `TRUST_PROXY`（Node）或
 >   `config.yaml` 中的 `TRUST_PROXY`（Go）强制指定，此时页面设置不生效，详见各后端 README
-> - `emoji_enabled` / `emoji_cdn_url`：评论区表情的启用开关与 **OwO 格式**来源地址，
->   口径见 [emoji.md](./emoji.md)；`emoji_packs` 已在契约 v2 中删除，提交它会返回 `400`
+> - `emoji_enabled` / `emoji_cdn_urls` / `emoji_cdn_url`：评论区表情的启用开关与 **OwO 格式**来源
+>   （v3 起是数组，`emoji_cdn_url` 作为回落保留），口径见 [emoji.md](./emoji.md)；
+>   `emoji_packs` 已在契约 v2 中删除，提交它会返回 `400`
+> - `admin_emails`：管理员邮箱列表（JSON 数组，最多 10 个，trim + 小写 + 去重后落库），
+>   列表里的人都是博主；`notify_email`：通知收件邮箱，必须命中该列表（否则 `400`），
+>   口径见 [admin_emails.md](./admin_emails.md)
+> - `link_security_enabled` / `link_dormant_days` / `link_sync_enabled` / `link_dormant_notice_enabled`：
+>   链接安全审查的四个键，口径见 [link_security.md](./link_security.md)；`link_dormant_days` 只能是 1–3650 的整数。
+>   `link_dormant_notice_enabled`（默认 `"false"`）控制**链接进入休眠时是否给评论者发提醒邮件**，
+>   运行时还要求 `email_verify_enabled = "true"`：邮箱验证未开启时即使打开该开关也不会发信
 
 > **邮件模板可用占位符**（三端一致：替换为 **HTML 转义后**的值，未匹配的 `{{...}}` 保持原样）：
 > - 回复模板：`{{toName}}` `{{replyAuthor}}` `{{postTitle}}` `{{parentComment}}` `{{replyContent}}` `{{postUrl}}`
 > - 通知模板：`{{postTitle}}` `{{commentAuthor}}` `{{commentContent}}` `{{postUrl}}`
+>
+> **渲染后的 HTML 占位符**（1.8.0 新增，**不转义**，原样插入；默认模板已改用它们）：
+> - 回复模板：`{{replyContentHtml}}`（回复渲染后的 HTML）、`{{parentCommentHtml}}`（原评论渲染后的 HTML）
+> - 通知模板：`{{commentContentHtml}}`（评论渲染后的 HTML）
+>
+> 邮件正文里的 Markdown 图片、链接与 `:name:` 表情短代码都会被渲染成邮件客户端可显示的 HTML
+> （表情图由服务端按配置来源拉取后水合），口径见 [mail.md](./mail.md)。
 
 > **新字段说明**：
 > - `comment_auto_approve`：评论自动通过开关，`"true"` 表示评论直接显示，`"false"` 表示评论需审核
@@ -1181,10 +1294,12 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
 **查询参数**：
 - `page`：查询页数（默认 1）
 - `status`：按状态筛选（可选，取值：`approved`、`pending`、`deleted`，为空返回全部）
+- `postSlug`：按文章标识**精确匹配**筛选（可选，`trim` 后为空表示不筛选；数据统计页「热门文章 Top 5」点击某一行即跳到这里）
 
 **响应（成功）**：
 `GET /admin/comments/list&page=1`
 或过滤：`GET /admin/comments/list?page=1&status=pending`
+或按文章：`GET /admin/comments/list?page=1&postSlug=/posts/my-article`
 
 ```json
 {
@@ -1267,6 +1382,37 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
     "topCommenters": [
       { "author": "张三", "email": "zhangsan@example.com", "count": 15, "lastCommentDate": "2026-04-27T10:00:00.000Z" },
       { "author": "李四", "email": "lisi@example.com", "count": 10, "lastCommentDate": "2026-04-26T08:00:00.000Z" }
+    ],
+    "windowComments": 12,
+    "prevWindowComments": 8,
+    "commentsDelta": 50,
+    "windowUsers": 6,
+    "prevWindowUsers": 5,
+    "usersDelta": 20,
+    "todayComments": 3,
+    "last7DaysComments": 12,
+    "topPosts": [
+      { "postSlug": "/posts/hello", "count": 30, "lastCommentDate": "2026-04-27T10:00:00.000Z" },
+      { "postSlug": "/posts/second", "count": 12, "lastCommentDate": "2026-04-25T09:30:00.000Z" }
+    ],
+    "deviceDistribution": [
+      { "name": "桌面", "count": 60 },
+      { "name": "移动", "count": 35 },
+      { "name": "未知", "count": 5 }
+    ],
+    "browserDistribution": [
+      { "name": "Chrome", "count": 55 },
+      { "name": "未知", "count": 20 },
+      { "name": "Safari", "count": 15 }
+    ],
+    "osDistribution": [
+      { "name": "Windows", "count": 40 },
+      { "name": "Android", "count": 25 },
+      { "name": "未知", "count": 20 }
+    ],
+    "latestComments": [
+      { "id": 128, "author": "张三", "email": "zhangsan@example.com", "postSlug": "/posts/hello", "contentText": "写得很好，学到了。", "status": "pending", "pubDate": "2026-04-27T10:00:00.000Z" },
+      { "id": 127, "author": "李四", "email": "lisi@example.com", "postSlug": "/posts/second", "contentText": "收藏了", "status": "approved", "pubDate": "2026-04-26T08:00:00.000Z" }
     ]
   }
 }
@@ -1296,6 +1442,31 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
   }
 }
 ```
+
+**新增字段口径**（三端逐字一致，管理面板数据统计页使用）：
+
+| 字段 | 口径 |
+| --- | --- |
+| `windowComments` / `prevWindowComments` | 当前窗口与**上一个等长窗口**内的评论数（含所有状态）。窗口就是 `range`：`range=N`（N>1）为 `[今天(UTC) − (N−1) 天, 现在]`，上一窗口紧邻其左侧等长；`range=0`/`all` 为「最近 12 个自然月」，上一窗口是再往前的 12 个自然月 |
+| `commentsDelta` / `usersDelta` | 环比**整数百分比** `round((当前 − 上一) / 上一 × 100)`；上一窗口为空时下发 `null`（不返回 0/100%，避免前端显示「持平」这种假结论）。与 `/admin/verify/overview` 的 `*Delta` 同一口径 |
+| `windowUsers` / `prevWindowUsers` | 窗口内活跃评论者数，按 `author + email` 去重（与 `totalUsers` 同口径，只统计窗口内出现过的） |
+| `todayComments` | 今天（**UTC 日** 00:00 起）新增评论数 |
+| `last7DaysComments` | 最近 7 个 UTC 日（含今天）新增评论数 |
+| `topPosts` | 按 `post_slug` 分组的评论数排行，最多 5 条，`count` 降序、并列时 `post_slug` 升序 |
+| `deviceDistribution` / `browserDistribution` / `osDistribution` | 客户端分布，最多 5 档，`count` 降序、并列时 `name` 升序（按 Unicode 码点）。`device` 归成「桌面 / 移动 / 平板 / 未知」，`browser`/`os` 去掉版本号取家族名；无法识别（空值、纯空白、整条原始 UA）归入「未知」 |
+| `latestComments` | 最近 5 条评论动态（含所有状态），`pub_date` 降序、并列时 `id` 降序，`contentText` 为纯文本全文（由前端截断展示） |
+
+> **窗口起点与趋势分桶严格对齐**：`windowComments` 恒等于 `recentComments` 各项 `count` 之和，
+> 因此 `windowComments` 与折线图不会给出互相矛盾的数字。
+>
+> **UTC 日切分**：`todayComments` / `last7DaysComments` 与趋势分桶同一时区口径（UTC）——
+> 服务端时区随部署形态变化（Worker 恒为 UTC，自建 Node/Go 取决于宿主），因此不能按服务器本地日切分。
+>
+> **分布口径的唯一事实来源**是 `doc/vectors/stats-distribution-v1.json`，
+> Node / Go / Worker 三端各自读取同一份 fixture 复算（`nodejs/src/utils/statsDistribution.ts`、
+> `go/internal/pkg/utils/stats_distribution.go`、`worker/src/utils/statsDistribution.ts`）。
+> 分布覆盖**所有状态**的评论（含待审核与已删除），因此各档位之和 ≤ `totalComments`，
+> 差额即被 5 档上限截断的长尾，由面板合并显示为「其他」。
 
 **响应（失败）**：
 ```json
@@ -1451,6 +1622,11 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
 - `limit`：每页用户数（默认 20）
 - `search`：搜索关键字（可选），按昵称或邮箱模糊匹配（不区分大小写）
 - `verified`：按邮箱验证状态筛选（可选）。`all`（默认，不筛选）/ `true`（仅已验证）/ `false`（仅未验证）
+- `linkStatus`：按**网站链接状态**筛选（可选，默认 `all`）。`dormant`（休眠）/ `trusted`
+  （人工确认或本人确认且未过期）/ `normal`（正常）/ `none`（从未留过链接）；
+  无法识别的取值不筛选。**过滤发生在分页之前**，`pagination.totalPage` 反映筛选后的集合
+
+> `linkStatus` 的四种状态互斥，判定顺序就是上面列出的顺序（同一口径也用于面板的筛选下拉框）。
 
 > **判定口径**：只要 `EmailVerification` 表中存在该邮箱 `verified = 1` 的记录即视为「已验证」，
 > 与提交评论时跳过邮箱验证的判定完全一致（邮箱为精确匹配，大小写敏感）。
@@ -1469,6 +1645,10 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
       {
         "author": "张三",
         "email": "zhangsan@example.com",
+        "url": "https://zhangsan.example.com",
+        "urlDormant": false,
+        "urlTrustedUntil": "",
+        "urlTrustedSource": "",
         "commentCount": 15,
         "approvedCount": 12,
         "pendingCount": 2,
@@ -1490,6 +1670,154 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
 ```
 
 > `blacklisted` 为 `true` 表示该用户的邮箱已在邮箱黑名单中，无法再提交评论。
+>
+> `url` / `urlDormant`（1.8.0 新增）是「网站链接」列的数据源，口径与公开评论区的同名字段一致
+> （见 [link_security.md](./link_security.md) 第 2 节）：
+> `url` 是该用户（**按归一化邮箱识别身份**，跨文章聚合）**最近一次留下的非空个人网址**，
+> 从没留过链接时为空串；`urlDormant` 表示该链接当前是否「休眠」
+> （功能开启 && 有网址 && 该邮箱最后一条评论距今**严格大于** `link_dormant_days` 天 &&
+> 该链接未被管理员人工确认；
+> `rejected` / `deleted` 的评论不算「来过」）。功能关闭时 `urlDormant` 恒为 `false`，但 `url` 照常下发。
+>
+> `urlTrustedUntil`（同批新增）是该 `(邮箱, 网址)` 的**人工确认到期时间**（ISO 8601 UTC）；
+> 未确认或确认已过期时为空串。确认有效期间 `urlDormant` 恒为 `false`
+> （见 [link_security.md](./link_security.md) 第 2.4 节）。
+>
+> `urlTrustedSource` 是确认来源：`admin`（管理员在用户列表人工确认）/ `self`
+> （评论者本人从提醒邮件里确认）；无确认时为空串。
+
+### 人工确认休眠链接安全 (POST `/admin/links/trust`)
+
+> 管理员在用户列表看过某条休眠链接后，可人工确认它安全：确认期内该链接不再被判为休眠。
+> 有效期 = 确认那一刻的 `link_dormant_days` 天，到期自动恢复休眠（读取时实时判断，无定时任务）。
+> 粒度是「邮箱 + 网址」——评论者换了新链接需要重新确认。
+> 详见 [link_security.md](./link_security.md) 第 2.4 / 2.6 节。
+
+**请求体**：
+```json
+{
+  "email": "zhangsan@example.com",
+  "url": "https://zhangsan.example.com"
+}
+```
+
+> `email` 归一化为 `trim` + 小写，`url` 过 `sanitizeUrl`（只允许 http/https/mailto/相对路径）；
+> 任一为空（含 `javascript:` 这类被拦掉的网址）→ `400 email and url are required`。
+> 幂等：同一 `(email, url)` 重复确认只刷新 `expires_at`，不新增记录。
+
+**响应（成功）**：
+
+```json
+{
+  "code": 200,
+  "message": "Link trusted successfully",
+  "data": {
+    "email": "zhangsan@example.com",
+    "url": "https://zhangsan.example.com",
+    "expiresAt": "2026-11-17T00:00:00.000Z",
+    "days": 30
+  }
+}
+```
+
+### 撤销人工确认 (DELETE `/admin/links/trust`)
+
+`DELETE /admin/links/trust?email=zhangsan@example.com&url=https%3A%2F%2Fzhangsan.example.com`
+
+**响应（成功，确有记录）**：
+
+```json
+{
+  "code": 200,
+  "message": "Link trust revoked",
+  "data": { "email": "zhangsan@example.com", "url": "https://zhangsan.example.com", "revoked": true }
+}
+```
+
+**响应（本来就未确认，幂等）**：
+
+```json
+{
+  "code": 200,
+  "message": "Link is not trusted",
+  "data": { "email": "zhangsan@example.com", "url": "https://zhangsan.example.com", "revoked": false }
+}
+```
+
+> 缺少 `email` / `url` → `400 email and url are required`。
+> 两个端点都需要管理员 token；鉴权失败时的 401 文案沿用各端既有管理端中间件口径
+> （Node / Go 为 `Invalid token`，Worker 为 `Unauthorized` / `Token expired or invalid`）。
+
+### 邮件管理 (GET `/admin/mails`)
+
+> 外发邮件日志：**只记真正尝试发送**的邮件（SMTP 未配置、`email_enabled = "false"`
+> 导致的跳过不记），成功与失败都留痕，失败带错误信息。
+> 保留天数由设置项 `mail_log_retention_days` 决定（默认 **30 天**，`0` = 永久保留，
+> 上限 3650），写入时顺手清理过期行。类型枚举与保留策略见
+> [mail.md](./mail.md) 第 6 节。
+
+**查询参数**：
+- `page`：页码（可选，默认 1）
+- `pageSize`：每页条数（可选，默认 20，上限 100）
+- `status`：`all`（默认）/ `sent` / `failed`；无法识别的取值不筛选
+- `type`：`all`（默认）/ `verify` / `link_sync` / `dormant_notice` / `comment_notify` / `reply_notify` / `test`；无法识别的取值不筛选
+- `search`：对收件人或主题做不区分大小写的模糊匹配（可选）
+
+**响应（成功）**：
+
+```json
+{
+  "code": 200,
+  "message": "Mails fetched successfully",
+  "data": {
+    "list": [
+      {
+        "id": 12,
+        "type": "dormant_notice",
+        "recipient": "sleepy@example.com",
+        "subject": "您在 Momo Blog 的个人网站链接已进入休眠",
+        "status": "sent",
+        "error": "",
+        "createdAt": "2026-10-18T13:00:00.000Z"
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "pageSize": 20,
+    "retentionDays": 30
+  }
+}
+```
+
+> 按 `created_at DESC, id DESC` 排序；`error` 无值时空串；只返回保留期内的记录
+> （`retentionDays = 0` 表示永久保留，此时不设时间下限、返回全部历史）。
+
+### 休眠链接提醒页 (GET `/api/link-dormant/notice?token=`)
+
+> 休眠提醒邮件里的按钮指向的中文 HTML 页（**不需要登录**：邮件令牌即凭据，24 小时之外的
+> 有效期见下）。页面显示当前链接，并提供「我仍在使用」与「提交新链接」两个表单。
+>
+> 提醒邮件本身只在**三个条件同时满足**时才会发出：`link_security_enabled = "true"` &&
+> `link_dormant_notice_enabled = "true"` && `email_verify_enabled = "true"`（SMTP 可用且
+> `email_enabled != "false"`）。提醒开关默认关闭，未开邮箱验证时即使打开提醒开关也不会发信。
+> 详见 [link_security.md](./link_security.md) 第 2.7 节。
+
+**响应**：`200` + `text/html`（中文页面）。令牌缺失/未知/已过期时同样是 HTML，文案分别为
+`缺少提醒参数。` / `该提醒已失效或已处理。` / `该提醒已过期，请在评论区留言或等待新的提醒邮件。`
+
+### 确认链接仍在使用 (POST `/api/link-dormant/confirm?token=`)
+
+> 为该 `(邮箱, 网址)` 写一条 `link_dormant_days` 天的确认（来源 `self`）并删除提醒记录，
+> 链接随即恢复正常。响应是 HTML 结果页（`确认成功！该链接已恢复正常，{N} 天内不会再标记为休眠。`）。
+
+### 提交新链接 (POST `/api/link-dormant/update?token=`)
+
+> 表单字段 `url`（`application/x-www-form-urlencoded`）。`url` 必须过 `sanitizeUrl`
+> **且以 `http://` / `https://` 开头**，否则返回
+> `新链接格式不正确，请填写以 http:// 或 https:// 开头的网址。` 且不改任何评论。
+> 成功后批量改写该邮箱历史评论的链接（口径同 `/api/link-sync/confirm`）并为新链接写本人确认，
+> 结果页为 `链接更新成功！共 {count} 条历史评论的网址已更新。`
+> 或 `新链接与现有链接相同，未做修改。`
 
 ### 将用户加入黑名单 (POST `/admin/users/blacklist`)
 

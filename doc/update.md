@@ -43,51 +43,99 @@ pnpm run deploy
 
 ## 数据库更新记录
 
-### `v1.7.0` 版本
+### `v1.8.0` 版本
 
-**数据库变更**：无。本版只往既有的 `Settings` 表写入两个新键（首次保存时自动出现），
-不需要执行任何 SQL，也不需要迁移旧数据。
+**数据库变更**：新增四张表，并给 `TrustedLink` 增加 `source` 列。字段与语义见
+[data_table.md](./data_table.md)，链接安全相关口径见 [link_security.md](./link_security.md)。
 
-本版三项内容：**管理面板版本号 + 自动检查更新**、**评论区表情**，以及**表情配置契约 v2**
-（删除自定义表情包）。
+| 表 | 用途 |
+|---|---|
+| `LinkSyncRequest` | 历史链接批量更新的待确认记录（token 一次性、24 小时有效） |
+| `TrustedLink` | 休眠链接的确认放行记录（`source` 区分 `admin` / `self`，到期后自动恢复休眠） |
+| `DormantNotice` | 休眠提醒邮件的状态机（同一休眠周期只提醒一次，承载提醒页令牌） |
+| `MailLog` | 外发邮件日志，面板「邮件管理」的数据源 |
 
-#### 评论区表情（契约 v2）
+新库由建表 DDL 一次建出（`TrustedLink` 已包含 `source` 列）；旧库执行下面这段即可，
+全部是 `CREATE ... IF NOT EXISTS`：
 
-后台「系统设置 → 表情设置」现在只有两项：
+```sql
+-- 历史链接批量更新：email 为归一化（trim + 小写）后的身份凭据
+CREATE TABLE IF NOT EXISTS LinkSyncRequest (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL,
+    new_url TEXT NOT NULL,
+    token TEXT NOT NULL UNIQUE,
+    expires_at TEXT NOT NULL,              -- ISO 8601 UTC，24 小时
+    confirmed INTEGER NOT NULL DEFAULT 0,  -- 0/1，单次使用
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lsr_email ON LinkSyncRequest(email);
+CREATE INDEX IF NOT EXISTS idx_lsr_token ON LinkSyncRequest(token);
 
-| 设置键 | 默认值 | 说明 |
-|---|---|---|
-| `emoji_enabled` | `"true"` | 是否在评论区显示表情按钮 |
-| `emoji_cdn_url` | `https://open.motues.top/emoji/owo.json` | **OwO 格式**（owo.json 同构）的表情来源，由访客浏览器直接拉取 |
+-- 休眠链接的确认放行（有效期 = 确认时的 link_dormant_days 天）
+CREATE TABLE IF NOT EXISTS TrustedLink (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL,
+    url TEXT NOT NULL,                     -- 已过 sanitizeUrl，与评论 url 逐字相等才算命中
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'admin'   -- admin = 管理员确认；self = 本人从提醒页确认
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_tl_email_url ON TrustedLink(email, url);
+CREATE INDEX IF NOT EXISTS idx_tl_email ON TrustedLink(email);
 
-- **删除**了 v1 的「自定义表情包」：设置键 `emoji_packs`、公开接口 `GET /api/emoji`、
-  后台上传/导入/导出自定义表情包的整套功能都不再存在（提交 `emoji_packs` 会返回 `400`）。
-- 后台保存地址前会用浏览器**在线校验**该地址是不是 owo.json 形状；明确不是时不允许保存，
-  拉取不到（网络/跨域限制）时只提示并允许保存。详见 [emoji.md](./emoji.md)。
-- 站点支持用查询参数只取默认源里的一个标签，例如
-  `https://open.motues.top/emoji/owo.json?group=Emoji`（只保留 `Emoji` 标签）。
+-- 休眠提醒邮件的状态机：同一 (email, url) 只留一行，重复提醒刷新 token 并累加 notify_count
+CREATE TABLE IF NOT EXISTS DormantNotice (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL,
+    url TEXT NOT NULL,
+    last_comment_at INTEGER NOT NULL,      -- 锚点：该邮箱最后一条评论的毫秒时间戳
+    token TEXT NOT NULL UNIQUE,            -- 提醒页令牌，确认 / 换链接后即失效
+    expires_at TEXT NOT NULL,
+    notified_at TEXT NOT NULL,
+    notify_count INTEGER NOT NULL DEFAULT 1
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_dn_email_url ON DormantNotice(email, url);
+CREATE INDEX IF NOT EXISTS idx_dn_token ON DormantNotice(token);
+CREATE INDEX IF NOT EXISTS idx_dn_email ON DormantNotice(email);
 
-**升级须知**：
+-- 外发邮件日志：只记真正尝试过的发送，默认保留 30 天
+CREATE TABLE IF NOT EXISTS MailLog (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL,                    -- verify / link_sync / dormant_notice / comment_notify / reply_notify / test
+    recipient TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    status TEXT NOT NULL,                  -- sent / failed
+    error TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ml_created ON MailLog(created_at);
+CREATE INDEX IF NOT EXISTS idx_ml_status ON MailLog(status);
+```
 
-- **数据库里的 `emoji_packs` 不会再被读取**（留着不影响运行，也不会下发）；
-  `GET /api/emoji` 已下线，之前把它当作 `emojiCDN` 喂给 Twikoo 之类的用法需要改为直接指向某个 owo.json 地址。
-- `emoji_cdn_url` 留空或缺失时，**现在会回落默认源**而不是「关闭表情」。
-  如果你的旧配置正是用空串来关闭默认表情，升级后请在面板上把「启用表情」关掉
-  （`emoji_enabled = "false"`）；关闭后地址仍会随评论列表下发，配置不会丢。
-- 已知的旧自定义表情包不会自动转换：如果里面有想保留的表情，请在升级前用「导出全部」保存 JSON，
-  再自行发布成一份 owo.json 放到 `https://` 地址上使用。
-- 前端组件与后端**需要同时升级到 1.7.x**：前端不再请求本站 `/api/emoji`，
-  并会读取新的 `emoji_enabled` 字段（旧后端不下发该字段时视为启用，仍可正常工作）。
+**升级方式**：
 
-#### 管理面板版本号
+| 版本 | 做法 |
+|---|---|
+| Node.js | 替换代码并重启，启动自迁移自动补表 / 补列 |
+| Go | 同上，替换二进制后重启 |
+| Worker | 部署后**下一次请求**触发自迁移；也可以把上面的 SQL 粘到 D1 控制台手工执行（同样内容也在 `worker/schemas/comment.sql` 里） |
 
-面板侧边栏底部显示 `vX.X.X`，自动向 GitHub Releases 检查更新（失败回退 jsDelivr/npm，
-缓存 6 小时），有新版本时显示提醒。纯前端行为，无需任何配置。
+> 若库里已存在 1.8.0 开发期间建的 `TrustedLink`（没有 `source` 列），补一句
+> `ALTER TABLE TrustedLink ADD COLUMN source TEXT NOT NULL DEFAULT 'admin';` 即可。
+>
+> 全部改动都是纯新增，**不升级也不会坏**：缺 `MailLog` 只是面板「邮件管理」没有数据，
+> 缺 `DormantNotice` 只是不发休眠提醒邮件，休眠判定本身不变。
+
+**新增设置键（无需 SQL）**：`link_dormant_notice_enabled`（默认 `"false"`，链接刚进入休眠时是否
+发提醒邮件，仍依赖 `email_verify_enabled`，邮箱验证未开启时不发信）与 `mail_log_retention_days`
+（默认 `"30"`，邮件日志保留天数，`0` = 永久，上限 3650）。两者都由「系统设置」首次保存时写入，
+旧库读不到即按默认值处理 —— 升级**不会**突然开始给历史评论者发休眠提醒邮件，日志保留天数也与
+旧版本一致。
 
 ### `v1.6.1` 版本
 
-**数据库变更**：`VerifyRecord` 表新增一列 `origin`（来源域名绑定记录，也是管理面板「认证记录」页新增的
-「来源域名」列的数据来源）；其余改动只写进既有的 `Settings` 表（首次保存时自动出现），无需执行任何 SQL。
+**数据库变更**：`VerifyRecord` 表新增一列 `origin`（来源域名绑定记录，也是管理面板「认证记录」页新增的「来源域名」列的数据来源）；其余改动只写进既有的 `Settings` 表（首次保存时自动出现），无需执行任何 SQL。
 
 ```sql
 -- 来源域名绑定：记录本次认证（含被拒的请求）来自哪个域名
@@ -96,49 +144,6 @@ ALTER TABLE "VerifyRecord" ADD COLUMN "origin" TEXT;
 ```
 
 字段与语义的完整说明见 [data_table.md](./data_table.md)。
-
-本版两项变更：**提交评论的服务端来源校验**（`allow_origin` 白名单同时约束写接口）与
-**来源域名绑定**（新增设置项 `comment_verify_domain_enabled`，默认 `"false"`）。
-
-#### 提交评论的服务端来源校验
-
-`allow_origin` 过去只决定 CORS 要不要下发 `Access-Control-Allow-Origin`，而 CORS 是浏览器机制，
-白名单外的请求本身照样会被处理。于是「fork 一份前端 + 在自己服务器上把 `/api/comments`
-转发到别人后端」这种用法完全绕开白名单：评论照样落库，还会用后端配置的 SMTP 账号发通知信
-（消耗配额、冒用发件身份）。1.6.1 起，该白名单同时约束写接口。
-
-**升级须知**：
-
-- `allow_origin` **非空且不含 `*`** 时，`POST /api/comments` 会先校验请求声明的来源：
-  请求头 `Origin`、请求头 `Referer`、请求体 `post_url` 三者中**所有存在的来源都必须命中白名单**，
-  且至少要有一个可判定；三者全缺、值无法解析（`Origin: null`、相对地址的 `post_url`、非 `http(s)` 协议）
-  或任一不匹配，一律返回 `403`（`reason: "ORIGIN_NOT_ALLOWED"`），**不落库、不发送任何邮件**
-  （站长通知 / 回复通知 / 邮箱验证邮件都在校验之后）。
-- **升级后请检查后台「安全设置 → 跨域设置」里的白名单**：
-  - 留空或填 `*`：**不启用**该校验，行为与 1.6.0 完全一致（注意留空同时意味着不放开跨域）；
-  - 填了具体来源：请确认包含**你自己站点的来源**（如 `https://blog.example.com`）。
-    条目可写完整来源，也可写裸主机名（`blog.example.com`，此时忽略 scheme 与端口）；
-    大小写、尾斜杠与默认端口（`http:80` / `https:443`）会被归一化；**不支持通配符子域**。
-  - 若你的站点自己做服务端转发（浏览器并不直接请求本后端，因此没有 `Origin` / `Referer`），
-    需要把页面的 `post_url` 原样透传给本后端，否则会被判为「来源缺失」而拒绝。
-- 用脚本 / curl 直接调用 `POST /api/comments` 的自动化流程同样需要带上 `Origin` 或 `post_url`；
-  这类调用方也可以把它的来源加进白名单。
-- 三端（Node.js / Go / Cloudflare Worker）行为完全一致（含 403 文案与 `reason`），
-  口径由新增的 `doc/vectors/origin-v1.json` 钉死。
-- 来源头可以被伪造，这道校验抬高的是滥用成本、**不是密码学边界**；真正的边界需要站点级令牌（后续版本）。
-
-#### 来源域名绑定
-
-设置项 `comment_verify_domain_enabled`（默认 `"false"`，在
-「系统设置 → 安全设置 → 人机验证」里开启）。开启后挑战签发、答案兑换与评论提交三处都要求请求来源命中
-`allow_origin` 白名单，并把来源域名哈希签进挑战与票据（载荷**末尾追加** `org` 字段）：
-
-- **与普通来源校验的差异**：`allow_origin` 留空或为 `*` 时普通来源校验会放行，而域名绑定
-  **fail-closed**（一律拒绝）—— 请先填好具体域名白名单再开启，面板会就此给出告警；
-- **能挡住**浏览器侧的跨域滥用（页面无法伪造 `Origin`）与跨站点搬运凭证（为 A 域名签发的挑战/票据不能
-  在 B 域名使用）；**挡不住**伪造请求头的服务端转发，它是成本闸门而非密码学边界；
-- **兼容性**：开关关闭时载荷里完全不出现 `org`，与旧版本逐字节一致；开关中途打开时，手上那份旧挑战会返回
-  `domain required`（前端重新验证一次即可）。前端组件无需升级，但**三端后端实现之间必须同步升级**。
 
 **升级方式**：
 
@@ -153,8 +158,7 @@ ALTER TABLE "VerifyRecord" ADD COLUMN "origin" TEXT;
 
 ### `v1.6.0` 版本
 
-**数据库变更**：新增一张表 `VerifyRecord`（评论无感验证的认证记录，也是管理面板侧边栏「认证记录」页的数据来源）；
-人机验证的其余改动都只写进既有的 `Settings` 表（首次保存时自动出现），无需执行任何 SQL。
+**数据库变更**：新增一张表 `VerifyRecord`（评论无感验证的认证记录，也是管理面板侧边栏「认证记录」页的数据来源）；人机验证的其余改动都只写进既有的 `Settings` 表（首次保存时自动出现），无需执行任何 SQL。
 
 ```sql
 -- 评论无感验证（人机验证）的认证记录：一次认证最多三条（challenge / pass / fail），用 challenge_id 串联
@@ -199,18 +203,6 @@ CREATE INDEX IF NOT EXISTS idx_vr_cid ON VerifyRecord(challenge_id);
 | 第一层 | **HashWX** 工作量证明 | 每次挑战生成一次性函数，GPU 相对 CPU 的吞吐优势从 SHA-256 的约 150 倍降到约 2 倍 |
 | 第二层 | **Instrumentation 环境质询** | 服务端下发随机程序，要求浏览器真实执行并回传环境特征；默认关闭 |
 
-**升级须知**：
-
-- 前端组件与后端**必须同时升级**，协议不互通：旧前端连新后端会在验证时失败（后端返回 `reason: "PROTOCOL_OUTDATED"`）；新前端连旧后端会显示「验证服务版本过旧，请联系博主升级」。前端版本对应关系见 [frontend/README.md](./frontend/README.md)。
-- 难度设置项的语义从「前导 0 比特数」变为「访客需要完成的哈希计算总次数」。**旧值会自动迁移**（≤26 的值按 `2^值` 换算，上限 2^20），无需手工改配置。
-- 第一层需要浏览器支持 WebAssembly（iOS 15+ 及现代桌面浏览器）；**不再提供纯 JS 降级路径**，不支持的浏览器会明确提示「浏览器版本过低，不支持验证」。
-- 已签发的挑战与票据在升级瞬间全部失效，访客刷新页面即可重新验证。
-- 第二层新增两个设置项（默认关闭）：`comment_verify_instr_enabled`、`comment_verify_block_automated`。建议先只记录日志观察一段时间，确认没有误伤后再考虑开启拦截。
-- 认证记录新增两个设置项：`comment_verify_retention_days`（保留天数，默认 `30`，`0` 表示永久保留）与 `comment_verify_log_challenge`（是否记录「签发挑战」事件，默认 `"true"`）。写入量偏大时可以关掉签发事件，只保留通过/失败。
-- 分发产物时请保留各端 `vendor/hashwx/` 目录（含 **LGPL-3.0** 许可证全文），它们随 Node / Go / Worker / 前端四处各自保留一份；前端 npm 包另附 `THIRD_PARTY_NOTICES.md`。
-- **三端（Node.js / Go / Cloudflare Worker）与前端组件都已同步到协议 v2**。Go 端为此新增了 `wazero` 依赖（纯 Go 的 WebAssembly 运行时，不影响 `CGO_ENABLED=0` 构建）；Worker 端因 workerd 禁止运行时编译 WASM，改为由 wrangler 静态导入 `.wasm`。
-- 跨语言口径由共享固定向量保证：Node / Go / Worker / 前端的测试都读取 `doc/vectors/` 下的同一份文件并各自复算，详见 [doc/vectors/README.md](./doc/vectors/README.md)。
-- 协议细节（派生公式、操作码表、环境判定规则、报文示例、v1/v2 对照）见 [doc/api.md](./doc/api.md) 的「人机验证（无感验证 · 协议 v2）」。
 
 ### `v1.3.0` 版本
 
