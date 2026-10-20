@@ -5,17 +5,33 @@ import { countCodePoints } from "./security";
  *
  * 口径的唯一事实来源是 `doc/emoji.md`：Node / Go / Worker 三端必须逐条一致，
  * 否则同一份配置在不同部署形态下会出现「一端能存、另一端 400」或「下发值不同」。
- * 跨语言固定向量见 `doc/vectors/emoji-v2.json`（三端读同一份 fixture 各自复算）。
+ * 跨语言固定向量见 `doc/vectors/emoji-v3.json`（多来源，现行）与
+ * `doc/vectors/emoji-v2.json`（单来源键，兼容），三端读同一份 fixture 各自复算。
  *
- * 契约 v2 起，v1 的「自定义表情包」（`emoji_packs`）与公开接口 `GET /api/emoji`
- * 已整体删除：评论区只有一个由管理员配置的 OwO 格式来源，由访客浏览器直接拉取。
+ * 契约 v3（1.8.0）起支持**多个来源**：`emoji_cdn_urls`（JSON 数组，最多 5 个），
+ * 由访客浏览器按顺序拉取并拼接合并；旧的单地址键 `emoji_cdn_url` 只在数组为空时回落。
+ *
+ * 契约 v2（1.7.0）删除的 v1「自定义表情包」（`emoji_packs`）与公开接口 `GET /api/emoji`
+ * 至今仍然不存在。
  */
 
 export const EMOJI_ENABLED_KEY = "emoji_enabled";
 export const EMOJI_CDN_URL_KEY = "emoji_cdn_url";
+/** 契约 v3：多个 OwO 来源地址（JSON 数组字符串，最多 5 个，按顺序拼接合并） */
+export const EMOJI_CDN_URLS_KEY = "emoji_cdn_urls";
 export const DEFAULT_EMOJI_CDN_URL = "https://open.motues.top/emoji/owo.json";
 export const DEFAULT_EMOJI_ENABLED = "true";
 export const MAX_EMOJI_CDN_URL_LENGTH = 500;
+export const MAX_EMOJI_CDN_URLS = 5;
+
+/** `emoji_cdn_urls` 的五条错误文案（三端逐字一致，见 doc/vectors/emoji-v3.json 的 errors） */
+export const EMOJI_CDN_URLS_ERRORS = {
+  notArray: "emoji_cdn_urls 必须是 JSON 数组",
+  notString: "emoji_cdn_urls 的每一项都必须是字符串",
+  tooMany: `emoji_cdn_urls 最多 ${MAX_EMOJI_CDN_URLS} 个地址`,
+  badScheme: "emoji_cdn_urls 只允许 http/https 地址",
+  tooLong: `emoji_cdn_urls 不能超过 ${MAX_EMOJI_CDN_URL_LENGTH} 个字符`,
+};
 
 const CDN_URL_RE = /^https?:\/\/[^"<>]+$/i;
 
@@ -42,6 +58,74 @@ export function validateEmojiCdnUrl(raw: unknown): string | null {
   return null;
 }
 
+/**
+ * 校验 `emoji_cdn_urls`（契约 v3，写入路径**严格**）。
+ * 空串 / 空数组 / 全空项视为「未配置」，通过校验。
+ */
+export function validateEmojiCdnUrls(raw: unknown): string | null {
+  if (raw === null || raw === undefined) return null;
+  const text = String(raw).trim();
+  if (text === "") return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return EMOJI_CDN_URLS_ERRORS.notArray;
+  }
+  if (!Array.isArray(parsed)) return EMOJI_CDN_URLS_ERRORS.notArray;
+  for (const item of parsed) {
+    if (typeof item !== "string") return EMOJI_CDN_URLS_ERRORS.notString;
+  }
+
+  const urls = (parsed as string[]).map((item) => item.trim()).filter((item) => item !== "");
+  if (urls.length > MAX_EMOJI_CDN_URLS) return EMOJI_CDN_URLS_ERRORS.tooMany;
+  for (const url of urls) {
+    if (countCodePoints(url) > MAX_EMOJI_CDN_URL_LENGTH) return EMOJI_CDN_URLS_ERRORS.tooLong;
+    if (!CDN_URL_RE.test(url)) return EMOJI_CDN_URLS_ERRORS.badScheme;
+  }
+  return null;
+}
+
+/** 归一化 `emoji_cdn_urls`：trim + 去空后存回 JSON 数组字符串（写入路径） */
+export function normalizeEmojiCdnUrls(raw: unknown): string {
+  const text = String(raw ?? "").trim();
+  if (text === "") return "[]";
+  try {
+    const parsed = JSON.parse(text);
+    if (!Array.isArray(parsed)) return "[]";
+    const urls = parsed
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter((item) => item !== "");
+    return JSON.stringify(urls);
+  } catch {
+    return "[]";
+  }
+}
+
+/**
+ * 读取路径的宽容解析（见 doc/emoji.md 第 3.2 节）：
+ * 坏值 → `[]`；非字符串项与空串丢弃；结果截断到前 5 个（顺序保持）。
+ */
+export function parseEmojiCdnUrls(raw: unknown): string[] {
+  if (raw === null || raw === undefined) return [];
+  const text = String(raw).trim();
+  if (text === "") return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter((item) => item !== "")
+    .slice(0, MAX_EMOJI_CDN_URLS);
+}
+
 export interface EmojiConfig {
   /** 下发给前端的有效地址：存储为空/缺失时回落默认源 */
   url: string;
@@ -50,11 +134,7 @@ export interface EmojiConfig {
 }
 
 /**
- * 读取路径归一化：把存储值换算成下发给前端的两个字段（三端一致，见 doc/emoji.md 第 3.2 节）。
- *
- * - 地址：`trim` 后为空（未配置 / 历史空串）→ 默认源；
- * - 开关：空或无法识别的值 → 启用（fail-open），仅 `false`（大小写不敏感）判为关闭；
- * - **关闭时地址照常下发**：后台面板据此保留配置，不会因为关一下就丢掉地址。
+ * 读取路径归一化（契约 v2，兼容用）：单地址键的换算。
  */
 export function resolveEmojiConfig(
   storedUrl: string | null | undefined,
@@ -62,6 +142,39 @@ export function resolveEmojiConfig(
 ): EmojiConfig {
   return {
     url: String(storedUrl ?? "").trim() || DEFAULT_EMOJI_CDN_URL,
+    enabled: normalizeEmojiEnabled(storedEnabled) === "false" ? "false" : "true",
+  };
+}
+
+export interface EmojiConfigs {
+  /** 下发给前端的有效地址列表（始终至少 1 个） */
+  urls: string[];
+  /** 兼容旧前端的第一个地址（= `urls[0]`） */
+  url: string;
+  /** `"true"` / `"false"`：只有归一化后等于 `"false"` 才算关闭，其余 fail-open 为启用 */
+  enabled: string;
+}
+
+/**
+ * 读取路径归一化（契约 v3，现行）：把三个存储值换算成下发给前端的字段。
+ *
+ * - 地址列表：宽容解析后为空 → 回落旧的单地址键；旧键也为空 → 回落默认源；
+ * - 开关：空或无法识别的值 → 启用（fail-open），仅 `false`（大小写不敏感）判为关闭；
+ * - **关闭时地址照常下发**：后台面板据此保留配置，不会因为关一下就丢掉地址。
+ */
+export function resolveEmojiConfigs(
+  storedUrls: string | null | undefined,
+  storedCdnUrl: string | null | undefined,
+  storedEnabled: string | null | undefined
+): EmojiConfigs {
+  let urls = parseEmojiCdnUrls(storedUrls);
+  if (urls.length === 0) {
+    const legacy = String(storedCdnUrl ?? "").trim();
+    urls = legacy === "" ? [DEFAULT_EMOJI_CDN_URL] : [legacy];
+  }
+  return {
+    urls,
+    url: urls[0],
     enabled: normalizeEmojiEnabled(storedEnabled) === "false" ? "false" : "true",
   };
 }

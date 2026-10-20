@@ -1,0 +1,235 @@
+{
+  "version": 3,
+  "note": "表情多来源契约 v3：新增 emoji_cdn_urls（JSON 数组，最多 5 个地址，按顺序拼接合并），旧 emoji_cdn_url 仅在数组为空时作为回落。constants / 写入校验（五条错误文案）/ 读取归一化（回落、容错、截断）三端必须逐条一致。由 scripts/gen-emoji-v3-vectors.js 生成，请勿手改。",
+  "defaults": {
+    "cdnUrl": "https://open.motues.top/emoji/owo.json",
+    "enabled": "true"
+  },
+  "limits": {
+    "maxCdnUrlLen": 500,
+    "maxCdnUrls": 5
+  },
+  "errors": {
+    "notArray": "emoji_cdn_urls 必须是 JSON 数组",
+    "notString": "emoji_cdn_urls 的每一项都必须是字符串",
+    "tooMany": "emoji_cdn_urls 最多 5 个地址",
+    "badScheme": "emoji_cdn_urls 只允许 http/https 地址",
+    "tooLong": "emoji_cdn_urls 不能超过 500 个字符"
+  },
+  "cdnUrls": {
+    "valid": [
+      {
+        "value": "",
+        "expect": []
+      },
+      {
+        "value": "   ",
+        "expect": []
+      },
+      {
+        "value": null,
+        "expect": []
+      },
+      {
+        "value": "[]",
+        "expect": []
+      },
+      {
+        "value": "[\"\", \"   \"]",
+        "expect": []
+      },
+      {
+        "value": "[\"  https://a.example.com/owo.json  \"]",
+        "expect": [
+          "https://a.example.com/owo.json"
+        ]
+      },
+      {
+        "value": "[\"https://a.example.com/owo.json\", \"\", \"https://b.example.com/owo.json?group=Emoji\"]",
+        "expect": [
+          "https://a.example.com/owo.json",
+          "https://b.example.com/owo.json?group=Emoji"
+        ]
+      },
+      {
+        "value": "[\"https://a.example.com/owo.json\",\"https://b.example.com/owo.json?group=Emoji\",\"http://c.example.com/owo.json\",\"https://d.example.com/owo.json\",\"https://e.example.com/owo.json\"]",
+        "expect": [
+          "https://a.example.com/owo.json",
+          "https://b.example.com/owo.json?group=Emoji",
+          "http://c.example.com/owo.json",
+          "https://d.example.com/owo.json",
+          "https://e.example.com/owo.json"
+        ]
+      },
+      {
+        "value": "[\"https://cdn.example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"]",
+        "expect": [
+          "https://cdn.example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
+      },
+      {
+        "value": "[\"https://open.motues.top/emoji/owo.json\",\"http://example.com/owo.json\"]",
+        "expect": [
+          "https://open.motues.top/emoji/owo.json",
+          "http://example.com/owo.json"
+        ]
+      }
+    ],
+    "invalid": [
+      {
+        "value": "not json",
+        "error": "notArray"
+      },
+      {
+        "value": "{}",
+        "error": "notArray"
+      },
+      {
+        "value": "\"https://a.example.com/owo.json\"",
+        "error": "notArray"
+      },
+      {
+        "value": "123",
+        "error": "notArray"
+      },
+      {
+        "value": "[1]",
+        "error": "notString"
+      },
+      {
+        "value": "[\"https://a.example.com/owo.json\", null]",
+        "error": "notString"
+      },
+      {
+        "value": "[\"https://a.example.com/owo.json\",\"https://b.example.com/owo.json?group=Emoji\",\"http://c.example.com/owo.json\",\"https://d.example.com/owo.json\",\"https://e.example.com/owo.json\",\"https://f.example.com/owo.json\"]",
+        "error": "tooMany"
+      },
+      {
+        "value": "[\"ftp://a.example.com/owo.json\"]",
+        "error": "badScheme"
+      },
+      {
+        "value": "[\"javascript:alert(1)\"]",
+        "error": "badScheme"
+      },
+      {
+        "value": "[\"owo.json\"]",
+        "error": "badScheme"
+      },
+      {
+        "value": "[\"//example.com/owo.json\"]",
+        "error": "badScheme"
+      },
+      {
+        "value": "[\"https://a.example.com/x\\\"y.json\"]",
+        "error": "badScheme"
+      },
+      {
+        "value": "[\"<img src=x>\"]",
+        "error": "badScheme"
+      },
+      {
+        "value": "[\"https://cdn.example.com/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"]",
+        "error": "tooLong"
+      }
+    ]
+  },
+  "resolve": [
+    {
+      "name": "三项都未配置：回落默认源 + 启用",
+      "storedUrls": "",
+      "storedCdnUrl": "",
+      "storedEnabled": "",
+      "expectUrls": [
+        "https://open.motues.top/emoji/owo.json"
+      ],
+      "expectEnabled": "true"
+    },
+    {
+      "name": "数组已配置：原样下发（两侧空格裁掉），旧的单地址键被忽略",
+      "storedUrls": "[\"  https://a.example.com/owo.json  \", \"https://b.example.com/owo.json\"]",
+      "storedCdnUrl": "https://legacy.example.com/owo.json",
+      "storedEnabled": "true",
+      "expectUrls": [
+        "https://a.example.com/owo.json",
+        "https://b.example.com/owo.json"
+      ],
+      "expectEnabled": "true"
+    },
+    {
+      "name": "数组为空：回落到旧的单地址键",
+      "storedUrls": "[]",
+      "storedCdnUrl": "  https://legacy.example.com/owo.json  ",
+      "storedEnabled": "true",
+      "expectUrls": [
+        "https://legacy.example.com/owo.json"
+      ],
+      "expectEnabled": "true"
+    },
+    {
+      "name": "数组是脏值（非 JSON）：同样回落到旧的单地址键",
+      "storedUrls": "not json",
+      "storedCdnUrl": "https://legacy.example.com/owo.json",
+      "storedEnabled": "true",
+      "expectUrls": [
+        "https://legacy.example.com/owo.json"
+      ],
+      "expectEnabled": "true"
+    },
+    {
+      "name": "数组非数组形状（对象）：回落",
+      "storedUrls": "{\"a\":1}",
+      "storedCdnUrl": "",
+      "storedEnabled": "false",
+      "expectUrls": [
+        "https://open.motues.top/emoji/owo.json"
+      ],
+      "expectEnabled": "false"
+    },
+    {
+      "name": "读取宽容：非字符串项丢弃、空串丢弃、顺序保持",
+      "storedUrls": "[\"\", 7, \"https://a.example.com/owo.json\", null, \"  \", \"https://b.example.com/owo.json\"]",
+      "storedCdnUrl": "https://legacy.example.com/owo.json",
+      "storedEnabled": "yes",
+      "expectUrls": [
+        "https://a.example.com/owo.json",
+        "https://b.example.com/owo.json"
+      ],
+      "expectEnabled": "true"
+    },
+    {
+      "name": "读取宽容：超过 5 个只取前 5 个",
+      "storedUrls": "[\"https://a.example.com/owo.json\",\"https://b.example.com/owo.json?group=Emoji\",\"http://c.example.com/owo.json\",\"https://d.example.com/owo.json\",\"https://e.example.com/owo.json\",\"https://f.example.com/owo.json\"]",
+      "storedCdnUrl": "",
+      "storedEnabled": "true",
+      "expectUrls": [
+        "https://a.example.com/owo.json",
+        "https://b.example.com/owo.json?group=Emoji",
+        "http://c.example.com/owo.json",
+        "https://d.example.com/owo.json",
+        "https://e.example.com/owo.json"
+      ],
+      "expectEnabled": "true"
+    },
+    {
+      "name": "关闭时地址照常下发（面板不会丢掉配置）",
+      "storedUrls": "[\"https://a.example.com/owo.json\"]",
+      "storedCdnUrl": "",
+      "storedEnabled": "FALSE",
+      "expectUrls": [
+        "https://a.example.com/owo.json"
+      ],
+      "expectEnabled": "false"
+    },
+    {
+      "name": "空/空白开关 fail-open 为启用",
+      "storedUrls": "[\"https://a.example.com/owo.json\"]",
+      "storedCdnUrl": "",
+      "storedEnabled": "   ",
+      "expectUrls": [
+        "https://a.example.com/owo.json"
+      ],
+      "expectEnabled": "true"
+    }
+  ]
+}

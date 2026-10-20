@@ -11,6 +11,8 @@ import {
 	isEmojiCacheFresh,
 	loadDefaultPacks,
 	loadEmojiSet,
+	mergePacks,
+	normalizeCdnUrls,
 	normalizeShortcode,
 	readEmojiCache,
 	resetEmojiSetCache,
@@ -23,6 +25,11 @@ const CDN = 'https://cdn.example.com/emoji/owo.json';
 const OTHER_CDN = 'https://other.example.com/owo.json';
 const PNG = 'https://cdn.example.com/emoji/doge.png';
 const PNG2 = 'https://cdn.example.com/emoji/hi.png';
+
+/** 缓存键 = 整个地址列表的 JSON（doc/emoji.md 第 6 节） */
+const listKey = (urls) => JSON.stringify(urls);
+/** localStorage 里真正的键（前缀 + 地址列表 JSON） */
+const storageKey = (urls) => `${EMOJI_CACHE_PREFIX}${listKey(urls)}`;
 
 /** 简化的 owo.json 形状（`{ 标签: { type, container } }`） */
 function owo(packs) {
@@ -60,38 +67,49 @@ afterEach(() => {
 });
 
 describe('emoji/owo —— 本地缓存读写与 TTL', () => {
-	it('写入后能读回，缓存键带前缀与完整地址', () => {
+	it('写入后能读回，缓存键带前缀与整个地址列表的 JSON', () => {
 		const packs = sanitizePacks(owo({ 颜文字: { type: 'emoticon', container: [{ icon: 'OωO' }] } }));
-		expect(writeEmojiCache(CDN, packs, localStorage, 1000)).toBe(true);
-		expect(localStorage.getItem(`${EMOJI_CACHE_PREFIX}${CDN}`)).toBeTruthy();
+		expect(writeEmojiCache(listKey([CDN]), packs, localStorage, 1000)).toBe(true);
+		expect(localStorage.getItem(storageKey([CDN]))).toBeTruthy();
+		// 键是地址列表本身，不是单个地址
+		expect(localStorage.getItem(`${EMOJI_CACHE_PREFIX}${CDN}`)).toBeNull();
 
-		const entry = readEmojiCache(CDN, localStorage);
+		const entry = readEmojiCache(listKey([CDN]), localStorage);
 		expect(entry.savedAt).toBe(1000);
 		expect(entry.packs).toEqual(packs);
 	});
 
-	it('没有缓存 / 地址为空 / 存储不可用时读取返回 null', () => {
-		expect(readEmojiCache(CDN, localStorage)).toBeNull();
+	it('列表顺序不同 / 列表不同 = 不同的缓存（互不命中）', () => {
+		const packs = sanitizePacks(owo({ 颜文字: { type: 'emoticon', container: [{ icon: 'OωO' }] } }));
+		writeEmojiCache(listKey([CDN, OTHER_CDN]), packs, localStorage, 1000);
+
+		expect(readEmojiCache(listKey([CDN, OTHER_CDN]), localStorage)).toBeTruthy();
+		expect(readEmojiCache(listKey([OTHER_CDN, CDN]), localStorage)).toBeNull();
+		expect(readEmojiCache(listKey([CDN]), localStorage)).toBeNull();
+	});
+
+	it('没有缓存 / 地址列表为空 / 存储不可用时读取返回 null', () => {
+		expect(readEmojiCache(listKey([CDN]), localStorage)).toBeNull();
 		expect(readEmojiCache('', localStorage)).toBeNull();
-		expect(readEmojiCache(CDN, null)).toBeNull();
+		expect(readEmojiCache(listKey([CDN]), null)).toBeNull();
 		expect(writeEmojiCache('', {}, localStorage)).toBe(false);
-		expect(writeEmojiCache(CDN, {}, null)).toBe(false);
+		expect(writeEmojiCache(listKey([CDN]), {}, null)).toBe(false);
 	});
 
 	it('缓存内容损坏或字段缺失时返回 null（不抛错）', () => {
-		localStorage.setItem(`${EMOJI_CACHE_PREFIX}${CDN}`, '{不是 JSON');
-		expect(readEmojiCache(CDN, localStorage)).toBeNull();
+		localStorage.setItem(storageKey([CDN]), '{不是 JSON');
+		expect(readEmojiCache(listKey([CDN]), localStorage)).toBeNull();
 
-		localStorage.setItem(`${EMOJI_CACHE_PREFIX}${CDN}`, JSON.stringify({ packs: {} }));
-		expect(readEmojiCache(CDN, localStorage)).toBeNull();
+		localStorage.setItem(storageKey([CDN]), JSON.stringify({ packs: {} }));
+		expect(readEmojiCache(listKey([CDN]), localStorage)).toBeNull();
 
-		localStorage.setItem(`${EMOJI_CACHE_PREFIX}${CDN}`, JSON.stringify({ savedAt: 'now', packs: {} }));
-		expect(readEmojiCache(CDN, localStorage)).toBeNull();
+		localStorage.setItem(storageKey([CDN]), JSON.stringify({ savedAt: 'now', packs: {} }));
+		expect(readEmojiCache(listKey([CDN]), localStorage)).toBeNull();
 	});
 
 	it('读取缓存时会丢弃结构不合法的项', () => {
 		writeEmojiCache(
-			CDN,
+			listKey([CDN]),
 			{
 				标签: {
 					type: 'image',
@@ -102,7 +120,7 @@ describe('emoji/owo —— 本地缓存读写与 TTL', () => {
 			localStorage,
 			1000
 		);
-		const entry = readEmojiCache(CDN, localStorage);
+		const entry = readEmojiCache(listKey([CDN]), localStorage);
 		expect(Object.keys(entry.packs)).toEqual(['标签']);
 		expect(entry.packs['标签'].container).toEqual([{ icon: `<img src="${PNG}">`, text: 'doge' }]);
 	});
@@ -118,31 +136,63 @@ describe('emoji/owo —— 本地缓存读写与 TTL', () => {
 	it('getCachedEmojiSet 是同步零请求：新鲜缓存直接成集合，过期缓存视为空', async () => {
 		const fetch = fetchMock(async () => jsonResponse({}));
 		const now = 1_000_000;
-		writeEmojiCache(CDN, sanitizePacks(owo({ 颜文字: { type: 'emoticon', container: [{ icon: 'OωO' }] } })), localStorage, now);
+		writeEmojiCache(listKey([CDN]), sanitizePacks(owo({ 颜文字: { type: 'emoticon', container: [{ icon: 'OωO' }] } })), localStorage, now);
 
-		const fresh = getCachedEmojiSet({ cdnUrl: CDN, storage: localStorage, now: now + 1000 });
+		const fresh = getCachedEmojiSet({ cdnUrls: [CDN], storage: localStorage, now: now + 1000 });
 		expect(fresh.tabs.map((tab) => tab.label)).toEqual(['颜文字']);
 		expect(fresh.tabs[0].items[0].insert).toBe('OωO');
 
-		const expired = getCachedEmojiSet({ cdnUrl: CDN, storage: localStorage, now: now + EMOJI_CACHE_TTL_MS });
+		const expired = getCachedEmojiSet({ cdnUrls: [CDN], storage: localStorage, now: now + EMOJI_CACHE_TTL_MS });
 		expect(expired.tabs).toEqual([]);
 		expect(expired.images.size).toBe(0);
 
-		expect(getCachedEmojiSet({ cdnUrl: '', storage: localStorage, now }).tabs).toEqual([]);
+		expect(getCachedEmojiSet({ cdnUrls: [], storage: localStorage, now }).tabs).toEqual([]);
 		await Promise.resolve();
 		expect(fetch.calls).toEqual([]);
 	});
+
+	it('getCachedEmojiSet 的缓存键是整个列表：列表不同就是空集合', () => {
+		const now = 1_000_000;
+		writeEmojiCache(listKey([CDN]), sanitizePacks(owo({ 颜文字: { type: 'emoticon', container: [{ icon: 'OωO' }] } })), localStorage, now);
+
+		expect(getCachedEmojiSet({ cdnUrls: [CDN], storage: localStorage, now }).tabs.map((t) => t.label)).toEqual(['颜文字']);
+		expect(getCachedEmojiSet({ cdnUrls: [CDN, OTHER_CDN], storage: localStorage, now }).tabs).toEqual([]);
+	});
 });
 
-describe('emoji/owo —— loadDefaultPacks 的缓存与回退', () => {
+describe('emoji/owo —— normalizeCdnUrls 与 mergePacks', () => {
+	it('normalizeCdnUrls 只保留非空字符串并保持顺序', () => {
+		expect(normalizeCdnUrls([CDN, '', OTHER_CDN])).toEqual([CDN, OTHER_CDN]);
+		expect(normalizeCdnUrls([CDN, null, 123])).toEqual([CDN]);
+		expect(normalizeCdnUrls('')).toEqual([]);
+		expect(normalizeCdnUrls(CDN)).toEqual([CDN]); // 兼容旧调用方的单地址
+		expect(normalizeCdnUrls(undefined)).toEqual([]);
+	});
+
+	it('mergePacks：标签按首次出现排序，同名标签追加 container 而不是新建标签', () => {
+		const merged = mergePacks(
+			sanitizePacks(owo({ A: { type: 'image', container: [imageItem(PNG, 'a')] }, B: { type: 'image', container: [] } })),
+			sanitizePacks(owo({ B: { type: 'image', container: [imageItem(PNG2, 'b')] }, C: { type: 'image', container: [imageItem(PNG, 'c')] } }))
+		);
+		expect(Object.keys(merged)).toEqual(['A', 'B', 'C']);
+		expect(merged.B.container.map((item) => item.text)).toEqual(['b']);
+		expect(merged.A.container.map((item) => item.text)).toEqual(['a']);
+	});
+});
+
+describe('emoji/owo —— loadDefaultPacks 的缓存与多来源合并', () => {
+	const packA = owo({ 颜文字: { type: 'emoticon', container: [{ icon: 'OωO' }] } });
+	const packB = owo({ Bilibili: { type: 'image', container: [imageItem(PNG, 'doge')] } });
+
 	it('命中 7 天内的缓存时一个请求都不发', async () => {
 		const fetch = fetchMock(async () => jsonResponse({}));
 		const now = 1_000_000;
-		writeEmojiCache(CDN, sanitizePacks(owo({ 颜文字: { type: 'emoticon', container: [{ icon: 'OωO' }] } })), localStorage, now);
+		writeEmojiCache(listKey([CDN]), sanitizePacks(packA), localStorage, now);
 
-		const result = await loadDefaultPacks(CDN, { storage: localStorage, now: now + 1000 });
+		const result = await loadDefaultPacks([CDN], { storage: localStorage, now: now + 1000 });
 		expect(result.fromCache).toBe(true);
 		expect(result.stale).toBe(false);
+		expect(result.partial).toBe(false);
 		expect(Object.keys(result.packs)).toEqual(['颜文字']);
 		expect(fetch.calls).toEqual([]);
 	});
@@ -150,72 +200,180 @@ describe('emoji/owo —— loadDefaultPacks 的缓存与回退', () => {
 	it('force 时忽略新鲜缓存并重新拉取', async () => {
 		const fetch = fetchMock(async () => jsonResponse(owo({ 新标签: { type: 'emoticon', container: [{ icon: '🙂' }] } })));
 		const now = 1_000_000;
-		writeEmojiCache(CDN, sanitizePacks(owo({ 旧标签: { type: 'emoticon', container: [{ icon: 'OωO' }] } })), localStorage, now);
+		writeEmojiCache(listKey([CDN]), sanitizePacks(owo({ 旧标签: { type: 'emoticon', container: [{ icon: 'OωO' }] } })), localStorage, now);
 
-		const result = await loadDefaultPacks(CDN, { force: true, storage: localStorage, now: now + 1000 });
+		const result = await loadDefaultPacks([CDN], { force: true, storage: localStorage, now: now + 1000 });
 		expect(fetch.calls.length).toBe(1);
 		expect(fetch.calls[0].url).toBe(CDN);
 		expect(result.fromCache).toBe(false);
 		expect(Object.keys(result.packs)).toEqual(['新标签']);
-		expect(Object.keys(readEmojiCache(CDN, localStorage).packs)).toEqual(['新标签']);
+		expect(Object.keys(readEmojiCache(listKey([CDN]), localStorage).packs)).toEqual(['新标签']);
 	});
 
 	it('缓存过期时重新拉取并覆盖缓存', async () => {
 		const fetch = fetchMock(async () => jsonResponse(owo({ B: { type: 'emoticon', container: [{ icon: 'B' }] } })));
 		const now = 1_000_000;
-		writeEmojiCache(CDN, sanitizePacks(owo({ A: { type: 'emoticon', container: [{ icon: 'A' }] } })), localStorage, now - EMOJI_CACHE_TTL_MS);
+		writeEmojiCache(listKey([CDN]), sanitizePacks(owo({ A: { type: 'emoticon', container: [{ icon: 'A' }] } })), localStorage, now - EMOJI_CACHE_TTL_MS);
 
-		const result = await loadDefaultPacks(CDN, { storage: localStorage, now });
+		const result = await loadDefaultPacks([CDN], { storage: localStorage, now });
 		expect(fetch.calls.length).toBe(1);
 		expect(Object.keys(result.packs)).toEqual(['B']);
-		expect(readEmojiCache(CDN, localStorage).savedAt).toBe(now);
+		expect(readEmojiCache(listKey([CDN]), localStorage).savedAt).toBe(now);
 	});
 
-	it('拉取失败但有旧缓存时回退旧缓存并标记 stale', async () => {
+	it('多来源：按数组顺序并发拉取，标签保持首次出现顺序，同名标签追加 container', async () => {
+		const fetch = fetchMock(async (url) => {
+			if (url === CDN) return jsonResponse(owo({ 颜文字: { type: 'emoticon', container: [{ icon: 'OωO' }] }, Bilibili: { type: 'image', container: [imageItem(PNG, 'doge')] } }));
+			return jsonResponse(owo({ Bilibili: { type: 'image', container: [imageItem(PNG2, 'hi')] }, QQ: { type: 'image', container: [imageItem(PNG2, 'qq')] } }));
+		});
+
+		const result = await loadDefaultPacks([CDN, OTHER_CDN], { storage: localStorage });
+		expect(fetch.calls.map((call) => call.url)).toEqual([CDN, OTHER_CDN]);
+		// 首次出现顺序：CDN 的 颜文字/Bilibili 在前，OTHER 只贡献新标签 QQ
+		expect(Object.keys(result.packs)).toEqual(['颜文字', 'Bilibili', 'QQ']);
+		// Bilibili 在两个来源里都有 → container 追加进同一个标签，不新建标签页
+		expect(result.packs.Bilibili.container.map((item) => item.text)).toEqual(['doge', 'hi']);
+		expect(result.partial).toBe(false);
+		expect(result.stale).toBe(false);
+	});
+
+	it('多来源：合并结果写进「地址列表」缓存键，重新加载不发请求', async () => {
+		const fetch = fetchMock(async (url) => jsonResponse(url === CDN ? packA : packB));
+
+		const first = await loadDefaultPacks([CDN, OTHER_CDN], { storage: localStorage });
+		expect(Object.keys(first.packs)).toEqual(['颜文字', 'Bilibili']);
+		expect(readEmojiCache(listKey([CDN, OTHER_CDN]), localStorage)).toBeTruthy();
+		// 单地址的缓存键不会被写入
+		expect(readEmojiCache(listKey([CDN]), localStorage)).toBeNull();
+
+		const again = await loadDefaultPacks([CDN, OTHER_CDN], { storage: localStorage });
+		expect(again.fromCache).toBe(true);
+		expect(fetch.calls.length).toBe(2);
+	});
+
+	it('部分来源失败：成功的那几个照常合并并标 partial=true', async () => {
+		const fetch = fetchMock(async (url) => {
+			if (url === OTHER_CDN) throw new Error('network down');
+			return jsonResponse(packA);
+		});
+
+		const result = await loadDefaultPacks([CDN, OTHER_CDN], { storage: localStorage });
+		expect(fetch.calls.length).toBe(2);
+		expect(result.partial).toBe(true);
+		expect(result.stale).toBe(false);
+		expect(result.fromCache).toBe(false);
+		expect(Object.keys(result.packs)).toEqual(['颜文字']);
+	});
+
+	it('部分来源返回的不是合法 owo.json：同样只丢这一个来源', async () => {
+		fetchMock(async (url) => (url === CDN ? jsonResponse(['not', 'an', 'object']) : jsonResponse(packB)));
+
+		const result = await loadDefaultPacks([CDN, OTHER_CDN], { storage: localStorage });
+		expect(result.partial).toBe(true);
+		expect(Object.keys(result.packs)).toEqual(['Bilibili']);
+	});
+
+	it('全部来源失败但有旧缓存时回退旧缓存并标记 stale', async () => {
 		const fetch = fetchMock(async () => {
 			throw new Error('network down');
 		});
 		const now = 1_000_000;
-		writeEmojiCache(CDN, sanitizePacks(owo({ 旧: { type: 'emoticon', container: [{ icon: 'OωO' }] } })), localStorage, now);
+		writeEmojiCache(listKey([CDN, OTHER_CDN]), sanitizePacks(owo({ 旧: { type: 'emoticon', container: [{ icon: 'OωO' }] } })), localStorage, now);
 
-		const result = await loadDefaultPacks(CDN, { force: true, storage: localStorage, now });
-		expect(fetch.calls.length).toBe(1);
+		const result = await loadDefaultPacks([CDN, OTHER_CDN], { force: true, storage: localStorage, now });
+		expect(fetch.calls.length).toBe(2);
 		expect(result.stale).toBe(true);
 		expect(result.fromCache).toBe(true);
+		expect(result.partial).toBe(false);
 		expect(Object.keys(result.packs)).toEqual(['旧']);
 	});
 
-	it('HTTP 非 2xx 时有旧缓存同样回退', async () => {
+	it('HTTP 非 2xx 时全部失败同样回退旧缓存', async () => {
 		fetchMock(async () => jsonResponse({}, { ok: false, status: 500 }));
-		writeEmojiCache(CDN, sanitizePacks(owo({ 旧: { type: 'emoticon', container: [{ icon: 'OωO' }] } })), localStorage, 1);
+		writeEmojiCache(listKey([CDN]), sanitizePacks(owo({ 旧: { type: 'emoticon', container: [{ icon: 'OωO' }] } })), localStorage, 1);
 
-		const result = await loadDefaultPacks(CDN, { force: true, storage: localStorage, now: 1 });
+		const result = await loadDefaultPacks([CDN], { force: true, storage: localStorage, now: 1 });
 		expect(result.stale).toBe(true);
 		expect(Object.keys(result.packs)).toEqual(['旧']);
 	});
 
-	it('拉取失败且没有缓存时抛出异常（由面板显示错误态）', async () => {
+	it('全部失败且没有缓存时抛出异常（由面板显示错误态）', async () => {
 		fetchMock(async () => {
 			throw new Error('network down');
 		});
-		await expect(loadDefaultPacks(CDN, { storage: localStorage })).rejects.toThrow('network down');
+		await expect(loadDefaultPacks([CDN], { storage: localStorage })).rejects.toThrow('network down');
 	});
 
 	it('响应不是合法 owo.json（空对象 / 数组 / 字符串）时视为失败', async () => {
 		for (const body of [{}, [], 'nope']) {
 			resetEmojiSetCache();
 			fetchMock(async () => jsonResponse(body));
-			await expect(loadDefaultPacks(CDN, { storage: localStorage }), JSON.stringify(body)).rejects.toThrow(
+			await expect(loadDefaultPacks([CDN], { storage: localStorage }), JSON.stringify(body)).rejects.toThrow(
 				'owo.json 结构不正确'
 			);
 		}
 	});
 
-	it('地址为空时直接返回空包且不发请求', async () => {
+	it('地址列表为空时直接返回空包且不发请求', async () => {
 		const fetch = fetchMock(async () => jsonResponse({}));
-		const result = await loadDefaultPacks('', { storage: localStorage });
-		expect(result).toEqual({ packs: {}, fromCache: true, stale: false });
+		const result = await loadDefaultPacks([], { storage: localStorage });
+		expect(result).toEqual({ packs: {}, fromCache: true, stale: false, partial: false });
 		expect(fetch.calls).toEqual([]);
+
+		// 兼容旧的单地址调用：空串照样不发请求
+		expect(await loadDefaultPacks('', { storage: localStorage })).toEqual({
+			packs: {},
+			fromCache: true,
+			stale: false,
+			partial: false,
+		});
+		expect(fetch.calls).toEqual([]);
+	});
+
+	it('合并后的短代码跨来源去重：同名表情追加 -2，水合回各自的图', async () => {
+		const GIF = 'https://other.example.com/emoji/doge.gif';
+		fetchMock(async (url) =>
+			url === CDN
+				? jsonResponse(owo({ Bilibili: { type: 'image', container: [imageItem(PNG, 'doge')] } }))
+				: jsonResponse(owo({ QQ: { type: 'image', container: [imageItem(GIF, 'doge')] } }))
+		);
+
+		const result = await loadDefaultPacks([CDN, OTHER_CDN], { storage: localStorage });
+		const set = buildEmojiSet(result.packs);
+		expect(set.tabs.map((tab) => tab.label)).toEqual(['Bilibili', 'QQ']);
+		expect(set.tabs[0].items[0].insert).toBe(':doge:');
+		expect(set.tabs[1].items[0].insert).toBe(':doge-2:');
+		expect(set.images.get('doge')).toBe(PNG);
+		expect(set.images.get('doge-2')).toBe(GIF);
+	});
+
+	it('同名标签合并后，同包重名（跨来源）追加 -2、-3', async () => {
+		fetchMock(async (url) =>
+			url === CDN
+				? jsonResponse(owo({ 共享: { type: 'image', container: [imageItem(PNG, 'doge')] } }))
+				: jsonResponse(owo({ 共享: { type: 'image', container: [imageItem(PNG2, 'doge')] } }))
+		);
+
+		const result = await loadDefaultPacks([CDN, OTHER_CDN], { storage: localStorage });
+		expect(Object.keys(result.packs)).toEqual(['共享']);
+		const set = buildEmojiSet(result.packs);
+		expect(set.tabs[0].items.map((item) => item.insert)).toEqual([':doge:', ':doge-2:']);
+		expect(set.images.get('doge-2')).toBe(PNG2);
+	});
+
+	it('同名标签合并时标签元数据以首次出现的来源为准', async () => {
+		fetchMock(async (url) =>
+			url === CDN
+				? jsonResponse(owo({ 共享: { type: 'emoticon', container: [{ icon: 'OωO' }] } }))
+				: jsonResponse(owo({ 共享: { type: 'image', container: [imageItem(PNG2, 'hi')] } }))
+		);
+
+		const result = await loadDefaultPacks([CDN, OTHER_CDN], { storage: localStorage });
+		expect(result.packs.共享.type).toBe('emoticon');
+		expect(result.packs.共享.container).toEqual([
+			{ icon: 'OωO', text: '' },
+			{ icon: `<img src="${PNG2}">`, text: 'hi' },
+		]);
 	});
 });
 
@@ -389,8 +547,10 @@ describe('emoji/owo —— buildEmojiSet 标签与短代码', () => {
 		expect(set.images.size).toBe(0);
 	});
 
-	it('stale 选项会带到集合上', () => {
+	it('stale / partial 选项会带到集合上', () => {
 		expect(buildEmojiSet(owo({ 标签: { type: 'emoticon', container: [{ icon: 'x' }] } }), { stale: true }).stale).toBe(true);
+		expect(buildEmojiSet(owo({ 标签: { type: 'emoticon', container: [{ icon: 'x' }] } }), { partial: true }).partial).toBe(true);
+		expect(buildEmojiSet(owo({ 标签: { type: 'emoticon', container: [{ icon: 'x' }] } })).partial).toBe(false);
 	});
 });
 
@@ -466,11 +626,11 @@ describe('emoji/owo —— 纯函数口径', () => {
 });
 
 describe('emoji/owo —— loadEmojiSet 模块级缓存与并发去重', () => {
-	it('同一个 cdnUrl 只发一次请求（模块级缓存）', async () => {
+	it('同一个地址列表只发一次请求（模块级缓存）', async () => {
 		const fetch = fetchMock(async () => jsonResponse(owo({ 标签: { type: 'emoticon', container: [{ icon: 'OωO' }] } })));
 
-		const first = await loadEmojiSet({ cdnUrl: CDN, storage: null });
-		const second = await loadEmojiSet({ cdnUrl: CDN, storage: null });
+		const first = await loadEmojiSet({ cdnUrls: [CDN], storage: null });
+		const second = await loadEmojiSet({ cdnUrls: [CDN], storage: null });
 
 		expect(fetch.calls.length).toBe(1);
 		expect(fetch.calls[0].url).toBe(CDN);
@@ -486,8 +646,8 @@ describe('emoji/owo —— loadEmojiSet 模块级缓存与并发去重', () => {
 				})
 		);
 
-		const a = loadEmojiSet({ cdnUrl: CDN, storage: null });
-		const b = loadEmojiSet({ cdnUrl: CDN, storage: null });
+		const a = loadEmojiSet({ cdnUrls: [CDN], storage: null });
+		const b = loadEmojiSet({ cdnUrls: [CDN], storage: null });
 		expect(fetch.calls.length).toBe(1);
 
 		resolveFetch();
@@ -496,16 +656,42 @@ describe('emoji/owo —— loadEmojiSet 模块级缓存与并发去重', () => {
 		expect(setA.tabs.map((tab) => tab.label)).toEqual(['标签']);
 	});
 
-	it('不同 cdnUrl 各自请求，resetEmojiSetCache 后重新请求', async () => {
+	it('不同地址列表各自请求，resetEmojiSetCache 后重新请求', async () => {
 		const fetch = fetchMock(async () => jsonResponse(owo({ 标签: { type: 'emoticon', container: [{ icon: 'OωO' }] } })));
 
-		await loadEmojiSet({ cdnUrl: CDN, storage: null });
-		await loadEmojiSet({ cdnUrl: OTHER_CDN, storage: null });
+		await loadEmojiSet({ cdnUrls: [CDN], storage: null });
+		await loadEmojiSet({ cdnUrls: [OTHER_CDN], storage: null });
 		expect(fetch.calls.map((call) => call.url)).toEqual([CDN, OTHER_CDN]);
 
 		resetEmojiSetCache();
-		await loadEmojiSet({ cdnUrl: CDN, storage: null });
+		await loadEmojiSet({ cdnUrls: [CDN], storage: null });
 		expect(fetch.calls.length).toBe(3);
+	});
+
+	it('模块级缓存的键是地址列表：多来源与单来源互不串用', async () => {
+		const fetch = fetchMock(async (url) =>
+			url === CDN
+				? jsonResponse(owo({ 一: { type: 'emoticon', container: [{ icon: '1' }] } }))
+				: jsonResponse(owo({ 二: { type: 'emoticon', container: [{ icon: '2' }] } }))
+		);
+
+		const single = await loadEmojiSet({ cdnUrls: [CDN], storage: null });
+		const multi = await loadEmojiSet({ cdnUrls: [CDN, OTHER_CDN], storage: null });
+		expect(single.tabs.map((tab) => tab.label)).toEqual(['一']);
+		expect(multi.tabs.map((tab) => tab.label)).toEqual(['一', '二']);
+		expect(fetch.calls.length).toBe(3);
+	});
+
+	it('多来源合并 + 部分失败：集合带 partial 标记，成功来源照常渲染', async () => {
+		fetchMock(async (url) => {
+			if (url === OTHER_CDN) throw new Error('network down');
+			return jsonResponse(owo({ 标签: { type: 'emoticon', container: [{ icon: 'OωO' }] } }));
+		});
+
+		const set = await loadEmojiSet({ cdnUrls: [CDN, OTHER_CDN], storage: null });
+		expect(set.partial).toBe(true);
+		expect(set.stale).toBe(false);
+		expect(set.tabs.map((tab) => tab.label)).toEqual(['标签']);
 	});
 
 	it('拉取失败但有旧缓存时集合带 stale 标记', async () => {
@@ -515,21 +701,22 @@ describe('emoji/owo —— loadEmojiSet 模块级缓存与并发去重', () => {
 		const now = 1_000_000;
 		// 刻意写入「已过期」的缓存：新鲜缓存根本不会触发请求，也就不会有 stale
 		writeEmojiCache(
-			CDN,
+			listKey([CDN]),
 			sanitizePacks(owo({ 旧: { type: 'emoticon', container: [{ icon: 'OωO' }] } })),
 			localStorage,
 			now - EMOJI_CACHE_TTL_MS
 		);
 
-		const set = await loadEmojiSet({ cdnUrl: CDN, storage: localStorage, now });
+		const set = await loadEmojiSet({ cdnUrls: [CDN], storage: localStorage, now });
 		expect(set.stale).toBe(true);
+		expect(set.partial).toBe(false);
 		expect(set.tabs.map((tab) => tab.label)).toEqual(['旧']);
 	});
 
 	it('force 会绕过模块级缓存重新请求', async () => {
 		const fetch = fetchMock(async () => jsonResponse(owo({ 标签: { type: 'emoticon', container: [{ icon: 'OωO' }] } })));
-		await loadEmojiSet({ cdnUrl: CDN, storage: null });
-		await loadEmojiSet({ cdnUrl: CDN, storage: null, force: true });
+		await loadEmojiSet({ cdnUrls: [CDN], storage: null });
+		await loadEmojiSet({ cdnUrls: [CDN], storage: null, force: true });
 		expect(fetch.calls.length).toBe(2);
 	});
 });

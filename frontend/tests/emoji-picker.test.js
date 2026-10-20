@@ -4,7 +4,11 @@ import EmojiPicker from '../src/emoji/EmojiPicker.svelte';
 import { EMOJI_CACHE_PREFIX, resetEmojiSetCache } from '../src/emoji/owo';
 
 const CDN = 'https://cdn.example.com/emoji/owo.json';
+const OTHER_CDN = 'https://other.example.com/owo.json';
 const PNG = 'https://cdn.example.com/emoji/doge.png';
+
+/** 缓存键 = 整个地址列表的 JSON（doc/emoji.md 第 6 节） */
+const cacheStorageKey = (urls) => `${EMOJI_CACHE_PREFIX}${JSON.stringify(urls)}`;
 
 const OWO = {
 	颜文字: { type: 'emoticon', container: [{ icon: 'OωO', text: 'Author: DIYgod' }] },
@@ -28,7 +32,7 @@ function fetchMock(handler) {
 }
 
 function renderPicker(props = {}) {
-	return render(EmojiPicker, { props: { cdnUrl: CDN, language: 'zh-cn', ...props } });
+	return render(EmojiPicker, { props: { cdnUrls: [CDN], language: 'zh-cn', ...props } });
 }
 
 const trigger = (container) => container.querySelector('[data-test="emoji-trigger"]');
@@ -86,7 +90,7 @@ describe('EmojiPicker —— 打开与关闭', () => {
 	it('命中 7 天缓存时打开面板一个请求都不发，直接渲染缓存里的表情', async () => {
 		const fetch = fetchMock(async () => jsonResponse(OWO));
 		localStorage.setItem(
-			`${EMOJI_CACHE_PREFIX}${CDN}`,
+			cacheStorageKey([CDN]),
 			JSON.stringify({ savedAt: Date.now(), packs: OWO })
 		);
 		const { container } = renderPicker();
@@ -120,14 +124,39 @@ describe('EmojiPicker —— 打开与关闭', () => {
 		await waitFor(() => expect(panel(container)).toBeNull());
 	});
 
-	it('cdnUrl 为空时按钮禁用：点击不打开面板也不发请求', async () => {
+	it('地址列表为空时按钮禁用：点击不打开面板也不发请求', async () => {
 		const fetch = fetchMock(async () => jsonResponse(OWO));
-		const { container } = renderPicker({ cdnUrl: '' });
+		const { container } = renderPicker({ cdnUrls: [] });
 
 		expect(trigger(container).disabled).toBe(true);
 		await fireEvent.click(trigger(container));
 		expect(panel(container)).toBeNull();
 		expect(fetch.calls).toEqual([]);
+	});
+
+	it('多来源：首次打开时并发拉取全部地址，按数组顺序合并标签', async () => {
+		const fetch = fetchMock(async (url) =>
+			url === CDN
+				? jsonResponse({ 颜文字: { type: 'emoticon', container: [{ icon: 'OωO' }] } })
+				: jsonResponse({ Bilibili: { type: 'image', container: [{ icon: `<img src="${PNG}">`, text: 'doge' }] } })
+		);
+		const { container } = renderPicker({ cdnUrls: [CDN, OTHER_CDN] });
+
+		await fireEvent.click(trigger(container));
+		await waitFor(() => expect(tabs(container).length).toBe(2));
+
+		expect(fetch.calls.map((call) => call.url)).toEqual([CDN, OTHER_CDN]);
+		expect(tabs(container).map((tab) => tab.textContent.trim())).toEqual(['颜文字', 'Bilibili']);
+	});
+
+	it('兼容旧的单地址 prop：cdnUrls 为空时回落到 cdnUrl', async () => {
+		const fetch = fetchMock(async () => jsonResponse(OWO));
+		const { container } = renderPicker({ cdnUrls: [], cdnUrl: CDN });
+
+		expect(trigger(container).disabled).toBe(false);
+		await fireEvent.click(trigger(container));
+		await waitFor(() => expect(items(container).length).toBeGreaterThan(0));
+		expect(fetch.calls.map((call) => call.url)).toEqual([CDN]);
 	});
 });
 
@@ -203,7 +232,7 @@ describe('EmojiPicker —— 加载状态', () => {
 			throw new Error('network down');
 		});
 		localStorage.setItem(
-			`${EMOJI_CACHE_PREFIX}${CDN}`,
+			cacheStorageKey([CDN]),
 			JSON.stringify({ savedAt: Date.now() - 8 * 24 * 60 * 60 * 1000, packs: OWO })
 		);
 		const { container } = renderPicker();
@@ -212,6 +241,34 @@ describe('EmojiPicker —— 加载状态', () => {
 		await waitFor(() => expect(container.querySelector('[data-test="emoji-stale"]')).toBeTruthy());
 		expect(items(container).map((item) => item.dataset.insert)).toEqual(['OωO']);
 		expect(panel(container).textContent).toContain('本地缓存');
+	});
+
+	it('部分来源失败：成功的那几个照常渲染，并显示「部分来源加载失败」重试入口', async () => {
+		const fetch = fetchMock(async (url) => {
+			if (url === OTHER_CDN) throw new Error('network down');
+			return jsonResponse({ 颜文字: { type: 'emoticon', container: [{ icon: 'OωO' }] } });
+		});
+		const { container } = renderPicker({ cdnUrls: [CDN, OTHER_CDN] });
+		await fireEvent.click(trigger(container));
+
+		await waitFor(() => expect(container.querySelector('[data-test="emoji-partial"]')).toBeTruthy());
+		// 成功来源照常渲染，且没有 stale（不是回退缓存）
+		expect(items(container).map((item) => item.dataset.insert)).toEqual(['OωO']);
+		expect(container.querySelector('[data-test="emoji-stale"]')).toBeNull();
+		expect(panel(container).textContent).toContain('部分来源加载失败');
+
+		// 重试入口会强制重新拉取全部来源
+		await fireEvent.click(container.querySelector('[data-test="emoji-partial"]'));
+		await waitFor(() => expect(fetch.calls.length).toBe(4));
+	});
+
+	it('全部来源成功时不显示 partial 提示', async () => {
+		fetchMock(async (url) => jsonResponse(url === CDN ? OWO : { QQ: { type: 'image', container: [{ icon: `<img src="${PNG}">`, text: 'qq' }] } }));
+		const { container } = renderPicker({ cdnUrls: [CDN, OTHER_CDN] });
+		await fireEvent.click(trigger(container));
+
+		await waitFor(() => expect(tabs(container).length).toBe(3));
+		expect(container.querySelector('[data-test="emoji-partial"]')).toBeNull();
 	});
 
 	it('没有可渲染的表情时显示空态', async () => {

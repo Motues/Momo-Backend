@@ -117,7 +117,10 @@ func TestEmojiEnabledVector(t *testing.T) {
 	}
 }
 
-// TestEmojiResolveVector 读取路径：ResolveEmojiConfig 的每个固定用例
+// TestEmojiResolveVector 读取路径：ResolveEmojiConfig 的每个固定用例。
+//
+// v2 契约只有单地址键，因此这里固定把 emoji_cdn_urls 传空串，
+// 走「数组为空 → 回落旧键 → 再回落默认源」这条链（与 v2 语义完全一致）。
 func TestEmojiResolveVector(t *testing.T) {
 	fixture := loadEmojiFixture(t)
 	if len(fixture.Resolve) == 0 {
@@ -126,8 +129,11 @@ func TestEmojiResolveVector(t *testing.T) {
 
 	for _, testCase := range fixture.Resolve {
 		t.Run(testCase.Name, func(t *testing.T) {
-			gotURL, gotEnabled := ResolveEmojiConfig(testCase.StoredURL, testCase.StoredEnabled)
-			if gotURL != testCase.ExpectURL {
+			urls, gotEnabled := ResolveEmojiConfig("", testCase.StoredURL, testCase.StoredEnabled)
+			if len(urls) == 0 {
+				t.Fatalf("urls 不应为空")
+			}
+			if gotURL := urls[0]; gotURL != testCase.ExpectURL {
 				t.Errorf("url 期望 %q，实际 %q", testCase.ExpectURL, gotURL)
 			}
 			if gotEnabled != testCase.ExpectEnabled {
@@ -140,23 +146,24 @@ func TestEmojiResolveVector(t *testing.T) {
 // TestResolveEmojiConfigFailOpen 补充断言读取路径的 fail-open 口径与幂等性
 func TestResolveEmojiConfigFailOpen(t *testing.T) {
 	for _, stored := range []string{"", "   ", "yes", "1", "TRUE", "True", "unknowable"} {
-		if _, enabled := ResolveEmojiConfig("", stored); enabled != "true" {
+		if _, enabled := ResolveEmojiConfig("", "", stored); enabled != "true" {
 			t.Errorf("storedEnabled=%q 应 fail-open 为 true，实际 %q", stored, enabled)
 		}
 	}
 	for _, stored := range []string{"false", "FALSE", " False ", "\tfalse\n"} {
-		if _, enabled := ResolveEmojiConfig("", stored); enabled != "false" {
+		if _, enabled := ResolveEmojiConfig("", "", stored); enabled != "false" {
 			t.Errorf("storedEnabled=%q 应判为关闭，实际 %q", stored, enabled)
 		}
 	}
 	// 关闭时地址照常下发，而不是被清空
-	if url, enabled := ResolveEmojiConfig("https://a.com/owo.json", "false"); url != "https://a.com/owo.json" || enabled != "false" {
-		t.Errorf("关闭时地址应照常下发，实际 (%q, %q)", url, enabled)
+	if urls, enabled := ResolveEmojiConfig("", "https://a.com/owo.json", "false"); len(urls) != 1 ||
+		urls[0] != "https://a.com/owo.json" || enabled != "false" {
+		t.Errorf("关闭时地址应照常下发，实际 (%v, %q)", urls, enabled)
 	}
 	// 归一化是幂等的
 	for _, stored := range []string{"", " ", "true", "false", "FALSE", "yes"} {
-		_, first := ResolveEmojiConfig("", stored)
-		_, second := ResolveEmojiConfig("", first)
+		_, first := ResolveEmojiConfig("", "", stored)
+		_, second := ResolveEmojiConfig("", "", first)
 		if first != second {
 			t.Errorf("storedEnabled=%q 归一化不幂等：%q != %q", stored, first, second)
 		}

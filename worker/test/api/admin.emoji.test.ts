@@ -1,13 +1,13 @@
 /**
- * 表情设置契约 v2 —— 启用开关 + OwO 来源地址的接口验收。
+ * 表情设置契约（v3：多来源）—— 启用开关 + OwO 来源地址数组的接口验收。
  *
- * 口径与 fixture 见 doc/emoji.md 与 doc/vectors/emoji-v2.json：
- * v1 的「自定义表情包」（`emoji_packs`）与公开接口 `GET /api/emoji` 已整体删除。
+ * 口径与 fixture 见 doc/emoji.md 与 doc/vectors/emoji-v3.json：
+ * `emoji_cdn_urls`（JSON 数组，最多 5 个）是权威来源，旧的单地址键仅在数组解析为空时回落。
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { adminToken, api, bearer } from '../helpers/http';
 import { createSchema, rawSetting, seedComment, seedSettings } from '../helpers/db';
-import { DEFAULT_EMOJI_CDN_URL } from '../../src/utils/emoji';
+import { DEFAULT_EMOJI_CDN_URL, EMOJI_CDN_URLS_ERRORS } from '../../src/utils/emoji';
 
 let token: string;
 
@@ -113,15 +113,103 @@ describe('PUT /admin/settings —— emoji_cdn_url', () => {
 	});
 });
 
+describe('PUT /admin/settings —— emoji_cdn_urls（契约 v3 多来源）', () => {
+	it('合法值落库为归一化后的 JSON 数组（trim + 去空）', async () => {
+		const res = await api('/admin/settings', {
+			method: 'PUT',
+			headers: bearer(token),
+			body: { emoji_cdn_urls: '["  https://a.example.com/owo.json  ", "", "https://b.example.com/owo.json"]' },
+		});
+		expect(res.status).toBe(200);
+		expect(await rawSetting('emoji_cdn_urls')).toBe(
+			'["https://a.example.com/owo.json","https://b.example.com/owo.json"]'
+		);
+	});
+
+	it('空串 / 空白 / 空数组落库为 []', async () => {
+		for (const value of ['', '   ', '[]', '["", "   "]']) {
+			const res = await api('/admin/settings', {
+				method: 'PUT',
+				headers: bearer(token),
+				body: { emoji_cdn_urls: value },
+			});
+			expect(res.status, value).toBe(200);
+			expect(await rawSetting('emoji_cdn_urls'), value).toBe('[]');
+		}
+	});
+
+	it('五条错误文案逐字一致，且整批不落库', async () => {
+		const cases: Array<[string, string]> = [
+			['not json', EMOJI_CDN_URLS_ERRORS.notArray],
+			['{}', EMOJI_CDN_URLS_ERRORS.notArray],
+			['"https://a.example.com/owo.json"', EMOJI_CDN_URLS_ERRORS.notArray],
+			['[1]', EMOJI_CDN_URLS_ERRORS.notString],
+			['["https://a.example.com/owo.json", null]', EMOJI_CDN_URLS_ERRORS.notString],
+			[
+				'["https://a.example.com/owo.json","https://b.example.com/owo.json","https://c.example.com/owo.json","https://d.example.com/owo.json","https://e.example.com/owo.json","https://f.example.com/owo.json"]',
+				EMOJI_CDN_URLS_ERRORS.tooMany,
+			],
+			['["ftp://a.example.com/owo.json"]', EMOJI_CDN_URLS_ERRORS.badScheme],
+			['["javascript:alert(1)"]', EMOJI_CDN_URLS_ERRORS.badScheme],
+			['["owo.json"]', EMOJI_CDN_URLS_ERRORS.badScheme],
+			['["//example.com/owo.json"]', EMOJI_CDN_URLS_ERRORS.badScheme],
+			['["<img src=x>"]', EMOJI_CDN_URLS_ERRORS.badScheme],
+			[`["https://cdn.example.com/${'a'.repeat(500)}"]`, EMOJI_CDN_URLS_ERRORS.tooLong],
+		];
+
+		for (const [value, message] of cases) {
+			const res = await api('/admin/settings', {
+				method: 'PUT',
+				headers: bearer(token),
+				body: { emoji_cdn_urls: value, site_name: '不应写入' },
+			});
+			expect(res.status, value.slice(0, 40)).toBe(400);
+			expect(res.body.message, value.slice(0, 40)).toBe(message);
+			expect(await rawSetting('emoji_cdn_urls'), value.slice(0, 40)).toBeNull();
+			expect(await rawSetting('site_name'), value.slice(0, 40)).toBeNull();
+		}
+	});
+
+	it('导入路径同一套校验：非法值 400 且不落库', async () => {
+		const res = await api('/admin/data/import/settings', {
+			method: 'POST',
+			headers: bearer(token),
+			body: { emoji_cdn_urls: '["ftp://a.example.com/owo.json"]' },
+		});
+		expect(res.status).toBe(400);
+		expect(res.body.message).toBe(EMOJI_CDN_URLS_ERRORS.badScheme);
+		expect(await rawSetting('emoji_cdn_urls')).toBeNull();
+	});
+
+	it('导入路径写入归一化后的 JSON 数组', async () => {
+		const res = await api('/admin/data/import/settings', {
+			method: 'POST',
+			headers: bearer(token),
+			body: { emoji_cdn_urls: '[" https://a.example.com/owo.json "]' },
+		});
+		expect(res.status).toBe(200);
+		expect(await rawSetting('emoji_cdn_urls')).toBe('["https://a.example.com/owo.json"]');
+	});
+});
+
 describe('GET /admin/settings?type=emoji', () => {
-	it('只返回两个表情键（外加既有行为注入的 email_enabled）', async () => {
+	it('返回 emoji_enabled + emoji_cdn_urls + 兼容用的 emoji_cdn_url', async () => {
 		await seedSettings({
-			emoji_cdn_url: 'https://cdn.example.com/owo.json',
+			emoji_cdn_urls: '["https://a.example.com/owo.json","https://b.example.com/owo.json"]',
+			emoji_cdn_url: 'https://legacy.example.com/owo.json',
 			emoji_enabled: 'false',
 		});
 		const res = await api('/admin/settings?type=emoji', { headers: bearer(token) });
-		expect(Object.keys(res.body.data).sort()).toEqual(['email_enabled', 'emoji_cdn_url', 'emoji_enabled']);
-		expect(res.body.data.emoji_cdn_url).toBe('https://cdn.example.com/owo.json');
+		expect(Object.keys(res.body.data).sort()).toEqual([
+			'email_enabled',
+			'emoji_cdn_url',
+			'emoji_cdn_urls',
+			'emoji_enabled',
+		]);
+		expect(res.body.data.emoji_cdn_urls).toBe(
+			'["https://a.example.com/owo.json","https://b.example.com/owo.json"]'
+		);
+		expect(res.body.data.emoji_cdn_url).toBe('https://legacy.example.com/owo.json');
 		expect(res.body.data.emoji_enabled).toBe('false');
 		expect(res.body.data.emoji_packs).toBeUndefined();
 	});
@@ -129,38 +217,75 @@ describe('GET /admin/settings?type=emoji', () => {
 	it('未配置时表情键不会凭空出现', async () => {
 		const res = await api('/admin/settings?type=emoji', { headers: bearer(token) });
 		expect(Object.keys(res.body.data)).toEqual(['email_enabled']);
+		expect(res.body.data.emoji_cdn_urls).toBeUndefined();
 		expect(res.body.data.emoji_cdn_url).toBeUndefined();
 		expect(res.body.data.emoji_enabled).toBeUndefined();
 	});
 });
 
 describe('GET /api/comments 下发表情配置', () => {
-	it('未配置时 fail-open 为启用，地址回落默认源', async () => {
+	it('未配置时 fail-open 为启用，地址数组回落默认源的单项数组', async () => {
 		await seedComment({ post_slug: '/posts/emoji' });
 		const res = await api('/api/comments?post_slug=%2Fposts%2Femoji', { ip: '198.18.9.1' });
 		expect(res.body.data.emoji_enabled).toBe('true');
+		expect(res.body.data.emoji_cdn_urls).toEqual([DEFAULT_EMOJI_CDN_URL]);
+		// 旧前端字段 = 数组第一个地址
 		expect(res.body.data.emoji_cdn_url).toBe(DEFAULT_EMOJI_CDN_URL);
 	});
 
-	it('已配置时下发归一化后的地址与开关；关闭时地址照常下发', async () => {
+	it('多来源时按数组顺序下发；旧的单地址键被忽略', async () => {
 		await seedComment({ post_slug: '/posts/emoji' });
+		const urls = ['https://a.example.com/owo.json', 'http://b.example.com/owo.json?group=Emoji'];
 		await seedSettings({
-			emoji_cdn_url: '  https://cdn.example.com/owo.json?group=Emoji  ',
+			emoji_cdn_urls: JSON.stringify(urls),
+			emoji_cdn_url: 'https://legacy.example.com/owo.json',
 			emoji_enabled: 'FALSE',
 		});
 		const res = await api('/api/comments?post_slug=%2Fposts%2Femoji', { ip: '198.18.9.2' });
 		expect(res.body.data.emoji_enabled).toBe('false');
-		expect(res.body.data.emoji_cdn_url).toBe('https://cdn.example.com/owo.json?group=Emoji');
+		expect(res.body.data.emoji_cdn_urls).toEqual(urls);
+		expect(res.body.data.emoji_cdn_url).toBe(urls[0]);
 	});
 
-	it('地址为空串 / 只有空白时回落默认源，开关照常下发', async () => {
+	it('数组为空 / 脏值时回落到旧键，旧键也为空再回落默认源', async () => {
 		await seedComment({ post_slug: '/posts/emoji' });
-		for (const [index, url] of ['', '   '].entries()) {
-			await seedSettings({ emoji_cdn_url: url, emoji_enabled: 'false' });
-			const res = await api('/api/comments?post_slug=%2Fposts%2Femoji', { ip: `198.18.9.${10 + index}` });
-			expect(res.body.data.emoji_cdn_url, JSON.stringify(url)).toBe(DEFAULT_EMOJI_CDN_URL);
-			expect(res.body.data.emoji_enabled, JSON.stringify(url)).toBe('false');
+		const cases: Array<[string, string, string]> = [
+			['[]', '  https://legacy.example.com/owo.json  ', 'https://legacy.example.com/owo.json'],
+			['not json', 'https://legacy.example.com/owo.json', 'https://legacy.example.com/owo.json'],
+			['{"a":1}', '', DEFAULT_EMOJI_CDN_URL],
+			['', '   ', DEFAULT_EMOJI_CDN_URL],
+		];
+		for (const [index, [storedUrls, storedLegacy, expected]] of cases.entries()) {
+			await seedSettings({ emoji_cdn_urls: storedUrls, emoji_cdn_url: storedLegacy, emoji_enabled: 'false' });
+			const res = await api('/api/comments?post_slug=%2Fposts%2Femoji', { ip: `198.18.9.${20 + index}` });
+			expect(res.body.data.emoji_cdn_urls, storedUrls).toEqual([expected]);
+			expect(res.body.data.emoji_cdn_url, storedUrls).toBe(expected);
+			expect(res.body.data.emoji_enabled, storedUrls).toBe('false');
 		}
+	});
+
+	it('读取宽容：非字符串项 / 空串丢弃、超过 5 个只取前 5 个', async () => {
+		await seedComment({ post_slug: '/posts/emoji' });
+		await seedSettings({
+			emoji_cdn_urls:
+				'["", 7, "https://a.example.com/owo.json", null, "  ", "https://b.example.com/owo.json", "https://c.example.com/owo.json", "https://d.example.com/owo.json", "https://e.example.com/owo.json", "https://f.example.com/owo.json"]',
+		});
+		const res = await api('/api/comments?post_slug=%2Fposts%2Femoji', { ip: '198.18.9.40' });
+		expect(res.body.data.emoji_cdn_urls).toEqual([
+			'https://a.example.com/owo.json',
+			'https://b.example.com/owo.json',
+			'https://c.example.com/owo.json',
+			'https://d.example.com/owo.json',
+			'https://e.example.com/owo.json',
+		]);
+	});
+
+	it('非嵌套分支同样下发 emoji_cdn_urls', async () => {
+		await seedComment({ post_slug: '/posts/emoji' });
+		await seedSettings({ emoji_cdn_urls: '["https://a.example.com/owo.json"]' });
+		const res = await api('/api/comments?post_slug=%2Fposts%2Femoji&nested=false', { ip: '198.18.9.41' });
+		expect(res.body.data.emoji_cdn_urls).toEqual(['https://a.example.com/owo.json']);
+		expect(res.body.data.emoji_cdn_url).toBe('https://a.example.com/owo.json');
 	});
 });
 
@@ -172,13 +297,15 @@ describe('GET /api/emoji 已删除', () => {
 });
 
 describe('设置导出 / 导入', () => {
-	it('导出包含两个表情键，导入可原样恢复（并做归一化）', async () => {
+	it('导出包含三个表情键，导入可原样恢复（并做归一化）', async () => {
 		await seedSettings({
+			emoji_cdn_urls: '["https://a.example.com/owo.json"]',
 			emoji_cdn_url: 'https://cdn.example.com/owo.json',
 			emoji_enabled: 'false',
 		});
 
 		const exported = await api('/admin/data/export/settings', { headers: bearer(token) });
+		expect(exported.body.data.settings.emoji_cdn_urls).toBe('["https://a.example.com/owo.json"]');
 		expect(exported.body.data.settings.emoji_cdn_url).toBe('https://cdn.example.com/owo.json');
 		expect(exported.body.data.settings.emoji_enabled).toBe('false');
 		expect(exported.body.data.settings.emoji_packs).toBeUndefined();
@@ -188,11 +315,13 @@ describe('设置导出 / 导入', () => {
 			headers: bearer(token),
 			body: {
 				emoji_cdn_url: ' https://cdn.example.com/other.json ',
+				emoji_cdn_urls: ' [ " https://b.example.com/owo.json " ] ',
 				emoji_enabled: ' TRUE ',
 			},
 		});
 		expect(imported.status).toBe(200);
 		expect(await rawSetting('emoji_cdn_url')).toBe('https://cdn.example.com/other.json');
+		expect(await rawSetting('emoji_cdn_urls')).toBe('["https://b.example.com/owo.json"]');
 		expect(await rawSetting('emoji_enabled')).toBe('true');
 	});
 

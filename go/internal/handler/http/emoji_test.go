@@ -24,20 +24,21 @@ const emojiTestSlug = "/posts/emoji"
 type emojiCommentsPayload struct {
 	Code int `json:"code"`
 	Data struct {
-		EmojiCdnURL  string `json:"emoji_cdn_url"`
-		EmojiEnabled string `json:"emoji_enabled"`
+		EmojiCdnURL  string   `json:"emoji_cdn_url"`
+		EmojiCdnURLs []string `json:"emoji_cdn_urls"`
+		EmojiEnabled string   `json:"emoji_enabled"`
 	} `json:"data"`
 }
 
-// emojiCommentsConfig 读取 /api/comments 下发的两个表情字段
-func emojiCommentsConfig(t *testing.T) (url, enabled string) {
+// emojiCommentsConfig 读取 /api/comments 下发的三个表情字段
+func emojiCommentsConfig(t *testing.T) (url string, urls []string, enabled string) {
 	t.Helper()
 	w := callJSON(t, "GET", "/api/comments?post_slug="+queryEscape(emojiTestSlug), "")
 	requireStatus(t, w, http.StatusOK)
 
 	var payload emojiCommentsPayload
 	decodeInto(t, w, &payload)
-	return payload.Data.EmojiCdnURL, payload.Data.EmojiEnabled
+	return payload.Data.EmojiCdnURL, payload.Data.EmojiCdnURLs, payload.Data.EmojiEnabled
 }
 
 // seedEmojiComment 写入一条评论，保证 GET /api/comments 有稳定可查的数据
@@ -258,7 +259,8 @@ func TestGetSettingsEmojiGroup(t *testing.T) {
 	resetState(t)
 	token := adminToken(t)
 	setSetting(t, "emoji_enabled", "false")
-	setSetting(t, "emoji_cdn_url", "https://cdn.example.com/owo.json")
+	setSetting(t, "emoji_cdn_urls", `["https://cdn.example.com/owo.json"]`)
+	setSetting(t, "emoji_cdn_url", "https://legacy.example.com/owo.json")
 	setSetting(t, "site_name", "我的站")
 
 	w := callWithToken(t, "GET", "/admin/settings?type=emoji", "", token)
@@ -270,15 +272,18 @@ func TestGetSettingsEmojiGroup(t *testing.T) {
 	if got := payload.Data["emoji_enabled"]; got != "false" {
 		t.Errorf("emoji_enabled 未下发：%v", got)
 	}
-	if got := payload.Data["emoji_cdn_url"]; got != "https://cdn.example.com/owo.json" {
+	if got := payload.Data["emoji_cdn_urls"]; got != `["https://cdn.example.com/owo.json"]` {
+		t.Errorf("emoji_cdn_urls 未下发：%v", got)
+	}
+	if got := payload.Data["emoji_cdn_url"]; got != "https://legacy.example.com/owo.json" {
 		t.Errorf("emoji_cdn_url 未下发：%v", got)
 	}
 	// 分组固定下发默认值补全的 email_enabled，其它键一律不得混入
 	if got := payload.Data["email_enabled"]; got != "true" {
 		t.Errorf("email_enabled 期望补默认值 true，实际 %q", got)
 	}
-	if len(payload.Data) != 3 {
-		t.Errorf("type=emoji 应只含 emoji_enabled / emoji_cdn_url / email_enabled，实际 %v", keysOf(payload.Data))
+	if len(payload.Data) != 4 {
+		t.Errorf("type=emoji 应只含 emoji_enabled / emoji_cdn_urls / emoji_cdn_url / email_enabled，实际 %v", keysOf(payload.Data))
 	}
 	if _, exists := payload.Data["site_name"]; exists {
 		t.Errorf("type=emoji 不应带回其它分组字段：%v", keysOf(payload.Data))
@@ -286,6 +291,99 @@ func TestGetSettingsEmojiGroup(t *testing.T) {
 	if _, exists := payload.Data["emoji_packs"]; exists {
 		t.Errorf("emoji_packs 已从契约删除，不应出现：%v", keysOf(payload.Data))
 	}
+}
+
+// ---------------------------------------------------------------------------
+// PUT /admin/settings —— emoji_cdn_urls（契约 v3）
+// ---------------------------------------------------------------------------
+
+func TestUpdateSettingsEmojiCdnURLs(t *testing.T) {
+	resetState(t)
+
+	t.Run("非法取值返回 400 且不落库", func(t *testing.T) {
+		for _, testCase := range []struct {
+			value string
+			want  string
+		}{
+			{"not json", "emoji_cdn_urls 必须是 JSON 数组"},
+			{"{}", "emoji_cdn_urls 必须是 JSON 数组"},
+			{`"https://a.example.com/owo.json"`, "emoji_cdn_urls 必须是 JSON 数组"},
+			{"123", "emoji_cdn_urls 必须是 JSON 数组"},
+			{"[1]", "emoji_cdn_urls 的每一项都必须是字符串"},
+			{`["https://a.example.com/owo.json", null]`, "emoji_cdn_urls 的每一项都必须是字符串"},
+			{
+				`["https://a/1","https://a/2","https://a/3","https://a/4","https://a/5","https://a/6"]`,
+				"emoji_cdn_urls 最多 5 个地址",
+			},
+			{`["ftp://a.example.com/owo.json"]`, "emoji_cdn_urls 只允许 http/https 地址"},
+			{`["<img src=x>"]`, "emoji_cdn_urls 只允许 http/https 地址"},
+			{`["https://cdn.example.com/` + strings.Repeat("a", utils.MaxEmojiCDNURLLength) + `"]`, "emoji_cdn_urls 不能超过 500 个字符"},
+		} {
+			truncateAll()
+			token := adminToken(t)
+
+			body := `{"emoji_cdn_urls":` + mustJSONString(t, testCase.value) + `}`
+			w := callWithToken(t, "PUT", "/admin/settings", body, token)
+			requireStatus(t, w, http.StatusBadRequest)
+			requireBodyCode(t, w, http.StatusBadRequest)
+
+			m := decodeJSON(t, w)
+			if got, _ := m["message"].(string); got != testCase.want {
+				t.Errorf("取值 %q 的错误信息期望 %q，实际 %q", testCase.value, testCase.want, got)
+			}
+			if count := emojiSettingRowCount(t, "emoji_cdn_urls"); count != 0 {
+				t.Errorf("非法取值不应落库，实际 %d 行", count)
+			}
+		}
+	})
+
+	t.Run("合法取值写入归一化后的 JSON 数组", func(t *testing.T) {
+		for _, testCase := range []struct {
+			raw  string
+			want string
+		}{
+			{"", "[]"},
+			{"   ", "[]"},
+			{"[]", "[]"},
+			{`["", "   "]`, "[]"},
+			{`["  https://a.example.com/owo.json  "]`, `["https://a.example.com/owo.json"]`},
+			{
+				`["https://a.example.com/owo.json", "", "https://b.example.com/owo.json?group=Emoji"]`,
+				`["https://a.example.com/owo.json","https://b.example.com/owo.json?group=Emoji"]`,
+			},
+		} {
+			truncateAll()
+			token := adminToken(t)
+
+			body := `{"emoji_cdn_urls":` + mustJSONString(t, testCase.raw) + `}`
+			requireStatus(t, callWithToken(t, "PUT", "/admin/settings", body, token), http.StatusOK)
+
+			if got := utils.GetSetting("emoji_cdn_urls"); got != testCase.want {
+				t.Errorf("写入 %q 后落库期望 %q，实际 %q", testCase.raw, testCase.want, got)
+			}
+		}
+	})
+
+	t.Run("恰好 5 个与恰好 500 码点通过", func(t *testing.T) {
+		truncateAll()
+		token := adminToken(t)
+
+		borderline := "https://cdn.example.com/" + strings.Repeat("a", utils.MaxEmojiCDNURLLength-len("https://cdn.example.com/"))
+		body := `{"emoji_cdn_urls":` + mustJSONString(t,
+			`["https://a/1","https://a/2","https://a/3","https://a/4","`+borderline+`"]`) + `}`
+		requireStatus(t, callWithToken(t, "PUT", "/admin/settings", body, token), http.StatusOK)
+	})
+
+	t.Run("非法取值时同批的其它键也不落库", func(t *testing.T) {
+		truncateAll()
+		token := adminToken(t)
+
+		body := `{"site_name":"不应写入","emoji_cdn_urls":"not json"}`
+		requireStatus(t, callWithToken(t, "PUT", "/admin/settings", body, token), http.StatusBadRequest)
+		if got := utils.GetSetting("site_name"); got != "" {
+			t.Errorf("校验失败时不应写入任何设置，site_name 实际 %q", got)
+		}
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -297,9 +395,12 @@ func TestCommentsCarryEmojiConfig(t *testing.T) {
 	seedEmojiComment(t)
 
 	t.Run("未配置时回落默认源并启用", func(t *testing.T) {
-		url, enabled := emojiCommentsConfig(t)
+		url, urls, enabled := emojiCommentsConfig(t)
 		if url != utils.DefaultEmojiCDN {
 			t.Errorf("未配置时地址应回落默认源 %q，实际 %q", utils.DefaultEmojiCDN, url)
+		}
+		if len(urls) != 1 || urls[0] != utils.DefaultEmojiCDN {
+			t.Errorf("未配置时数组应只含默认源，实际 %v", urls)
 		}
 		if enabled != "true" {
 			t.Errorf("未配置时开关应 fail-open 为 true，实际 %q", enabled)
@@ -307,26 +408,58 @@ func TestCommentsCarryEmojiConfig(t *testing.T) {
 	})
 
 	for _, testCase := range []struct {
-		name      string
-		storedURL string
-		storedOn  string
-		expectURL string
-		expectOn  string
+		name       string
+		storedURLs string
+		storedURL  string
+		storedOn   string
+		expectURLs []string
+		expectOn   string
 	}{
-		{"已配置：地址与开关原样下发", "https://cdn.example.com/owo.json", "true", "https://cdn.example.com/owo.json", "true"},
-		{"关闭时地址照常下发", "https://cdn.example.com/owo.json?group=Emoji", "false", "https://cdn.example.com/owo.json?group=Emoji", "false"},
-		{"地址两侧空格被裁掉", "  https://cdn.example.com/owo.json  ", "true", "https://cdn.example.com/owo.json", "true"},
-		{"历史脏值 FALSE 判为关闭", "https://cdn.example.com/owo.json", "FALSE", "https://cdn.example.com/owo.json", "false"},
-		{"无法识别的开关 fail-open 为启用", "https://cdn.example.com/owo.json", "yes", "https://cdn.example.com/owo.json", "true"},
-		{"关闭且未配地址：地址仍回落默认源", "", "false", utils.DefaultEmojiCDN, "false"},
+		{"已配置：地址与开关原样下发", "", "https://cdn.example.com/owo.json", "true", []string{"https://cdn.example.com/owo.json"}, "true"},
+		{"关闭时地址照常下发", "", "https://cdn.example.com/owo.json?group=Emoji", "false", []string{"https://cdn.example.com/owo.json?group=Emoji"}, "false"},
+		{"地址两侧空格被裁掉", "", "  https://cdn.example.com/owo.json  ", "true", []string{"https://cdn.example.com/owo.json"}, "true"},
+		{"历史脏值 FALSE 判为关闭", "", "https://cdn.example.com/owo.json", "FALSE", []string{"https://cdn.example.com/owo.json"}, "false"},
+		{"无法识别的开关 fail-open 为启用", "", "https://cdn.example.com/owo.json", "yes", []string{"https://cdn.example.com/owo.json"}, "true"},
+		{"关闭且未配地址：地址仍回落默认源", "", "", "false", []string{utils.DefaultEmojiCDN}, "false"},
+		{
+			"多来源：数组优先于旧键，且 emoji_cdn_url = 第一个地址",
+			`["https://a.example.com/owo.json","  https://b.example.com/owo.json  "]`,
+			"https://legacy.example.com/owo.json", "true",
+			[]string{"https://a.example.com/owo.json", "https://b.example.com/owo.json"}, "true",
+		},
+		{
+			"多来源：数组解析为空时回落旧键",
+			"[]", "https://legacy.example.com/owo.json", "true",
+			[]string{"https://legacy.example.com/owo.json"}, "true",
+		},
+		{
+			"多来源：数组是脏值时回落旧键",
+			"not json", "https://legacy.example.com/owo.json", "true",
+			[]string{"https://legacy.example.com/owo.json"}, "true",
+		},
+		{
+			"多来源：读取宽容（丢弃非字符串与空串、截断到 5 个）",
+			`["", 7, "https://a/1.json", null, "  ", "https://b/2.json", "https://c/3.json", "https://d/4.json", "https://e/5.json", "https://f/6.json"]`,
+			"", "true",
+			[]string{"https://a/1.json", "https://b/2.json", "https://c/3.json", "https://d/4.json", "https://e/5.json"}, "true",
+		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
+			setSetting(t, "emoji_cdn_urls", testCase.storedURLs)
 			setSetting(t, "emoji_cdn_url", testCase.storedURL)
 			setSetting(t, "emoji_enabled", testCase.storedOn)
 
-			url, enabled := emojiCommentsConfig(t)
-			if url != testCase.expectURL {
-				t.Errorf("emoji_cdn_url 期望 %q，实际 %q", testCase.expectURL, url)
+			url, urls, enabled := emojiCommentsConfig(t)
+			if len(urls) != len(testCase.expectURLs) {
+				t.Fatalf("emoji_cdn_urls 期望 %v，实际 %v", testCase.expectURLs, urls)
+			}
+			for i := range testCase.expectURLs {
+				if urls[i] != testCase.expectURLs[i] {
+					t.Errorf("emoji_cdn_urls[%d] 期望 %q，实际 %q", i, testCase.expectURLs[i], urls[i])
+				}
+			}
+			if url != testCase.expectURLs[0] {
+				t.Errorf("emoji_cdn_url 应等于数组第一个地址 %q，实际 %q", testCase.expectURLs[0], url)
 			}
 			if enabled != testCase.expectOn {
 				t.Errorf("emoji_enabled 期望 %q，实际 %q", testCase.expectOn, enabled)
@@ -334,7 +467,7 @@ func TestCommentsCarryEmojiConfig(t *testing.T) {
 		})
 	}
 
-	t.Run("响应体里两个字段都是字符串", func(t *testing.T) {
+	t.Run("响应体里的字段类型稳定", func(t *testing.T) {
 		w := callJSON(t, "GET", "/api/comments?post_slug="+queryEscape(emojiTestSlug), "")
 		requireStatus(t, w, http.StatusOK)
 
@@ -348,6 +481,18 @@ func TestCommentsCarryEmojiConfig(t *testing.T) {
 				t.Errorf("data.%s 必须是字符串，实际 %T（%v）", key, data[key], data[key])
 			}
 		}
+		urls, ok := data["emoji_cdn_urls"].([]interface{})
+		if !ok {
+			t.Fatalf("data.emoji_cdn_urls 必须是数组，实际 %T（%v）", data["emoji_cdn_urls"], data["emoji_cdn_urls"])
+		}
+		if len(urls) == 0 {
+			t.Errorf("data.emoji_cdn_urls 不应为空数组")
+		}
+		for i, item := range urls {
+			if _, ok := item.(string); !ok {
+				t.Errorf("data.emoji_cdn_urls[%d] 必须是字符串，实际 %T", i, item)
+			}
+		}
 	})
 }
 
@@ -359,7 +504,8 @@ func TestSettingsExportImportEmoji(t *testing.T) {
 	resetState(t)
 	token := adminToken(t)
 	setSetting(t, "emoji_enabled", "false")
-	setSetting(t, "emoji_cdn_url", "https://cdn.example.com/owo.json")
+	setSetting(t, "emoji_cdn_urls", `["https://cdn.example.com/owo.json"]`)
+	setSetting(t, "emoji_cdn_url", "https://legacy.example.com/owo.json")
 
 	exported := callWithToken(t, "GET", "/admin/data/export/settings", "", token)
 	requireStatus(t, exported, http.StatusOK)
@@ -374,7 +520,10 @@ func TestSettingsExportImportEmoji(t *testing.T) {
 	if got := payload.Data.Settings["emoji_enabled"]; got != "false" {
 		t.Errorf("导出缺少 emoji_enabled：%v", got)
 	}
-	if got := payload.Data.Settings["emoji_cdn_url"]; got != "https://cdn.example.com/owo.json" {
+	if got := payload.Data.Settings["emoji_cdn_urls"]; got != `["https://cdn.example.com/owo.json"]` {
+		t.Errorf("导出缺少 emoji_cdn_urls：%v", got)
+	}
+	if got := payload.Data.Settings["emoji_cdn_url"]; got != "https://legacy.example.com/owo.json" {
 		t.Errorf("导出缺少 emoji_cdn_url：%v", got)
 	}
 	if _, exists := payload.Data.Settings["emoji_packs"]; exists {
@@ -385,13 +534,16 @@ func TestSettingsExportImportEmoji(t *testing.T) {
 		truncateAll()
 		importToken := adminToken(t)
 
-		body := `{"emoji_enabled":" FALSE ","emoji_cdn_url":"  https://cdn.example.com/owo.json  "}`
+		body := `{"emoji_enabled":" FALSE ","emoji_cdn_urls":"[\"  https://cdn.example.com/owo.json  \"]","emoji_cdn_url":"  https://legacy.example.com/owo.json  "}`
 		requireStatus(t, callWithToken(t, "POST", "/admin/data/import/settings", body, importToken), http.StatusOK)
 
 		if got := utils.GetSetting("emoji_enabled"); got != "false" {
 			t.Errorf("导入后 emoji_enabled 应被归一化为 false，实际 %q", got)
 		}
-		if got := utils.GetSetting("emoji_cdn_url"); got != "https://cdn.example.com/owo.json" {
+		if got := utils.GetSetting("emoji_cdn_urls"); got != `["https://cdn.example.com/owo.json"]` {
+			t.Errorf("导入后 emoji_cdn_urls 应被归一化，实际 %q", got)
+		}
+		if got := utils.GetSetting("emoji_cdn_url"); got != "https://legacy.example.com/owo.json" {
 			t.Errorf("导入后 emoji_cdn_url 应被去空格，实际 %q", got)
 		}
 	})
@@ -425,6 +577,23 @@ func TestSettingsExportImportEmoji(t *testing.T) {
 		}
 		if count := emojiSettingRowCount(t, "emoji_cdn_url"); count != 0 {
 			t.Errorf("非法地址不应落库，实际 %d 行", count)
+		}
+	})
+
+	t.Run("导入非法 emoji_cdn_urls 被拒绝且不落库", func(t *testing.T) {
+		truncateAll()
+		importToken := adminToken(t)
+
+		w := callWithToken(t, "POST", "/admin/data/import/settings",
+			`{"emoji_cdn_urls":"[\"ftp://a.com/owo.json\"]"}`, importToken)
+		requireStatus(t, w, http.StatusBadRequest)
+
+		m := decodeJSON(t, w)
+		if got, _ := m["message"].(string); got != "emoji_cdn_urls 只允许 http/https 地址" {
+			t.Errorf("导入校验错误信息不正确: %q", got)
+		}
+		if count := emojiSettingRowCount(t, "emoji_cdn_urls"); count != 0 {
+			t.Errorf("非法地址数组不应落库，实际 %d 行", count)
 		}
 	})
 }
