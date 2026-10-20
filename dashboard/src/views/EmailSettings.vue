@@ -22,11 +22,11 @@
       <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
         <div class="flex items-center justify-between mb-4">
           <h2 class="text-lg font-semibold text-gray-800 flex items-center gap-2">
-            <i class="fa-solid fa-envelope text-blue-500"></i> SMTP 服务器
+            <i class="fa-solid fa-envelope text-teal-500"></i> SMTP 服务器
           </h2>
           <label class="relative shrink-0 ms-4 inline-flex items-center cursor-pointer">
             <input type="checkbox" v-model="form.email_enabled" class="sr-only peer" true-value="true" false-value="false">
-            <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+            <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-teal-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-teal-600"></div>
             <span class="ms-3 text-sm font-medium whitespace-nowrap text-gray-700">
               {{ form.email_enabled === 'true' ? '已开启' : '已关闭' }}
             </span>
@@ -37,26 +37,26 @@
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">SMTP 服务器</label>
             <input v-model="form.smtp_host" type="text" placeholder="smtp.example.com"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm" />
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm" />
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">SMTP 端口</label>
             <input v-model="form.smtp_port" type="text" placeholder="465"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm" />
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm" />
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">邮箱用户名</label>
             <input v-model="form.email_user" type="text"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm" />
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm" />
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">邮箱密码</label>
             <input v-model="form.email_password" type="password" placeholder="留空则不修改"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm" />
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm" />
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">安全连接 (SSL/TLS)</label>
-            <SelectMenu v-model="form.email_secure" class="w-full" title="SMTP 安全连接方式"
+            <SelectMenu v-model="form.email_secure" class="w-full" accent="teal" title="SMTP 安全连接方式"
               :options="[
                 { label: '是 (端口 465)', value: 'true' },
                 { label: '否 (端口 587)', value: 'false' },
@@ -71,14 +71,14 @@
             <i v-else class="fa-solid fa-paper-plane"></i>
             {{ testingEmail ? '发送中...' : '发送测试邮件' }}
           </button>
-          <p class="text-xs text-gray-400">保存设置后，点击测试 SMTP 配置是否正确</p>
+          <p class="text-xs text-gray-400">保存设置后，点击测试 SMTP 配置是否正确；测试邮件会发送到<strong>通知邮箱</strong>（通知邮箱 = <code class="bg-gray-100 px-1 rounded">notify_email</code>，在「基本设置 → 管理员邮箱」里选择）</p>
         </div>
       </section>
 
       <!-- 邮箱验证 -->
       <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
         <h2 class="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
-          <i class="fa-solid fa-shield-halved text-blue-500"></i> 邮箱验证
+          <i class="fa-solid fa-shield-halved text-teal-500"></i> 邮箱验证
         </h2>
         <div class="flex items-center justify-between mb-4">
           <div>
@@ -87,7 +87,7 @@
           </div>
           <label class="relative shrink-0 ms-4 inline-flex items-center cursor-pointer">
             <input type="checkbox" v-model="form.email_verify_enabled" class="sr-only peer" true-value="true" false-value="false">
-            <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+            <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-teal-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-teal-600"></div>
             <span class="ms-3 text-sm font-medium whitespace-nowrap text-gray-700">
               {{ form.email_verify_enabled === 'true' ? '已启用' : '已禁用' }}
             </span>
@@ -96,15 +96,43 @@
         <div class="pt-4 border-t border-gray-100">
           <label class="block text-sm font-medium text-gray-700 mb-1">API 地址</label>
           <input v-model="form.verify_base_url" type="text" placeholder="https://api.example.com"
-            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm" />
+            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm" />
           <p class="text-xs text-gray-400 mt-1">验证邮件链接的基础地址，不能以 / 结尾</p>
+        </div>
+      </section>
+
+      <!-- 邮件记录 -->
+      <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <div class="flex items-center justify-between gap-3">
+          <h2 class="text-lg font-semibold text-gray-800 flex items-center gap-2">
+            <i class="fa-solid fa-box-archive text-teal-500"></i> 邮件记录
+          </h2>
+          <router-link to="/mails" class="text-xs text-teal-600 hover:underline shrink-0">
+            前往邮件管理 <i class="fa-solid fa-arrow-right ms-0.5"></i>
+          </router-link>
+        </div>
+        <p class="text-sm text-gray-500 mt-2">
+          真正尝试发送的邮件都会留一行日志（SMTP 未配置、邮件通知关闭导致的「跳过」不记），
+          可在「邮件管理」页按状态、类型、收件人或主题筛选。
+        </p>
+
+        <div class="mt-4 max-w-xs">
+          <label class="block text-sm font-medium text-gray-700 mb-1">邮件保存天数</label>
+          <input v-model.number="form.mail_log_retention_days" type="number" min="0" max="3650" step="1"
+            data-test="mail-log-retention-days"
+            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm" />
+          <p class="text-xs text-gray-400 mt-1">
+            超期记录会在写下一封邮件日志时自动清理（默认 30 天，上限 3650 天）。
+            设为 <code class="bg-gray-100 px-1 rounded text-gray-600">0</code> 表示永久保留 ——
+            收件人邮箱会随记录长期留在数据库里，请谨慎选择。
+          </p>
         </div>
       </section>
 
       <!-- 邮件模板 -->
       <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
         <h2 class="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
-          <i class="fa-solid fa-pen-to-square text-blue-500"></i> 邮件模板
+          <i class="fa-solid fa-pen-to-square text-teal-500"></i> 邮件模板
         </h2>
         <p class="text-sm text-gray-500 mb-4">留空则使用默认模板。</p>
 
@@ -119,11 +147,16 @@
               <div><code class="bg-gray-100 px-1.5 rounded text-gray-600">&#123;&#123;replyAuthor&#125;&#125;</code> <span class="text-gray-400 ml-1">回复者昵称</span></div>
               <div><code class="bg-gray-100 px-1.5 rounded text-gray-600">&#123;&#123;postTitle&#125;&#125;</code> <span class="text-gray-400 ml-1">文章标题</span></div>
               <div><code class="bg-gray-100 px-1.5 rounded text-gray-600">&#123;&#123;postUrl&#125;&#125;</code> <span class="text-gray-400 ml-1">文章链接</span></div>
-              <div><code class="bg-gray-100 px-1.5 rounded text-gray-600">&#123;&#123;parentComment&#125;&#125;</code> <span class="text-gray-400 ml-1">原评论内容</span></div>
-              <div><code class="bg-gray-100 px-1.5 rounded text-gray-600">&#123;&#123;replyContent&#125;&#125;</code> <span class="text-gray-400 ml-1">回复内容</span></div>
+              <div><code class="bg-gray-100 px-1.5 rounded text-gray-600">&#123;&#123;replyContentHtml&#125;&#125;</code> <span class="text-gray-400 ml-1">回复内容渲染后的 HTML（图片 / 表情 / 链接原样显示）</span></div>
+              <div><code class="bg-gray-100 px-1.5 rounded text-gray-600">&#123;&#123;parentCommentHtml&#125;&#125;</code> <span class="text-gray-400 ml-1">原评论渲染后的 HTML（图片 / 表情 / 链接原样显示）</span></div>
             </div>
+            <p class="text-xs text-gray-400 mb-2">
+              旧的纯文本占位符 <code class="bg-gray-100 px-1 rounded">&#123;&#123;replyContent&#125;&#125;</code> /
+              <code class="bg-gray-100 px-1 rounded">&#123;&#123;parentComment&#125;&#125;</code> 仍然可用，
+              但它们插入的是 <strong>HTML 转义后的纯文本</strong>（表情与图片只会显示成文字）。
+            </p>
             <textarea v-model="form.reply_template" rows="6"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm font-mono"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm font-mono"
               placeholder="留空使用默认模板"></textarea>
           </div>
           <div>
@@ -135,10 +168,14 @@
               <div><code class="bg-gray-100 px-1.5 rounded text-gray-600">&#123;&#123;postTitle&#125;&#125;</code> <span class="text-gray-400 ml-1">文章标题</span></div>
               <div><code class="bg-gray-100 px-1.5 rounded text-gray-600">&#123;&#123;postUrl&#125;&#125;</code> <span class="text-gray-400 ml-1">文章链接</span></div>
               <div><code class="bg-gray-100 px-1.5 rounded text-gray-600">&#123;&#123;commentAuthor&#125;&#125;</code> <span class="text-gray-400 ml-1">评论者昵称</span></div>
-              <div><code class="bg-gray-100 px-1.5 rounded text-gray-600">&#123;&#123;commentContent&#125;&#125;</code> <span class="text-gray-400 ml-1">评论内容</span></div>
+              <div><code class="bg-gray-100 px-1.5 rounded text-gray-600">&#123;&#123;commentContentHtml&#125;&#125;</code> <span class="text-gray-400 ml-1">评论内容渲染后的 HTML（图片 / 表情 / 链接原样显示）</span></div>
             </div>
+            <p class="text-xs text-gray-400 mb-2">
+              旧的 <code class="bg-gray-100 px-1 rounded">&#123;&#123;commentContent&#125;&#125;</code> 仍然可用，
+              但它插入的是 <strong>HTML 转义后的纯文本</strong>（表情与图片只会显示成文字）。
+            </p>
             <textarea v-model="form.notification_template" rows="6"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm font-mono"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm font-mono"
               placeholder="留空使用默认模板"></textarea>
           </div>
         </div>
@@ -148,7 +185,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, onBeforeRouteLeave } from 'vue-router'
 import request from '../utils/request'
 import toast from '../utils/toast'
@@ -173,8 +210,22 @@ const form = reactive({
   email_enabled: 'true',
   email_verify_enabled: 'false',
   verify_base_url: '',
+  // 外发邮件日志（「邮件管理」页）的保留天数：0 = 永久保留，默认 30
+  mail_log_retention_days: '30',
   reply_template: '',
   notification_template: '',
+})
+
+/**
+ * 邮件保存天数归一化（提交前）：
+ * 非数字 / 留空 → 默认 30；0 或负数 → 0（永久保留）；上限 3650。
+ * 归一化后的字符串才是真正提交给后端的值，避免脏值被后端 400 拦下。
+ */
+const normalizedMailLogRetentionDays = computed(() => {
+  const parsed = parseInt(form.mail_log_retention_days, 10)
+  if (!Number.isFinite(parsed)) return 30
+  if (parsed <= 0) return 0
+  return Math.min(parsed, 3650)
 })
 
 const takeSnapshot = () => JSON.stringify({ ...form })
@@ -237,9 +288,13 @@ const saveSettings = async () => {
     if (payload.verify_base_url) {
       payload.verify_base_url = payload.verify_base_url.replace(/\/+$/, '')
     }
+    // 邮件保存天数：归一化后再提交（0 = 永久保留）
+    payload.mail_log_retention_days = String(normalizedMailLogRetentionDays.value);
     const res = await request.put('/admin/settings', payload)
     if (res.code === 200) {
       saved.value = true
+      // 回写归一化后的值：避免输入框里留着 "030" 这类与库中不一致的写法
+      form.mail_log_retention_days = normalizedMailLogRetentionDays.value
       toast.success('设置已保存')
       initialSnapshot = takeSnapshot()
       isDirty.value = false

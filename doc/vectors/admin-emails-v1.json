@@ -1,0 +1,178 @@
+{
+  "version": 1,
+  "note": "多管理员邮箱契约 v1：admin_emails（JSON 数组，最多 10 个，trim + 小写 + 去重）为权威列表，admin_email 仅在列表为空时回落，notify_email 必须命中列表否则回落到第一个。写入校验（六条错误文案）与读取归一化三端必须逐条一致。由 scripts/gen-admin-emails-vectors.js 生成，请勿手改。",
+  "limits": {
+    "maxAdminEmails": 10,
+    "maxEmailLen": 254
+  },
+  "errors": {
+    "notArray": "admin_emails 必须是 JSON 数组",
+    "notString": "admin_emails 的每一项都必须是字符串",
+    "tooMany": "admin_emails 最多 10 个邮箱",
+    "badEmail": "admin_emails 包含非法邮箱地址",
+    "badNotify": "notify_email 必须是合法的邮箱地址",
+    "notifyNotInList": "notify_email 必须在管理员邮箱列表中"
+  },
+  "email": {
+    "valid": [
+      "a@b.com",
+      "  A@B.COM  ",
+      "user.name+tag@sub.example.co",
+      "x@y.io",
+      "ADMIN@EXAMPLE.COM"
+    ],
+    "invalid": [
+      "",
+      "   ",
+      "abc",
+      "a@b",
+      "a b@c.com",
+      "@b.com",
+      "a@",
+      "a@@b.com",
+      "a@b@c.com",
+      "<a@b.com>",
+      "a@b.c",
+      "a@b..com",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com"
+    ]
+  },
+  "parse": [
+    {
+      "name": "未配置",
+      "stored": "",
+      "expect": []
+    },
+    {
+      "name": "空白",
+      "stored": "   ",
+      "expect": []
+    },
+    {
+      "name": "空数组",
+      "stored": "[]",
+      "expect": []
+    },
+    {
+      "name": "trim + 小写 + 去重保序",
+      "stored": "[\"  A@X.com \", \"b@y.com\", \"a@x.com\"]",
+      "expect": [
+        "a@x.com",
+        "b@y.com"
+      ]
+    },
+    {
+      "name": "坏 JSON 容错为空",
+      "stored": "{oops",
+      "expect": []
+    },
+    {
+      "name": "非数组容错为空",
+      "stored": "\"a@b.com\"",
+      "expect": []
+    },
+    {
+      "name": "非字符串项丢弃",
+      "stored": "[\"a@b.com\", 1, null]",
+      "expect": [
+        "a@b.com"
+      ]
+    },
+    {
+      "name": "非法邮箱丢弃",
+      "stored": "[\"a@b.com\", \"nope\", \"c@d.com\"]",
+      "expect": [
+        "a@b.com",
+        "c@d.com"
+      ]
+    },
+    {
+      "name": "超过 10 个只取前 10 个",
+      "stored": "[\"admin1@example.com\",\"admin2@example.com\",\"admin3@example.com\",\"admin4@example.com\",\"admin5@example.com\",\"admin6@example.com\",\"admin7@example.com\",\"admin8@example.com\",\"admin9@example.com\",\"admin10@example.com\",\"admin11@example.com\"]",
+      "expect": [
+        "admin1@example.com",
+        "admin2@example.com",
+        "admin3@example.com",
+        "admin4@example.com",
+        "admin5@example.com",
+        "admin6@example.com",
+        "admin7@example.com",
+        "admin8@example.com",
+        "admin9@example.com",
+        "admin10@example.com"
+      ]
+    }
+  ],
+  "resolve": [
+    {
+      "name": "列表与通知邮箱都配好",
+      "storedAdmins": "[\"a@x.com\",\"b@y.com\"]",
+      "legacyAdmin": "",
+      "storedNotify": "b@y.com",
+      "expectAdmins": [
+        "a@x.com",
+        "b@y.com"
+      ],
+      "expectNotify": "b@y.com"
+    },
+    {
+      "name": "通知邮箱大小写/空格归一后命中",
+      "storedAdmins": "[\"a@x.com\",\"b@y.com\"]",
+      "legacyAdmin": "",
+      "storedNotify": "  B@Y.COM  ",
+      "expectAdmins": [
+        "a@x.com",
+        "b@y.com"
+      ],
+      "expectNotify": "b@y.com"
+    },
+    {
+      "name": "通知邮箱不在列表：回落到第一个",
+      "storedAdmins": "[\"a@x.com\",\"b@y.com\"]",
+      "legacyAdmin": "",
+      "storedNotify": "c@z.com",
+      "expectAdmins": [
+        "a@x.com",
+        "b@y.com"
+      ],
+      "expectNotify": "a@x.com"
+    },
+    {
+      "name": "通知邮箱为空：回落到第一个",
+      "storedAdmins": "[\"a@x.com\",\"b@y.com\"]",
+      "legacyAdmin": "",
+      "storedNotify": "",
+      "expectAdmins": [
+        "a@x.com",
+        "b@y.com"
+      ],
+      "expectNotify": "a@x.com"
+    },
+    {
+      "name": "列表为空：回落到旧的单邮箱键",
+      "storedAdmins": "[]",
+      "legacyAdmin": "Old@X.com",
+      "storedNotify": "",
+      "expectAdmins": [
+        "old@x.com"
+      ],
+      "expectNotify": "old@x.com"
+    },
+    {
+      "name": "列表与旧键都为空：没有管理员、没有收件人",
+      "storedAdmins": "",
+      "legacyAdmin": "",
+      "storedNotify": "a@x.com",
+      "expectAdmins": [],
+      "expectNotify": ""
+    },
+    {
+      "name": "旧键是非法邮箱：视为未配置",
+      "storedAdmins": "not json",
+      "legacyAdmin": "nope",
+      "storedNotify": "",
+      "expectAdmins": [],
+      "expectNotify": ""
+    }
+  ]
+}

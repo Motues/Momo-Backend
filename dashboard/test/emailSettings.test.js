@@ -25,6 +25,8 @@ const DEFAULT_FORM = {
 	email_enabled: 'true',
 	email_verify_enabled: 'false',
 	verify_base_url: '',
+	// 外发邮件日志保留天数：0 = 永久保留
+	mail_log_retention_days: '30',
 	reply_template: '',
 	notification_template: '',
 };
@@ -79,6 +81,18 @@ describe('EmailSettings - 加载与默认值', () => {
 		expect(wrapper.vm.form.email_enabled).toBe('true');
 		expect(wrapper.vm.form.email_secure).toBe('true');
 		expect(wrapper.vm.form.email_verify_enabled).toBe('false');
+	});
+
+	it('默认值：邮件保存天数 30 天', async () => {
+		await mountSettings();
+		expect(wrapper.vm.form.mail_log_retention_days).toBe('30');
+		expect(wrapper.get('[data-test="mail-log-retention-days"]').element.value).toBe('30');
+	});
+
+	it('加载时回填自定义的邮件保存天数（0 = 永久保留）', async () => {
+		await mountSettings({ code: 200, data: { mail_log_retention_days: '0' } });
+		expect(wrapper.vm.form.mail_log_retention_days).toBe('0');
+		expect(wrapper.get('[data-test="mail-log-retention-days"]').element.value).toBe('0');
 	});
 
 	it('默认值：SMTP 与模板字段为空', async () => {
@@ -209,6 +223,38 @@ describe('EmailSettings - 保存载荷', () => {
 		expect(lastPayload().email_verify_enabled).toBe('true');
 	});
 
+	it('邮件保存天数：默认提交 30，0 表示永久保留', async () => {
+		await mountSettings();
+		await saveButton().trigger('click');
+		await flushPromises();
+		expect(lastPayload().mail_log_retention_days).toBe('30');
+
+		await wrapper.get('[data-test="mail-log-retention-days"]').setValue('0');
+		await saveButton().trigger('click');
+		await flushPromises();
+		expect(lastPayload().mail_log_retention_days).toBe('0');
+	});
+
+	it('邮件保存天数：脏值/负数/超限都归一化后再提交', async () => {
+		const cases = [
+			['7', '7'],
+			['030', '30'],
+			['-5', '0'],
+			['99999', '3650'],
+			['abc', '30'],
+			['', '30'],
+		];
+		for (const [input, expected] of cases) {
+			await mountSettings();
+			await wrapper.get('[data-test="mail-log-retention-days"]').setValue(input);
+			await saveButton().trigger('click');
+			await flushPromises();
+			expect(lastPayload().mail_log_retention_days, input).toBe(expected);
+			wrapper.unmount();
+			wrapper = undefined;
+		}
+	});
+
 	it('开启邮箱验证但未填 API 地址时拒绝保存并提示', async () => {
 		await mountSettings();
 		await wrapper.findAll('input[type="checkbox"]')[1].setValue(true);
@@ -325,6 +371,45 @@ describe('EmailSettings - 测试邮件', () => {
 		await testEmailButton().trigger('click');
 		await flushPromises();
 		expect(toastMock.success).not.toHaveBeenCalled();
+	});
+});
+
+describe('EmailSettings - 模板占位符说明', () => {
+	it('展示渲染后的 HTML 占位符（commentContentHtml / replyContentHtml / parentCommentHtml）', async () => {
+		await mountSettings();
+		const text = wrapper.text();
+		expect(text).toContain('{{commentContentHtml}}');
+		expect(text).toContain('{{replyContentHtml}}');
+		expect(text).toContain('{{parentCommentHtml}}');
+	});
+
+	it('说明旧的纯文本占位符仍然可用，但会被 HTML 转义', async () => {
+		await mountSettings();
+		const text = wrapper.text();
+		expect(text).toContain('{{commentContent}}');
+		expect(text).toContain('{{replyContent}}');
+		expect(text).toContain('{{parentComment}}');
+		expect(text).toContain('HTML 转义后的纯文本');
+	});
+
+	it('测试邮件提示写明发给通知邮箱（notify_email）', async () => {
+		await mountSettings();
+		const text = wrapper.text();
+		expect(text).toContain('通知邮箱');
+		expect(text).toContain('notify_email');
+	});
+
+	it('「邮件记录」卡片说明保存天数（0 = 永久保留）并链接到邮件管理页', async () => {
+		await mountSettings();
+		const section = wrapper.findAll('section').find((item) => item.text().includes('邮件保存天数'));
+		expect(section).toBeTruthy();
+		expect(section.text()).toContain('邮件记录');
+		expect(section.text()).toContain('永久保留');
+		expect(section.text()).toContain('3650');
+
+		const link = section.findAll('a').find((a) => a.attributes('href') === '/mails');
+		expect(link).toBeTruthy();
+		expect(link.text()).toContain('邮件管理');
 	});
 });
 
