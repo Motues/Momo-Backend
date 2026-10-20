@@ -3,6 +3,8 @@ import { UAParser } from 'ua-parser-js';
 import { Bindings } from '../../bindings';
 import { sendCommentNotification, sendCommentReplyNotification, sendVerificationEmail, checkEmailVerified, hasUnverifiedToken, saveVerificationToken, isEmailServiceAvailable } from '../../utils/email';
 import { isEmailEnabled, getSetting } from '../../utils/settings';
+import { getAdminConfig, isAdminMember, normalizeEmail } from '../../utils/adminEmails';
+import { requestLinkSyncIfNeeded } from './linkSyncConfirm';
 import { checkRequestSource, isSourceDenied } from '../../utils/origin';
 import { isVerifyEnabled, checkVerifyDomain, verifyTicket } from '../../utils/verify';
 import { checkCommentSpam } from '../../utils/spam';
@@ -58,6 +60,20 @@ async function checkEmailBlacklist(env: Bindings, email: string): Promise<boolea
 async function getCommentStatus(env: Bindings): Promise<string> {
   const autoApprove = await getSetting(env, "comment_auto_approve");
   return autoApprove === "false" ? "pending" : "approved";
+}
+
+/**
+ * 结果链接的基地址：优先使用手动配置的 verify_base_url，否则从请求头推断。
+ * 邮箱验证、历史链接同步与休眠提醒共用同一口径（都在 `c.executionCtx.waitUntil` 里发信）。
+ */
+export async function resolveBaseUrl(c: Context<{ Bindings: Bindings }>): Promise<string> {
+  let baseUrl = await getSetting(c.env, "verify_base_url");
+  if (!baseUrl) {
+    const origin = c.req.header("Origin") || c.req.header("Host") || "";
+    const protocol = origin.includes("localhost") || origin.includes("127.0.0.1") ? "http" : "https";
+    baseUrl = origin.startsWith("http") ? origin : `${protocol}://${origin}`;
+  }
+  return baseUrl.replace(/\/+$/, "");
 }
 
 export const postComment = async (c: Context<{ Bindings: Bindings }>) => {
@@ -137,10 +153,11 @@ export const postComment = async (c: Context<{ Bindings: Bindings }>) => {
   // Worker 始终使用 Cloudflare 提供的该请求头。
   const ip = c.req.header('cf-connecting-ip') || "127.0.0.1";
 
-  // 3. 管理员身份判定（只依赖 admin_email）：
+  // 3. 管理员身份判定（口径见 doc/admin_emails.md）：命中管理员列表（admin_emails，
+  //    列表为空时回落旧键 admin_email）即为博主；成员判定 = admins.includes(normalize(email))。
   // 必须早于限流与黑名单检查，因为管理员邮箱不受 60 秒评论冷却限制。
-  const adminEmail = await getSetting(c.env, "admin_email") || "";
-  const isAdminEmail = !!adminEmail && data.email === adminEmail;
+  const adminConfig = await getAdminConfig(c.env);
+  const isAdminEmail = isAdminMember(adminConfig.admins, data.email);
 
   // 4. 检查评论频率控制（管理员邮箱不限流）
   if (!isAdminEmail) {
@@ -236,14 +253,7 @@ export const postComment = async (c: Context<{ Bindings: Bindings }>) => {
         const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
         await saveVerificationToken(c.env, data.email, token, expiresAt, data.post_slug, postTitle);
 
-        // 优先使用手动配置的验证地址，否则从请求头推断
-        let baseUrl = await getSetting(c.env, "verify_base_url");
-        if (!baseUrl) {
-          const origin = c.req.header("Origin") || c.req.header("Host") || "";
-          const protocol = origin.includes("localhost") || origin.includes("127.0.0.1") ? "http" : "https";
-          baseUrl = origin.startsWith("http") ? origin : `${protocol}://${origin}`;
-        }
-        const verifyUrl = `${baseUrl.replace(/\/+$/, "")}/api/verify-email/verify?token=${encodeURIComponent(token)}&email=${encodeURIComponent(data.email)}`;
+        const verifyUrl = `${await resolveBaseUrl(c)}/api/verify-email/verify?token=${encodeURIComponent(token)}&email=${encodeURIComponent(data.email)}`;
 
         c.executionCtx.waitUntil((async () => {
           try {
@@ -264,6 +274,8 @@ export const postComment = async (c: Context<{ Bindings: Bindings }>) => {
 
   // 6. 写入 D1 数据库
   try {
+    // content_html 既落库也用于通知邮件的「渲染后正文」（doc/mail.md）
+    const contentHtml = await parseMarkdown(content);
     const { success } = await c.env.MOMO_DB.prepare(`
       INSERT INTO Comment (
         pub_date, post_slug, author, email, url, ip_address,
@@ -283,7 +295,7 @@ export const postComment = async (c: Context<{ Bindings: Bindings }>) => {
       uaResult.device.model || uaResult.device.type || "Desktop",
       userAgent,
       content,
-      await parseMarkdown(content),
+      contentHtml,
       data.parent_id || null,
       status
     ).run();
@@ -296,10 +308,10 @@ export const postComment = async (c: Context<{ Bindings: Bindings }>) => {
       c.executionCtx.waitUntil((async () => {
         try {
           if (data.parent_id) {
-            // 回复逻辑：查询父评论信息
+            // 回复逻辑：查询父评论信息（含渲染后的 HTML，供 {{parentCommentHtml}} 使用）
             const parentComment = await c.env.MOMO_DB.prepare(
-              "SELECT author, email, content_text FROM Comment WHERE id = ?"
-            ).bind(data.parent_id).first<{ author: string, email: string, content_text: string }>();
+              "SELECT author, email, content_text, content_html FROM Comment WHERE id = ?"
+            ).bind(data.parent_id).first<{ author: string, email: string, content_text: string, content_html: string }>();
 
             if (parentComment && parentComment.email !== data.email) {
               await sendCommentReplyNotification(c.env, {
@@ -307,18 +319,21 @@ export const postComment = async (c: Context<{ Bindings: Bindings }>) => {
                 toName: parentComment.author,
                 postTitle: postTitle,
                 parentComment: parentComment.content_text,
+                parentCommentHtml: parentComment.content_html,
                 replyAuthor: author,
                 replyContent: content,
+                replyContentHtml: contentHtml,
                 postUrl: postUrl,
               });
             }
           } else {
-            // 新评论通知站长
+            // 新评论通知站长（收件人 = 解析后的 notify_email）
             await sendCommentNotification(c.env, {
               postTitle: postTitle,
               postUrl: postUrl,
               commentAuthor: author,
-              commentContent: content
+              commentContent: content,
+              commentContentHtml: contentHtml,
             });
           }
         } catch (mailError) {
@@ -328,6 +343,21 @@ export const postComment = async (c: Context<{ Bindings: Bindings }>) => {
     }else{
       console.log("No SMTP configuration found. Skipping email notification.");
     }
+
+    // 5.1 历史链接批量更新（doc/link_security.md 第 3 节）：满足全部条件才写待确认记录 + 异步发确认邮件，
+    // 不阻塞评论提交，也不改任何历史评论。
+    await requestLinkSyncIfNeeded(
+      c.env,
+      {
+        email: normalizeEmail(data.email),
+        newUrl: url,
+        author,
+        postTitle,
+        postUrl,
+        baseUrl: await resolveBaseUrl(c),
+      },
+      (promise) => c.executionCtx.waitUntil(promise)
+    );
 
     return c.json({
       code: 200,

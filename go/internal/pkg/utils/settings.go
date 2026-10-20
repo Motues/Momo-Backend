@@ -36,6 +36,8 @@ var (
 var allowedSettings = map[string]bool{
 	"site_name":             true,
 	"admin_email":           true,
+	"admin_emails":          true,
+	"notify_email":          true,
 	"admin_name":            true,
 	"smtp_host":             true,
 	"smtp_port":             true,
@@ -64,6 +66,8 @@ var allowedSettings = map[string]bool{
 	"admin_comment_key_enabled":      true,
 	"email_verify_enabled":           true,
 	"verify_base_url":                true,
+	// 外发邮件日志（面板「邮件管理」）的保留天数：0 = 永久保留
+	"mail_log_retention_days":        true,
 	"comment_verify_enabled":         true,
 	"comment_verify_difficulty":      true,
 	"comment_verify_instr_enabled":   true,
@@ -74,9 +78,15 @@ var allowedSettings = map[string]bool{
 	"comment_verify_retention_days": true,
 	"comment_verify_log_challenge":  true,
 	"trust_proxy":                   true,
-	// 表情（OwO 来源，见 doc/emoji.md）：是否启用 + 表情来源地址
-	"emoji_enabled": true,
-	"emoji_cdn_url": true,
+	// 表情（OwO 来源，见 doc/emoji.md）：是否启用 + 表情来源地址数组（+ 兼容用的旧单地址键）
+	"emoji_enabled":  true,
+	"emoji_cdn_urls": true,
+	"emoji_cdn_url":  true,
+	// 链接安全审查（休眠链接 + 历史链接批量更新 + 休眠提醒邮件，见 doc/link_security.md）
+	"link_security_enabled":       true,
+	"link_dormant_days":           true,
+	"link_sync_enabled":           true,
+	"link_dormant_notice_enabled": true,
 }
 
 // IsAllowedSetting 判断某个设置键是否允许通过后台接口读写。

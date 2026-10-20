@@ -1,0 +1,477 @@
+{
+  "version": 1,
+  "note": "链接安全审查契约 v1：四个设置键（开关 fail-closed、休眠天数 1-3650 默认 30）、休眠判定（严格大于 N 天、再次评论自动解除）、人工确认豁免（有效期 = 确认时的休眠天数，读取时严格大于当前时间）与休眠提醒邮件的发信前提（总开关 + 提醒开关 + 邮箱验证）三端必须逐条一致。由 scripts/gen-link-security-vectors.js 生成，请勿手改。",
+  "keys": {
+    "securityEnabled": "link_security_enabled",
+    "dormantDays": "link_dormant_days",
+    "syncEnabled": "link_sync_enabled",
+    "dormantNotice": "link_dormant_notice_enabled"
+  },
+  "defaults": {
+    "securityEnabled": "false",
+    "dormantDays": 30,
+    "syncEnabled": "false",
+    "dormantNoticeEnabled": "false"
+  },
+  "limits": {
+    "minDormantDays": 1,
+    "maxDormantDays": 3650,
+    "dayMs": 86400000
+  },
+  "errors": {
+    "securityEnabled": "link_security_enabled 只能是 true 或 false",
+    "syncEnabled": "link_sync_enabled 只能是 true 或 false",
+    "dormantNoticeEnabled": "link_dormant_notice_enabled 只能是 true 或 false",
+    "dormantDays": "link_dormant_days 必须是 1-3650 之间的整数"
+  },
+  "switches": {
+    "valid": [
+      "",
+      "   ",
+      "true",
+      "false",
+      " true ",
+      " TRUE ",
+      "False",
+      null
+    ],
+    "invalid": [
+      "1",
+      "0",
+      "yes",
+      "on",
+      "true1",
+      "false1",
+      "null",
+      "否"
+    ]
+  },
+  "days": {
+    "valid": [
+      "1",
+      "30",
+      "3650",
+      " 30 ",
+      1,
+      3650
+    ],
+    "invalid": [
+      "",
+      "   ",
+      "0",
+      "-1",
+      "3651",
+      "abc",
+      "1.5",
+      "30d",
+      "1e3",
+      null
+    ],
+    "resolve": [
+      {
+        "stored": "",
+        "expect": 30
+      },
+      {
+        "stored": "   ",
+        "expect": 30
+      },
+      {
+        "stored": "abc",
+        "expect": 30
+      },
+      {
+        "stored": "0",
+        "expect": 30
+      },
+      {
+        "stored": "-5",
+        "expect": 30
+      },
+      {
+        "stored": "1.5",
+        "expect": 30
+      },
+      {
+        "stored": "1",
+        "expect": 1
+      },
+      {
+        "stored": " 30 ",
+        "expect": 30
+      },
+      {
+        "stored": "3650",
+        "expect": 3650
+      },
+      {
+        "stored": "99999",
+        "expect": 3650
+      }
+    ]
+  },
+  "dormant": [
+    {
+      "name": "功能关闭：一律不标记",
+      "enabled": "false",
+      "hasUrl": true,
+      "days": "30",
+      "ageMs": 7776000000,
+      "expect": false
+    },
+    {
+      "name": "开关是脏值：fail-closed 不标记",
+      "enabled": "yes",
+      "hasUrl": true,
+      "days": "30",
+      "ageMs": 7776000000,
+      "expect": false
+    },
+    {
+      "name": "开关大小写：TRUE 才开启",
+      "enabled": " TRUE ",
+      "hasUrl": true,
+      "days": "30",
+      "ageMs": 7776000000,
+      "expect": true
+    },
+    {
+      "name": "该评论没有个人网址：不标记",
+      "enabled": "true",
+      "hasUrl": false,
+      "days": "30",
+      "ageMs": 7776000000,
+      "expect": false
+    },
+    {
+      "name": "最后评论时间未知：不标记（fail-open）",
+      "enabled": "true",
+      "hasUrl": true,
+      "days": "30",
+      "ageMs": null,
+      "expect": false
+    },
+    {
+      "name": "刚好 N 天：不标记（严格大于）",
+      "enabled": "true",
+      "hasUrl": true,
+      "days": "30",
+      "ageMs": 2592000000,
+      "expect": false
+    },
+    {
+      "name": "N 天 + 1 毫秒：标记",
+      "enabled": "true",
+      "hasUrl": true,
+      "days": "30",
+      "ageMs": 2592000001,
+      "expect": true
+    },
+    {
+      "name": "N 天 + 1 天：标记",
+      "enabled": "true",
+      "hasUrl": true,
+      "days": "30",
+      "ageMs": 2678400000,
+      "expect": true
+    },
+    {
+      "name": "刚评论过：不标记",
+      "enabled": "true",
+      "hasUrl": true,
+      "days": "30",
+      "ageMs": 60000,
+      "expect": false
+    },
+    {
+      "name": "天数脏值回退 30：31 天前评论 → 标记",
+      "enabled": "true",
+      "hasUrl": true,
+      "days": "abc",
+      "ageMs": 2678400000,
+      "expect": true
+    },
+    {
+      "name": "天数 0 回退 30：29 天前评论 → 不标记",
+      "enabled": "true",
+      "hasUrl": true,
+      "days": "0",
+      "ageMs": 2505600000,
+      "expect": false
+    },
+    {
+      "name": "天数上限 3650：3651 天前评论 → 标记",
+      "enabled": "true",
+      "hasUrl": true,
+      "days": "3650",
+      "ageMs": 315446400000,
+      "expect": true
+    },
+    {
+      "name": "天数上限 3650：3650 天前评论 → 不标记",
+      "enabled": "true",
+      "hasUrl": true,
+      "days": "3650",
+      "ageMs": 315360000000,
+      "expect": false
+    }
+  ],
+  "emailNormalize": [
+    {
+      "input": "  A@B.com ",
+      "expect": "a@b.com"
+    },
+    {
+      "input": "a@b.com",
+      "expect": "a@b.com"
+    },
+    {
+      "input": "",
+      "expect": ""
+    }
+  ],
+  "trust": {
+    "nowMs": 1793491200000,
+    "expiresFormat": "YYYY-MM-DDTHH:mm:ss.sssZ（与 new Date(ms).toISOString() 逐字一致）",
+    "active": [
+      {
+        "name": "到期时间在未来：有效（豁免休眠）",
+        "expiresAt": "2026-11-17T00:00:00.000Z",
+        "nowMs": 1793491200000,
+        "expect": true
+      },
+      {
+        "name": "到期时间恰好等于现在：已过期（严格大于）",
+        "expiresAt": "2026-11-01T00:00:00.000Z",
+        "nowMs": 1793491200000,
+        "expect": false
+      },
+      {
+        "name": "到期时间早 1 毫秒：已过期",
+        "expiresAt": "2026-10-31T23:59:59.999Z",
+        "nowMs": 1793491200000,
+        "expect": false
+      },
+      {
+        "name": "空串：无效（fail-closed，不豁免）",
+        "expiresAt": "",
+        "nowMs": 1793491200000,
+        "expect": false
+      },
+      {
+        "name": "纯空白：无效",
+        "expiresAt": "   ",
+        "nowMs": 1793491200000,
+        "expect": false
+      },
+      {
+        "name": "null：无效",
+        "expiresAt": null,
+        "nowMs": 1793491200000,
+        "expect": false
+      },
+      {
+        "name": "无法解析：无效",
+        "expiresAt": "not-a-date",
+        "nowMs": 1793491200000,
+        "expect": false
+      },
+      {
+        "name": "缺毫秒的 ISO 串：无效（必须与写入格式逐字一致）",
+        "expiresAt": "2026-11-17T00:00:00Z",
+        "nowMs": 1793491200000,
+        "expect": false
+      },
+      {
+        "name": "只有日期：无效",
+        "expiresAt": "2026-11-17",
+        "nowMs": 1793491200000,
+        "expect": false
+      },
+      {
+        "name": "数字时间戳字符串：无效（只接受 ISO 串）",
+        "expiresAt": "1794960000000",
+        "nowMs": 1793491200000,
+        "expect": false
+      },
+      {
+        "name": "带时区偏移：无效（只接受 Z）",
+        "expiresAt": "2026-11-17T08:00:00.000+08:00",
+        "nowMs": 1793491200000,
+        "expect": false
+      }
+    ],
+    "dormantOverride": [
+      {
+        "name": "人工确认有效：即使超过 N 天也不标记休眠",
+        "enabled": "true",
+        "hasUrl": true,
+        "days": "30",
+        "ageMs": 7776000000,
+        "trusted": true,
+        "expect": false
+      },
+      {
+        "name": "人工确认已过期：照常标记休眠",
+        "enabled": "true",
+        "hasUrl": true,
+        "days": "30",
+        "ageMs": 7776000000,
+        "trusted": false,
+        "expect": true
+      },
+      {
+        "name": "功能关闭：一切都不标记（人工确认与否都一样）",
+        "enabled": "false",
+        "hasUrl": true,
+        "days": "30",
+        "ageMs": 7776000000,
+        "trusted": true,
+        "expect": false
+      },
+      {
+        "name": "人工确认有效：刚过 N 天 1 毫秒也豁免",
+        "enabled": "true",
+        "hasUrl": true,
+        "days": "30",
+        "ageMs": 2592000001,
+        "trusted": true,
+        "expect": false
+      },
+      {
+        "name": "未超 N 天：本来就休眠不了",
+        "enabled": "true",
+        "hasUrl": true,
+        "days": "30",
+        "ageMs": 2505600000,
+        "trusted": false,
+        "expect": false
+      }
+    ]
+  },
+  "notice": {
+    "needNotify": [
+      {
+        "name": "不休眠：不提醒（没有记录也不提醒）",
+        "dormant": false,
+        "hasRecord": false,
+        "recordExpired": false,
+        "recordLastCommentAt": null,
+        "currentLastCommentAt": 1000,
+        "expect": false
+      },
+      {
+        "name": "休眠且从没提醒过：提醒",
+        "dormant": true,
+        "hasRecord": false,
+        "recordExpired": false,
+        "recordLastCommentAt": null,
+        "currentLastCommentAt": 1000,
+        "expect": true
+      },
+      {
+        "name": "休眠 + 记录有效 + 最后评论时间未变：同一休眠周期，不重复提醒",
+        "dormant": true,
+        "hasRecord": true,
+        "recordExpired": false,
+        "recordLastCommentAt": 1000,
+        "currentLastCommentAt": 1000,
+        "expect": false
+      },
+      {
+        "name": "休眠 + 记录有效 + 最后评论时间变了（他后来又评论过）：新的休眠周期，再提醒",
+        "dormant": true,
+        "hasRecord": true,
+        "recordExpired": false,
+        "recordLastCommentAt": 1000,
+        "currentLastCommentAt": 2000,
+        "expect": true
+      },
+      {
+        "name": "休眠 + 记录已过期 + 时间未变：刷新令牌后再提醒",
+        "dormant": true,
+        "hasRecord": true,
+        "recordExpired": true,
+        "recordLastCommentAt": 1000,
+        "currentLastCommentAt": 1000,
+        "expect": true
+      },
+      {
+        "name": "休眠 + 记录已过期 + 时间变了：再提醒",
+        "dormant": true,
+        "hasRecord": true,
+        "recordExpired": true,
+        "recordLastCommentAt": 1000,
+        "currentLastCommentAt": 2000,
+        "expect": true
+      },
+      {
+        "name": "不休眠但记录里的时间变了：不提醒",
+        "dormant": false,
+        "hasRecord": true,
+        "recordExpired": false,
+        "recordLastCommentAt": 1000,
+        "currentLastCommentAt": 2000,
+        "expect": false
+      }
+    ],
+    "sendGate": [
+      {
+        "name": "三个前提都开启：发信",
+        "securityEnabled": "true",
+        "noticeEnabled": "true",
+        "emailVerifyEnabled": "true",
+        "expect": true
+      },
+      {
+        "name": "提醒开关关闭：不发（即使链接安全与邮箱验证都开着）",
+        "securityEnabled": "true",
+        "noticeEnabled": "false",
+        "emailVerifyEnabled": "true",
+        "expect": false
+      },
+      {
+        "name": "提醒开关是脏值：fail-closed 不发",
+        "securityEnabled": "true",
+        "noticeEnabled": "yes",
+        "emailVerifyEnabled": "true",
+        "expect": false
+      },
+      {
+        "name": "邮箱验证关闭：不发（需求里的硬前提）",
+        "securityEnabled": "true",
+        "noticeEnabled": "true",
+        "emailVerifyEnabled": "false",
+        "expect": false
+      },
+      {
+        "name": "邮箱验证未配置（空串）：不发",
+        "securityEnabled": "true",
+        "noticeEnabled": "true",
+        "emailVerifyEnabled": "",
+        "expect": false
+      },
+      {
+        "name": "链接安全总开关关闭：不发",
+        "securityEnabled": "false",
+        "noticeEnabled": "true",
+        "emailVerifyEnabled": "true",
+        "expect": false
+      },
+      {
+        "name": "全都未配置：不发",
+        "securityEnabled": "",
+        "noticeEnabled": "",
+        "emailVerifyEnabled": "",
+        "expect": false
+      },
+      {
+        "name": "大小写与空格：TRUE 视为开启（三处同一归一化）",
+        "securityEnabled": " TRUE ",
+        "noticeEnabled": "True",
+        "emailVerifyEnabled": " true ",
+        "expect": true
+      }
+    ]
+  }
+}

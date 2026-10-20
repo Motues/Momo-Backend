@@ -96,12 +96,14 @@ func (h *CommentHandler) GetSettings(c *gin.Context) {
 
 	// 按模块分组
 	settingsGroups := map[string][]string{
-		"basic":    {"site_name", "admin_email", "comment_auto_approve", "comment_spam_keywords", "comment_spam_max_links", "comment_spam_min_length", "comment_spam_duplicate_window", "blogger_badge_enabled", "blogger_badge_text", "placeholder_name", "placeholder_email", "placeholder_content", "placeholder_url"},
-		"email":    {"smtp_host", "smtp_port", "email_user", "email_password", "email_secure", "email_enabled", "email_verify_enabled", "verify_base_url", "reply_template", "notification_template"},
+		"basic":    {"site_name", "admin_email", "admin_emails", "notify_email", "comment_auto_approve", "comment_spam_keywords", "comment_spam_max_links", "comment_spam_min_length", "comment_spam_duplicate_window", "blogger_badge_enabled", "blogger_badge_text", "placeholder_name", "placeholder_email", "placeholder_content", "placeholder_url"},
+		"email":    {"smtp_host", "smtp_port", "email_user", "email_password", "email_secure", "email_enabled", "email_verify_enabled", "verify_base_url", "mail_log_retention_days", "reply_template", "notification_template"},
 		"security": {"allow_origin", "admin_comment_key", "admin_comment_key_enabled", "ip_blacklist", "email_blacklist", "comment_verify_enabled", "comment_verify_difficulty", "comment_verify_instr_enabled", "comment_verify_block_automated", "comment_verify_domain_enabled", "comment_verify_retention_days", "comment_verify_log_challenge", "trust_proxy"},
 		"account":  {"admin_name"},
-		// 表情设置：是否启用 + OwO 来源地址（见 doc/emoji.md）
-		"emoji": {"emoji_enabled", "emoji_cdn_url"},
+		// 表情设置：是否启用 + OwO 来源地址数组（外加兼容用的旧单地址键，见 doc/emoji.md）
+		"emoji": {"emoji_enabled", "emoji_cdn_urls", "emoji_cdn_url"},
+		// 链接安全审查：休眠链接 + 历史链接批量更新 + 休眠提醒邮件（见 doc/link_security.md）
+		"link": {"link_security_enabled", "link_dormant_days", "link_sync_enabled", "link_dormant_notice_enabled"},
 	}
 
 	// 支持按 type 参数过滤
@@ -168,50 +170,20 @@ func (h *CommentHandler) UpdateSettings(c *gin.Context) {
 		}
 	}
 
-	// 黑名单格式校验：非法条目会让规则失效甚至误伤全部 IP，必须在入口拦下
-	if raw, ok := body["ip_blacklist"]; ok && !utils.ValidateIPBlacklistJSON(raw) {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "ip_blacklist must be a JSON array of valid IP or CIDR strings",
-		})
-		return
-	}
-
-	// 审核自动化规则同样必须在入口校验：一个非数字阈值或坏掉的关键词数组
-	// 会让规则静默失效，甚至把全站评论都判为垃圾
-	if msg := validateSpamSettingsInBody(body); msg != "" {
+	// 写入校验与归一化：PUT 与导入接口共用同一套（doc/emoji.md 第 3.1 节、
+	// doc/admin_emails.md 第 3 节、doc/link_security.md 第 1.1 节）
+	normalized, msg := normalizeSettingsWrite(body)
+	if msg != "" {
 		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": msg})
 		return
 	}
 
-	// 表情开关只接受 true / false（归一化后），否则前端会拿到一个无法解释的值（口径见 doc/emoji.md）
-	if raw, ok := body["emoji_enabled"]; ok {
-		if msg := utils.ValidateEmojiEnabled(raw); msg != "" {
-			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": msg})
-			return
-		}
-	}
-	if raw, ok := body["emoji_cdn_url"]; ok {
-		if msg := utils.ValidateEmojiCdnURL(raw); msg != "" {
-			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": msg})
-			return
-		}
-	}
-
 	smtpChanged := body["smtp_host"] != "" || body["smtp_port"] != "" || body["email_user"] != "" || body["email_password"] != ""
 
-	for key, value := range body {
+	for key, value := range normalized {
 		// Bug fix: 邮箱密码为空时不覆盖已有密码
 		if key == "email_password" && value == "" {
 			continue
-		}
-		// 地址两侧的空格会让前端 fetch 拿到一个畸形 URL，这里顺手归一化；
-		// 开关同样存归一化后的值（小写、去空白），读取路径才不必反复纠错
-		if key == "emoji_cdn_url" {
-			value = strings.TrimSpace(value)
-		}
-		if key == "emoji_enabled" {
-			value = utils.NormalizeEmojiEnabled(value)
 		}
 		if err := utils.SetSetting(key, value); err != nil {
 			log.Printf("[ERROR] Failed to update setting %s: %v", key, err)
@@ -232,7 +204,8 @@ func (h *CommentHandler) UpdateSettings(c *gin.Context) {
 }
 
 func (h *CommentHandler) TestEmail(c *gin.Context) {
-	adminEmail := utils.GetSetting("admin_email")
+	// 收件人是解析后的 notify_email（未配置时回落到管理员列表第一个）
+	adminEmail := utils.ResolveNotifyEmailFromSettings()
 	if adminEmail == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    400,
@@ -265,7 +238,7 @@ func (h *CommentHandler) TestEmail(c *gin.Context) {
 		"<hr style=\"border: none; border-top: 1px solid #eee; margin: 24px 0;\">" +
 		"<p style=\"color: #999; font-size: 12px;\">此邮件由系统自动发送，请勿直接回复。</p></div>"
 
-	if err := svc.SendRaw(adminEmail, "SMTP 配置验证", htmlContent); err != nil {
+	if err := svc.SendRaw(utils.MailTypeTest, adminEmail, "SMTP 配置验证", htmlContent); err != nil {
 		log.Printf("[ERROR] Test email failed: %v", err)
 		// HTTP 状态码与响应体 code 必须一致（C8）
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -572,7 +545,11 @@ func (h *CommentHandler) GetStatsOverview(c *gin.Context) {
 	})
 }
 
-// GetUserList 用户列表（支持按昵称/邮箱搜索，标记黑名单状态）
+// GetUserList 用户列表（支持按昵称/邮箱搜索、按邮箱验证与「网站链接」状态筛选，标记黑名单状态）。
+//
+// 链接状态筛选（linkStatus=dormant/trusted/normal/none）**必须发生在分页之前**：链接状态是按
+// 归一化邮箱实时推导的，因此这里给「全部匹配用户」算一次状态、过滤，再切片分页 ——
+// 每次请求仍然只有一次用户分组查询 + 一次链接状态查询 + 一次人工确认查询（无 N+1）。
 func (h *CommentHandler) GetUserList(c *gin.Context) {
 	pageStr := c.DefaultQuery("page", "1")
 	page, err := strconv.Atoi(pageStr)
@@ -598,15 +575,68 @@ func (h *CommentHandler) GetUserList(c *gin.Context) {
 		verified = "all"
 	}
 
-	offset := (page - 1) * limit
-	users, total, err := h.Repo.GetUserList(c.Request.Context(), offset, limit, search, verified)
+	// 链接状态筛选：all（默认）/ dormant / trusted / normal / none，无法识别的取值按 all 处理
+	// （与 verified 的宽容口径一致）。
+	linkStatusFilter := strings.ToLower(strings.TrimSpace(c.DefaultQuery("linkStatus", "all")))
+	switch linkStatusFilter {
+	case "dormant", "trusted", "normal", "none":
+	default:
+		linkStatusFilter = "all"
+	}
+
+	users, err := h.Repo.GetUserList(c.Request.Context(), search, verified)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "Failed to fetch users"})
 		return
 	}
 
-	// 标记邮箱黑名单状态（不区分大小写）
+	// 链接安全审查（doc/link_security.md 第 2 节）：全部用户按**归一化邮箱**取
+	// 「最新非空网址 + 最后一条评论时间」，只做一次有序查询再在 Go 里折叠，不逐行查询。
+	// 功能关闭时 urlDormant 恒为 false，但 url 仍然下发（后台照样能看到用户留的链接）。
+	linkSecurityEnabled := utils.ResolveLinkSecurityEnabled(utils.GetSetting(utils.LinkSecurityEnabledKey))
+	linkDormantDays := utils.ResolveLinkDormantDays(utils.GetSetting(utils.LinkDormantDaysKey))
+
+	emails := make([]string, 0, len(users))
+	seenEmails := make(map[string]bool, len(users))
+	for _, u := range users {
+		email := utils.NormalizeEmail(u.Email)
+		if email == "" || seenEmails[email] {
+			continue
+		}
+		seenEmails[email] = true
+		emails = append(emails, email)
+	}
+
+	linkStatus := make(map[string]model.UserLinkStatus, len(emails))
+	if len(emails) > 0 {
+		result, err := h.Repo.LinkStatusByEmails(c.Request.Context(), emails)
+		if err != nil {
+			// 查询失败只记日志：链接状态是提示性字段，不能让用户列表整体 500；
+			// 与公开评论区一致，本次一律按「查不到」处理（fail-open，不标记休眠）
+			log.Printf("[WARN] 用户列表链接状态查询失败，本次一律不标记: %v", err)
+		} else {
+			linkStatus = result
+		}
+	}
+	nowMillisValue := nowMillis()
+
+	// 人工确认（TrustedLink，见 doc/link_security.md 第 4 节）：同样按「全部邮箱集合」
+	// 一次查询取回**未过期**的确认，避免 N+1。查询失败按「没有确认」处理（不豁免休眠）。
+	// 无论 link_security_enabled 是否开启都下发 urlTrustedUntil / urlTrustedSource：
+	// 功能关着时写入的确认在功能开启后依然生效，面板也该看得到。
+	trustedLinks := make(map[string]model.TrustedLinkInfo, len(emails))
+	if len(emails) > 0 {
+		result, err := h.Repo.TrustedLinksByEmails(c.Request.Context(), emails, nowMillisValue)
+		if err != nil {
+			log.Printf("[WARN] 用户列表人工确认查询失败，本次一律按未确认处理: %v", err)
+		} else {
+			trustedLinks = result
+		}
+	}
+
+	// 标记邮箱黑名单状态（不区分大小写），并计算链接状态（过滤要用）。
 	emailBlacklist := getEmailBlacklist()
+	filtered := make([]*model.UserStats, 0, len(users))
 	for _, u := range users {
 		for _, entry := range emailBlacklist {
 			if strings.EqualFold(entry, u.Email) {
@@ -614,7 +644,33 @@ func (h *CommentHandler) GetUserList(c *gin.Context) {
 				break
 			}
 		}
+
+		// 身份是邮箱本身：共享同一邮箱的多行（不同昵称）下发同一个链接状态
+		link, known := linkStatus[utils.NormalizeEmail(u.Email)]
+		u.URL = link.LatestURL
+		// 人工确认只对「最近一次非空网址」生效：换过网址就不继承（键按逐字相等比对），
+		// 未过期的确认原样下发 expires_at / source，否则空字符串（不是 null，形状稳定）
+		u.URLTrustedUntil = ""
+		u.URLTrustedSource = ""
+		if u.URL != "" {
+			if info, ok := trustedLinks[utils.TrustedLinkKey(u.Email, u.URL)]; ok {
+				u.URLTrustedUntil = info.ExpiresAt
+				u.URLTrustedSource = info.Source
+			}
+		}
+		u.URLDormant = utils.IsUrlDormant(
+			linkSecurityEnabled, u.URL != "", linkDormantDays, nowMillisValue-link.LastAt, known,
+			u.URLTrustedUntil != "")
+
+		if userMatchesLinkStatus(linkStatusFilter, u) {
+			filtered = append(filtered, u)
+		}
 	}
+
+	// 过滤完成后再切片分页：totalPage 反映的是过滤后的集合
+	total := int64(len(filtered))
+	start, end := slicePagination(int(total), page, limit)
+	pageUsers := filtered[start:end]
 
 	totalPage := int64((total + int64(limit) - 1) / int64(limit))
 	if total == 0 {
@@ -625,7 +681,7 @@ func (h *CommentHandler) GetUserList(c *gin.Context) {
 		"code":    200,
 		"message": "Users fetched successfully",
 		"data": gin.H{
-			"users": users,
+			"users": pageUsers,
 			"pagination": gin.H{
 				"page":      page,
 				"limit":     limit,
@@ -633,6 +689,28 @@ func (h *CommentHandler) GetUserList(c *gin.Context) {
 			},
 		},
 	})
+}
+
+// userMatchesLinkStatus 判断某一行用户是否命中 linkStatus 筛选（口径见任务规范第 7 节）：
+//
+//	none    没有留下过链接；
+//	trusted 有链接且存在未过期的人工确认（与 urlTrustedUntil 同一条件，与功能开关无关）；
+//	dormant 有链接、未被确认、且按既有口径判为休眠；
+//	normal  有链接且既不休眠也未处于人工确认中；
+//	all     不筛选。
+func userMatchesLinkStatus(filter string, u *model.UserStats) bool {
+	switch filter {
+	case "none":
+		return u.URL == ""
+	case "trusted":
+		return u.URL != "" && u.URLTrustedUntil != ""
+	case "dormant":
+		return u.URL != "" && u.URLTrustedUntil == "" && u.URLDormant
+	case "normal":
+		return u.URL != "" && u.URLTrustedUntil == "" && !u.URLDormant
+	default:
+		return true
+	}
 }
 
 // getEmailBlacklist 读取邮箱黑名单（JSON 数组）
@@ -830,6 +908,101 @@ func validateSpamSettingsInBody(body map[string]string) string {
 	return ""
 }
 
+// normalizeSettingsWrite 对请求体中的设置做**同一套**写入校验与归一化，
+// 返回「键 → 归一化后的值」映射；msg 非空表示整批拒绝（不落库）。
+//
+// PUT /admin/settings 与 POST /admin/data/import/settings 共用：
+//   - ip_blacklist / 审核自动化规则：非法条目会让规则静默失效，必须在入口拦下；
+//   - emoji_enabled / emoji_cdn_urls / emoji_cdn_url（doc/emoji.md 第 3.1 节）；
+//   - admin_emails / notify_email（doc/admin_emails.md 第 3 节）；
+//   - link_security_enabled / link_dormant_days / link_sync_enabled（doc/link_security.md 第 1.1 节）。
+//
+// 校验顺序固定，保证同一次请求里多个键非法时错误信息稳定（不依赖 map 迭代顺序）。
+func normalizeSettingsWrite(body map[string]string) (map[string]string, string) {
+	normalized := make(map[string]string, len(body))
+	for key, value := range body {
+		normalized[key] = value
+	}
+
+	// 黑名单格式校验：非法条目会让规则失效甚至误伤全部 IP
+	if raw, ok := body["ip_blacklist"]; ok && !utils.ValidateIPBlacklistJSON(raw) {
+		return nil, "ip_blacklist must be a JSON array of valid IP or CIDR strings"
+	}
+
+	// 审核自动化规则同样必须在入口校验：一个非数字阈值或坏掉的关键词数组
+	// 会让规则静默失效，甚至把全站评论都判为垃圾
+	if msg := validateSpamSettingsInBody(body); msg != "" {
+		return nil, msg
+	}
+
+	// 表情：开关只接受 true / false；地址数组必须是 JSON 数组（最多 5 个 http/https 地址）
+	if raw, ok := body["emoji_enabled"]; ok {
+		if msg := utils.ValidateEmojiEnabled(raw); msg != "" {
+			return nil, msg
+		}
+		normalized["emoji_enabled"] = utils.NormalizeEmojiEnabled(raw)
+	}
+	if raw, ok := body["emoji_cdn_url"]; ok {
+		if msg := utils.ValidateEmojiCdnURL(raw); msg != "" {
+			return nil, msg
+		}
+		normalized["emoji_cdn_url"] = strings.TrimSpace(raw)
+	}
+	if raw, ok := body["emoji_cdn_urls"]; ok {
+		value, msg := utils.ValidateEmojiCdnURLs(raw)
+		if msg != "" {
+			return nil, msg
+		}
+		normalized["emoji_cdn_urls"] = value
+	}
+
+	// 管理员邮箱：同一次请求里若同时提交了 admin_emails，notify_email 必须用**新列表**判定
+	admins := utils.ResolveAdminEmails(utils.GetSetting(utils.AdminEmailsKey), utils.GetSetting(utils.AdminEmailKey))
+	if raw, ok := body[utils.AdminEmailsKey]; ok {
+		value, msg := utils.ValidateAdminEmails(raw)
+		if msg != "" {
+			return nil, msg
+		}
+		normalized[utils.AdminEmailsKey] = value
+		admins = utils.ParseAdminEmails(value)
+	}
+	if raw, ok := body[utils.NotifyEmailKey]; ok {
+		value, msg := utils.ValidateNotifyEmail(raw, admins)
+		if msg != "" {
+			return nil, msg
+		}
+		normalized[utils.NotifyEmailKey] = value
+	}
+
+	// 链接安全审查：开关归一化后存 true/false（含休眠提醒邮件开关），休眠天数存规范化后的十进制整数
+	for _, key := range []string{utils.LinkSecurityEnabledKey, utils.LinkSyncEnabledKey, utils.LinkDormantNoticeEnabledKey} {
+		if raw, ok := body[key]; ok {
+			if msg := utils.ValidateLinkSwitch(key, raw); msg != "" {
+				return nil, msg
+			}
+			normalized[key] = utils.NormalizeLinkSwitch(raw)
+		}
+	}
+	if raw, ok := body[utils.LinkDormantDaysKey]; ok {
+		value, msg := utils.ValidateLinkDormantDays(raw)
+		if msg != "" {
+			return nil, msg
+		}
+		normalized[utils.LinkDormantDaysKey] = value
+	}
+
+	// 邮件日志保留天数：0–3650 的整数（0 = 永久保留），存规范化后的十进制
+	if raw, ok := body[utils.MailLogRetentionKey]; ok {
+		value, msg := utils.ValidateMailLogRetentionDays(raw)
+		if msg != "" {
+			return nil, msg
+		}
+		normalized[utils.MailLogRetentionKey] = value
+	}
+
+	return normalized, ""
+}
+
 // ExportSettings 导出系统设置（含 admin_name 与置空后的 email_password/admin_comment_key，不含 admin_password）
 func (h *CommentHandler) ExportSettings(c *gin.Context) {
 	all := utils.GetAllSettings()
@@ -841,7 +1014,7 @@ func (h *CommentHandler) ExportSettings(c *gin.Context) {
 	sensitiveOmitted := []string{}
 	allowList := map[string]bool{
 		// admin_name 也一并导出：否则「导出 → 导入」往返后管理员用户名会丢失（C12）
-		"site_name": true, "admin_email": true, "admin_name": true,
+		"site_name": true, "admin_email": true, "admin_emails": true, "notify_email": true, "admin_name": true,
 		"smtp_host": true, "smtp_port": true, "email_user": true, "email_password": true, "email_secure": true,
 		"admin_comment_key": true,
 		"allow_origin":      true, "email_enabled": true,
@@ -856,8 +1029,10 @@ func (h *CommentHandler) ExportSettings(c *gin.Context) {
 		"placeholder_url":                true,
 		"email_verify_enabled":           true,
 		"verify_base_url":                true,
-		"comment_auto_approve":           true,
-		"comment_spam_keywords":          true,
+		// 外发邮件日志保留天数（非敏感）：0 = 永久保留
+		"mail_log_retention_days": true,
+		"comment_auto_approve":    true,
+		"comment_spam_keywords":   true,
 		"comment_spam_max_links":         true,
 		"comment_spam_min_length":        true,
 		"comment_spam_duplicate_window":  true,
@@ -870,8 +1045,11 @@ func (h *CommentHandler) ExportSettings(c *gin.Context) {
 		"comment_verify_retention_days":  true,
 		"comment_verify_log_challenge":   true,
 		"trust_proxy":                    true,
-		// 表情设置：是否启用 + 来源地址（非敏感，正常导出）
-		"emoji_cdn_url": true, "emoji_enabled": true,
+		// 表情设置：是否启用 + 来源地址数组（+ 兼容用的旧单地址键），非敏感，正常导出
+		"emoji_cdn_urls": true, "emoji_cdn_url": true, "emoji_enabled": true,
+		// 链接安全审查：四个非敏感开关/阈值
+		"link_security_enabled": true, "link_dormant_days": true, "link_sync_enabled": true,
+		"link_dormant_notice_enabled": true,
 	}
 	for key := range allowList {
 		if val, ok := all[key]; ok {
@@ -1063,7 +1241,7 @@ func (h *CommentHandler) ImportSettings(c *gin.Context) {
 	}
 
 	allowList := map[string]bool{
-		"site_name": true, "admin_email": true, "admin_name": true,
+		"site_name": true, "admin_email": true, "admin_emails": true, "notify_email": true, "admin_name": true,
 		"smtp_host": true, "smtp_port": true, "email_user": true, "email_password": true, "email_secure": true,
 		"admin_comment_key":              true,
 		"ip_blacklist":                   true,
@@ -1076,8 +1254,10 @@ func (h *CommentHandler) ImportSettings(c *gin.Context) {
 		"placeholder_url":                true,
 		"email_verify_enabled":           true,
 		"verify_base_url":                true,
-		"comment_auto_approve":           true,
-		"comment_spam_keywords":          true,
+		// 外发邮件日志保留天数（非敏感）：0 = 永久保留
+		"mail_log_retention_days": true,
+		"comment_auto_approve":    true,
+		"comment_spam_keywords":   true,
 		"comment_spam_max_links":         true,
 		"comment_spam_min_length":        true,
 		"comment_spam_duplicate_window":  true,
@@ -1092,55 +1272,34 @@ func (h *CommentHandler) ImportSettings(c *gin.Context) {
 		"trust_proxy":                    true,
 		"allow_origin":                   true, "email_enabled": true,
 		"reply_template": true, "notification_template": true,
-		// 表情设置：是否启用 + 来源地址（非敏感，正常导入）
-		"emoji_cdn_url": true, "emoji_enabled": true,
+		// 表情设置：是否启用 + 来源地址数组（+ 兼容用的旧单地址键），非敏感，正常导入
+		"emoji_cdn_urls": true, "emoji_cdn_url": true, "emoji_enabled": true,
+		// 链接安全审查：四个非敏感开关/阈值
+		"link_security_enabled": true, "link_dormant_days": true, "link_sync_enabled": true,
+		"link_dormant_notice_enabled": true,
 	}
 
-	// 黑名单格式校验：非法条目会让规则失效甚至误伤全部 IP，必须在入口拦下
-	if raw, ok := body["ip_blacklist"]; ok && !utils.ValidateIPBlacklistJSON(raw) {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "ip_blacklist must be a JSON array of valid IP or CIDR strings",
-		})
-		return
+	// 导入文件可能来自不可信来源：先按白名单过滤（未知键静默忽略），
+	// 再走与 PUT /admin/settings **完全相同**的写入校验与归一化
+	filtered := make(map[string]string, len(body))
+	for key, value := range body {
+		if allowList[key] {
+			filtered[key] = value
+		}
 	}
 
-	// 审核自动化规则同样必须在入口校验（导入文件可能来自不可信来源）
-	if msg := validateSpamSettingsInBody(body); msg != "" {
+	normalized, msg := normalizeSettingsWrite(filtered)
+	if msg != "" {
 		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": msg})
 		return
-	}
-
-	// 表情设置：导入文件同样不可信，必须按同一套口径校验（见 doc/emoji.md 第 3.1 节）
-	if raw, ok := body["emoji_enabled"]; ok {
-		if msg := utils.ValidateEmojiEnabled(raw); msg != "" {
-			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": msg})
-			return
-		}
-	}
-	if raw, ok := body["emoji_cdn_url"]; ok {
-		if msg := utils.ValidateEmojiCdnURL(raw); msg != "" {
-			c.JSON(http.StatusBadRequest, gin.H{"code": 400, "message": msg})
-			return
-		}
 	}
 
 	// 契约与 Node/Worker 对齐（C12）：返回已更新的键名数组；空字符串照写（用于清空配置），
 	// 仅导出时被置空的敏感字段留空表示「未修改」
 	updated := make([]string, 0)
-	for key, value := range body {
-		if !allowList[key] {
-			continue
-		}
+	for key, value := range normalized {
 		if (key == "email_password" || key == "admin_comment_key") && value == "" {
 			continue
-		}
-		// 与 PUT /admin/settings 一致：地址去两侧空格，开关存归一化后的值
-		if key == "emoji_cdn_url" {
-			value = strings.TrimSpace(value)
-		}
-		if key == "emoji_enabled" {
-			value = utils.NormalizeEmojiEnabled(value)
 		}
 		if err := utils.SetSetting(key, value); err == nil {
 			updated = append(updated, key)

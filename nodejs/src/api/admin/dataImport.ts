@@ -3,8 +3,24 @@ import { db, schema } from "../../orm/client";
 import { setSetting } from "../../utils/settings";
 import { checkKey, extractToken, checkContent, sanitizeUrl, sanitizeHtml, isValidIpBlacklistJson } from "../../utils/security";
 import { validateSpamSettings } from "../../utils/spam";
-import { normalizeEmojiEnabled, validateEmojiCdnUrl, validateEmojiEnabled } from "../../utils/emoji";
+import { normalizeEmojiCdnUrls, normalizeEmojiEnabled, validateEmojiCdnUrl, validateEmojiCdnUrls, validateEmojiEnabled } from "../../utils/emoji";
+import {
+  getAdminEmailList,
+  normalizeAdminEmails,
+  normalizeEmail,
+  parseAdminEmails,
+  validateAdminEmails,
+  validateNotifyEmail,
+} from "../../utils/adminEmails";
+import {
+  LINK_SWITCH_KEYS,
+  normalizeLinkSwitch,
+  resolveDormantDays,
+  validateDormantDays,
+  validateLinkSwitch,
+} from "../../utils/linkSecurity";
 import { parseMarkdown } from "../../utils/markdown";
+import { resolveMailLogRetentionDays, validateMailLogRetentionDays } from "../../utils/mailLog";
 import { applyTrustProxySetting } from "../../utils/ip";
 import LogService from "../../utils/log";
 
@@ -182,6 +198,7 @@ export async function importSettings(c: Context): Promise<Response> {
     "admin_comment_key_enabled",
     "email_verify_enabled",
     "verify_base_url",
+    "mail_log_retention_days",
     "comment_verify_enabled",
     "comment_verify_difficulty",
     "comment_verify_instr_enabled",
@@ -192,6 +209,13 @@ export async function importSettings(c: Context): Promise<Response> {
     "trust_proxy",
     "emoji_enabled",
     "emoji_cdn_url",
+    "emoji_cdn_urls",
+    "admin_emails",
+    "notify_email",
+    "link_security_enabled",
+    "link_dormant_days",
+    "link_sync_enabled",
+    "link_dormant_notice_enabled",
   ]);
 
   if ("ip_blacklist" in body && !isValidIpBlacklistJson(String((body as any).ip_blacklist ?? ""))) {
@@ -220,6 +244,60 @@ export async function importSettings(c: Context): Promise<Response> {
       return c.json({ code: 400, message: cdnError }, 400);
     }
   }
+  if ("emoji_cdn_urls" in (body as Record<string, unknown>)) {
+    const cdnError = validateEmojiCdnUrls((body as Record<string, unknown>).emoji_cdn_urls);
+    if (cdnError) {
+      return c.json({ code: 400, message: cdnError }, 400);
+    }
+  }
+
+  // 多管理员邮箱：导入文件同样不可信（口径见 doc/admin_emails.md）
+  if ("admin_emails" in (body as Record<string, unknown>)) {
+    const adminError = validateAdminEmails((body as Record<string, unknown>).admin_emails);
+    if (adminError) {
+      return c.json({ code: 400, message: adminError }, 400);
+    }
+  }
+
+  // 链接安全审查：开关 fail-closed（含休眠提醒邮件开关）、天数 1–3650（口径见 doc/link_security.md）
+  for (const switchKey of LINK_SWITCH_KEYS) {
+    if (switchKey in (body as Record<string, unknown>)) {
+      const linkError = validateLinkSwitch((body as Record<string, unknown>)[switchKey], switchKey);
+      if (linkError) {
+        return c.json({ code: 400, message: linkError }, 400);
+      }
+    }
+  }
+  if ("link_dormant_days" in (body as Record<string, unknown>)) {
+    const daysError = validateDormantDays((body as Record<string, unknown>).link_dormant_days);
+    if (daysError) {
+      return c.json({ code: 400, message: daysError }, 400);
+    }
+  }
+
+  // 邮件日志保留天数：与 PUT /admin/settings 同一套校验（0–3650，0 = 永久保留）
+  if ("mail_log_retention_days" in (body as Record<string, unknown>)) {
+    const retentionError = validateMailLogRetentionDays(
+      (body as Record<string, unknown>).mail_log_retention_days
+    );
+    if (retentionError) {
+      return c.json({ code: 400, message: retentionError }, 400);
+    }
+  }
+
+  // 导入后的「管理员列表」用于校验通知邮箱：导入文件里带了 admin_emails 就用它，
+  // 否则用库里当前的列表（与 PUT /admin/settings 同一口径）
+  if ("notify_email" in (body as Record<string, unknown>)) {
+    const bodyRecord = body as Record<string, unknown>;
+    const effectiveAdmins =
+      "admin_emails" in bodyRecord
+        ? parseAdminEmails(normalizeAdminEmails(bodyRecord.admin_emails))
+        : await getAdminEmailList();
+    const notifyError = validateNotifyEmail(bodyRecord.notify_email, effectiveAdmins);
+    if (notifyError) {
+      return c.json({ code: 400, message: notifyError }, 400);
+    }
+  }
 
   const updated: string[] = [];
   for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
@@ -234,6 +312,38 @@ export async function importSettings(c: Context): Promise<Response> {
     }
     if (key === "emoji_enabled") {
       await setSetting(key, normalizeEmojiEnabled(value));
+      updated.push(key);
+      continue;
+    }
+    // 与 PUT /admin/settings 一致：数组键归一化后落库
+    if (key === "emoji_cdn_urls") {
+      await setSetting(key, normalizeEmojiCdnUrls(value));
+      updated.push(key);
+      continue;
+    }
+    if (key === "admin_emails") {
+      await setSetting(key, normalizeAdminEmails(value));
+      updated.push(key);
+      continue;
+    }
+    if (key === "notify_email") {
+      await setSetting(key, normalizeEmail(value));
+      updated.push(key);
+      continue;
+    }
+    if (LINK_SWITCH_KEYS.includes(key)) {
+      await setSetting(key, normalizeLinkSwitch(value));
+      updated.push(key);
+      continue;
+    }
+    if (key === "link_dormant_days") {
+      await setSetting(key, String(resolveDormantDays(value)));
+      updated.push(key);
+      continue;
+    }
+    // 邮件日志保留天数：存规范化后的十进制（0 = 永久保留）
+    if (key === "mail_log_retention_days") {
+      await setSetting(key, String(resolveMailLogRetentionDays(value)));
       updated.push(key);
       continue;
     }

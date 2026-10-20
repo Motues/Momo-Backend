@@ -3,7 +3,6 @@ package http
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -116,10 +115,10 @@ func (h *CommentHandler) PostComment(c *gin.Context) {
 		deviceStr = "Desktop"
 	}
 
-	// 2. 管理员身份判定（只依赖 admin_email）：
+	// 2. 管理员身份判定（admin_emails 列表，旧键 admin_email 为空时回落）：
 	// 必须早于限流与黑名单检查，因为管理员邮箱不受 60 秒评论冷却限制。
-	adminEmail := utils.GetSetting("admin_email")
-	isAdminEmail := adminEmail != "" && req.Email == adminEmail
+	admins := utils.ResolveAdminEmailsFromSettings()
+	isAdminEmail := utils.IsAdminEmail(req.Email, admins)
 
 	// 3. 检查评论频率控制 (60秒冷却，管理员邮箱不限流)
 	clientIP := utils.GetClientIP(c)
@@ -154,7 +153,7 @@ func (h *CommentHandler) PostComment(c *gin.Context) {
 		return
 	}
 
-	// 管理员评论密钥验证（adminEmail 已在上方读取）
+	// 管理员评论密钥验证（admins 已在上方读取）
 	adminCommentKey := utils.GetSetting("admin_comment_key")
 	adminCommentKeyEnabled := utils.GetSetting("admin_comment_key_enabled")
 	isAdminVerified := false
@@ -192,7 +191,11 @@ func (h *CommentHandler) PostComment(c *gin.Context) {
 	// 邮箱验证检查
 	needsVerification := false
 	emailVerifyEnabled := utils.GetSetting("email_verify_enabled")
-	if emailVerifyEnabled == "true" && !isAdminVerified && utils.GetService().IsAvailable() {
+	// 邮件服务实例在**请求协程内**解析好再交给 goroutine：
+	// GetService 会读若干设置（数据库读），放在 goroutine 里会与紧随其后的评论写入
+	// 争抢 SQLite 的写锁（并发读写提交阶段会拿到 SQLITE_BUSY）。
+	emailService := utils.GetService()
+	if emailVerifyEnabled == "true" && !isAdminVerified && emailService.IsAvailable() {
 		isVerified, err := h.Repo.CheckEmailVerified(c.Request.Context(), req.Email)
 		if err == nil && !isVerified {
 			needsVerification = true
@@ -203,27 +206,9 @@ func (h *CommentHandler) PostComment(c *gin.Context) {
 				token := hex.EncodeToString(tokenBytes)
 				expiresAt := time.Now().Add(24 * time.Hour).UTC().Format("2006-01-02T15:04:05.000Z")
 				_ = h.Repo.SaveVerificationToken(c.Request.Context(), req.Email, token, expiresAt, req.PostSlug, req.PostTitle)
-				// 优先使用手动配置的验证地址，否则从请求头推断
-					baseURL := utils.GetSetting("verify_base_url")
-					if baseURL == "" {
-						origin := c.GetHeader("Origin")
-						if origin == "" {
-							origin = c.Request.Host
-						}
-						if origin != "" && !strings.HasPrefix(origin, "http") {
-							if strings.Contains(origin, "localhost") || strings.Contains(origin, "127.0.0.1") {
-								origin = "http://" + origin
-							} else {
-								origin = "https://" + origin
-							}
-						}
-						baseURL = origin
-					}
-					baseURL = strings.TrimRight(baseURL, "/")
-					verifyURL := fmt.Sprintf("%s/api/verify-email/verify?token=%s&email=%s",
-						baseURL, url.QueryEscape(token), url.QueryEscape(req.Email))
+				verifyURL := buildVerifyEmailURL(c, token, req.Email)
 				go func() {
-					if err := utils.GetService().SendVerificationEmail(req.Email, req.Author, req.PostTitle, req.PostSlug, verifyURL); err != nil {
+					if err := emailService.SendVerificationEmail(req.Email, req.Author, req.PostTitle, req.PostSlug, verifyURL); err != nil {
 						log.Printf("验证邮件发送失败: %v", err)
 					}
 				}()
@@ -286,6 +271,7 @@ func (h *CommentHandler) PostComment(c *gin.Context) {
 
 	// 4. 写入数据库
 	if err := h.Repo.Create(c.Request.Context(), comment); err != nil {
+		log.Printf("[ERROR] 评论存储失败 (post_slug=%s): %v", req.PostSlug, err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    500,
 			"message": "存储失败",
@@ -293,8 +279,10 @@ func (h *CommentHandler) PostComment(c *gin.Context) {
 		return
 	}
 
-	// 发送邮件通知
-	if utils.GetService().IsAvailable() && utils.IsEmailEnabled() {
+	// 发送邮件通知（正文用渲染后的 HTML：净化过的 content_html + 短代码水合，见 doc/mail.md）
+	// 同样先在请求协程里解析好服务实例，goroutine 里就不再读设置表
+	notificationService := utils.GetService()
+	if notificationService.IsAvailable() && utils.IsEmailEnabled() {
 		go func() {
 			ctx := context.Background()
 
@@ -305,7 +293,7 @@ func (h *CommentHandler) PostComment(c *gin.Context) {
 					return
 				}
 				if parentComment.Email != req.Email {
-					err = utils.GetService().SendCommentReplyNotification(
+					err = notificationService.SendCommentReplyNotification(
 						parentComment.Email,
 						parentComment.Author,
 						sanitizedPostTitle,
@@ -313,6 +301,8 @@ func (h *CommentHandler) PostComment(c *gin.Context) {
 						sanitizedAuthor,
 						sanitizedContent,
 						sanitizedPostURL,
+						utils.HydrateEmailEmoji(parentComment.ContentHTML),
+						utils.HydrateEmailEmoji(comment.ContentHTML),
 					)
 					if err != nil {
 						log.Printf("Failed to send reply notification: %v", err)
@@ -321,11 +311,12 @@ func (h *CommentHandler) PostComment(c *gin.Context) {
 					}
 				}
 			} else {
-				err := utils.GetService().SendCommentNotification(
+				err := notificationService.SendCommentNotification(
 					sanitizedPostTitle,
 					sanitizedPostURL,
 					sanitizedAuthor,
 					sanitizedContent,
+					utils.HydrateEmailEmoji(comment.ContentHTML),
 				)
 				if err != nil {
 					log.Printf("Failed to send admin notification: %v", err)
@@ -335,6 +326,10 @@ func (h *CommentHandler) PostComment(c *gin.Context) {
 			}
 		}()
 	}
+
+	// 历史链接批量更新（doc/link_security.md 第 3 节）：满足全部开启条件时写一条待确认记录
+	// 并异步发确认邮件；不满足则什么都不做，评论照常落库。
+	h.maybeRequestLinkSync(c, req, sanitizedURL)
 
 	c.JSON(http.StatusOK, gin.H{
 		"code":    200,
@@ -346,6 +341,12 @@ func (h *CommentHandler) PostComment(c *gin.Context) {
 		}(),
 	})
 }
+
+// nowMillis 返回当前时间的毫秒值。
+//
+// 抽成包级变量是为了让「休眠链接」的边界用例（刚好 N 天 vs N 天 + 1 毫秒）
+// 能精确固定 now；生产路径就是 time.Now().UnixMilli()。
+var nowMillis = func() int64 { return time.Now().UnixMilli() }
 
 // 公开评论列表限流：缓解批量遍历 post_slug 采集博主邮箱哈希等爬取行为
 // （与 Node 的 getCommentBySlug.ts、Worker 的 getComments.ts 逐项一致：
@@ -387,7 +388,7 @@ func (h *CommentHandler) GetComments(c *gin.Context) {
 	}
 
 	// 读取博主标识设置
-	adminEmail := utils.GetSetting("admin_email")
+	admins := utils.ResolveAdminEmailsFromSettings()
 	badgeEnabled := utils.GetSetting("blogger_badge_enabled")
 	if badgeEnabled == "" {
 		badgeEnabled = "false"
@@ -397,9 +398,12 @@ func (h *CommentHandler) GetComments(c *gin.Context) {
 	placeholderEmail := utils.GetSetting("placeholder_email")
 	placeholderContent := utils.GetSetting("placeholder_content")
 	placeholderURL := utils.GetSetting("placeholder_url")
-	// 表情配置（OwO 来源）：读取路径宽容归一化，未配置时回落默认源并 fail-open 为启用
-	emojiCdnURL, emojiEnabled := utils.ResolveEmojiConfig(
-		utils.GetSetting(utils.EmojiCdnURLKey), utils.GetSetting(utils.EmojiEnabledKey))
+	// 表情配置（OwO 来源）：读取路径宽容归一化，未配置时回落默认源并 fail-open 为启用；
+	// 同时下发数组（v3）与数组第一个地址（兼容旧前端的 emoji_cdn_url）
+	emojiCdnURLs, emojiEnabled := utils.ResolveEmojiConfig(
+		utils.GetSetting(utils.EmojiCdnURLsKey),
+		utils.GetSetting(utils.EmojiCdnURLKey),
+		utils.GetSetting(utils.EmojiEnabledKey))
 	adminCommentKey := utils.GetSetting("admin_comment_key")
 	adminCommentKeyEnabled := utils.GetSetting("admin_comment_key_enabled")
 	adminCommentKeyConfigured := "false"
@@ -409,9 +413,16 @@ func (h *CommentHandler) GetComments(c *gin.Context) {
 
 	// 邮箱哈希仅供前端判断「是否需要显示管理员密钥输入框」。
 	// 只有在博主密钥功能开启时才下发，避免被用于离线枚举管理员邮箱。
+	//
+	// admin_email_hash（旧字段）= 通知邮箱的哈希，兼容旧前端；
+	// admin_email_hashes（v1.8.0）= 列表里每个管理员邮箱的哈希。
 	adminEmailHash := ""
-	if adminEmail != "" && adminCommentKeyEnabled == "true" {
-		adminEmailHash = fmt.Sprintf("%x", sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(adminEmail)))))
+	adminEmailHashes := []string{}
+	if adminCommentKeyEnabled == "true" {
+		if notifyEmail := utils.ResolveNotifyEmailFromSettings(); notifyEmail != "" {
+			adminEmailHash = utils.EmailHash(notifyEmail)
+		}
+		adminEmailHashes = utils.AdminEmailHashes(admins)
 	}
 
 	// 无感验证公开配置（开关 + 按文章派生的蜜罐字段名 + 协议版本）
@@ -425,8 +436,58 @@ func (h *CommentHandler) GetComments(c *gin.Context) {
 	}
 
 	// 2. 转换为 Response 格式并处理头像
+	//    休眠链接（doc/link_security.md 第 2 节）：功能开启时，对本页评论涉及的邮箱集合
+	//    做**一次**分组查询拿到每个人的最后评论时间 + 一次查询取回未过期的人工确认，
+	//    再逐条实时推导 urlDormant（不落库、不跑后台任务）；功能关闭时一律 false 且跳过查询。
+	lastCommentAt := map[string]int64{}
+	trustedLinks := map[string]model.TrustedLinkInfo{}
+	linkSecurityEnabled := utils.ResolveLinkSecurityEnabled(utils.GetSetting(utils.LinkSecurityEnabledKey))
+	linkDormantDays := utils.ResolveLinkDormantDays(utils.GetSetting(utils.LinkDormantDaysKey))
+	nowMillisValue := nowMillis()
+	if linkSecurityEnabled {
+		emails := make([]string, 0, len(allComments))
+		seen := make(map[string]bool, len(allComments))
+		for _, comm := range allComments {
+			if comm.URL == nil || strings.TrimSpace(*comm.URL) == "" {
+				continue
+			}
+			email := utils.NormalizeEmail(comm.Email)
+			if email == "" || seen[email] {
+				continue
+			}
+			seen[email] = true
+			emails = append(emails, email)
+		}
+		if len(emails) > 0 {
+			result, err := h.Repo.LastCommentAtByEmails(c.Request.Context(), emails)
+			if err != nil {
+				// 查询失败只记日志：休眠标记是提示性功能，不能让公开评论列表整体 500
+				log.Printf("[WARN] 休眠链接分组查询失败，本次一律不标记: %v", err)
+			} else {
+				lastCommentAt = result
+			}
+			// 人工确认（管理员在后台「确认安全」过、且未过期）→ 该 (邮箱, 网址) 不再休眠
+			trusted, err := h.Repo.TrustedLinksByEmails(c.Request.Context(), emails, nowMillisValue)
+			if err != nil {
+				log.Printf("[WARN] 人工确认查询失败，本次一律按未确认处理: %v", err)
+			} else {
+				trustedLinks = trusted
+			}
+		}
+	}
+
 	var allResponses []*model.CommentResponse
+	// 评论 id → 归一化邮箱：公开响应不下发 email，休眠提醒要按身份定位收件人，
+	// 因此在这里顺手记一份反查表（不改变任何响应字段）。
+	emailsByCommentID := make(map[int64]string, len(allComments))
 	for _, comm := range allComments {
+		emailsByCommentID[comm.ID] = utils.NormalizeEmail(comm.Email)
+		hasURL := comm.URL != nil && strings.TrimSpace(*comm.URL) != ""
+		lastAt, known := lastCommentAt[utils.NormalizeEmail(comm.Email)]
+		trusted := false
+		if hasURL {
+			_, trusted = trustedLinks[utils.TrustedLinkKey(comm.Email, *comm.URL)]
+		}
 		res := &model.CommentResponse{
 			ID:          comm.ID,
 			Author:      comm.Author,
@@ -437,7 +498,9 @@ func (h *CommentHandler) GetComments(c *gin.Context) {
 			PubDate:     time.UnixMilli(comm.PubDate).UTC().Format("2006-01-02T15:04:05.000Z"),
 			ParentID:    comm.ParentID,
 			Replies:     []*model.CommentResponse{},
-			IsBlogger:   comm.Email == adminEmail,
+			IsBlogger:   utils.IsAdminEmail(comm.Email, admins),
+			UrlDormant: utils.IsUrlDormant(
+				linkSecurityEnabled, hasURL, linkDormantDays, nowMillisValue-lastAt, known, trusted),
 		}
 		allResponses = append(allResponses, res)
 	}
@@ -462,6 +525,12 @@ func (h *CommentHandler) GetComments(c *gin.Context) {
 		result = make([]*model.CommentResponse, 0)
 	}
 
+	// 4. 惰性休眠提醒（任务规范第 8.1 节）：只在功能开启时执行；异步发信 + 成功才落记录，
+	//    任何异常只写服务端日志，绝不影响本次评论列表响应。
+	if linkSecurityEnabled {
+		h.maybeSendDormantNotices(c, result, emailsByCommentID, lastCommentAt, linkDormantDays)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"code":    200,
 		"message": "Comments fetched successfully",
@@ -480,13 +549,21 @@ func (h *CommentHandler) GetComments(c *gin.Context) {
 			"placeholder_url":              placeholderURL,
 			"admin_comment_key_configured": adminCommentKeyConfigured,
 			"admin_email_hash":             adminEmailHash,
+			"admin_email_hashes":           adminEmailHashes,
 			"verify_enabled":               verifyEnabled,
 			"verify_honeypot":              verifyHoneypot,
 			"verify_version":               verifyVersion,
-			"emoji_cdn_url":                emojiCdnURL,
+			"emoji_cdn_url":                emojiCdnURLs[0],
+			"emoji_cdn_urls":               emojiCdnURLs,
 			"emoji_enabled":                emojiEnabled,
 		},
 	})
+}
+
+// buildVerifyEmailURL 拼出邮箱验证链接：优先使用手动配置的验证地址，否则从请求头推断
+func buildVerifyEmailURL(c *gin.Context, token, email string) string {
+	return fmt.Sprintf("%s/api/verify-email/verify?token=%s&email=%s",
+		resolvePublicBaseURL(c), url.QueryEscape(token), url.QueryEscape(email))
 }
 
 func ptrString(s string) *string { return &s }

@@ -28,6 +28,8 @@ type commentResp struct {
 	ParentID    *int64         `json:"parentId"`
 	Replies     []*commentResp `json:"replies"`
 	IsBlogger   bool           `json:"isBlogger"`
+	// UrlDormant 个人网址是否休眠（见 doc/link_security.md），字段始终存在
+	UrlDormant bool `json:"urlDormant"`
 }
 
 type commentsPayload struct {
@@ -40,17 +42,21 @@ type commentsPayload struct {
 			Limit     int   `json:"limit"`
 			TotalPage int64 `json:"totalPage"`
 		} `json:"pagination"`
-		BloggerBadgeEnabled       string `json:"blogger_badge_enabled"`
-		BloggerBadgeText          string `json:"blogger_badge_text"`
-		PlaceholderName           string `json:"placeholder_name"`
-		PlaceholderEmail          string `json:"placeholder_email"`
-		PlaceholderContent        string `json:"placeholder_content"`
-		PlaceholderURL            string `json:"placeholder_url"`
-		AdminCommentKeyConfigured string `json:"admin_comment_key_configured"`
-		AdminEmailHash            string `json:"admin_email_hash"`
-		VerifyEnabled             string `json:"verify_enabled"`
-		VerifyHoneypot            string `json:"verify_honeypot"`
-		VerifyVersion             string `json:"verify_version"`
+		BloggerBadgeEnabled        string   `json:"blogger_badge_enabled"`
+		BloggerBadgeText           string   `json:"blogger_badge_text"`
+		PlaceholderName            string   `json:"placeholder_name"`
+		PlaceholderEmail           string   `json:"placeholder_email"`
+		PlaceholderContent         string   `json:"placeholder_content"`
+		PlaceholderURL             string   `json:"placeholder_url"`
+		AdminCommentKeyConfigured  string   `json:"admin_comment_key_configured"`
+		AdminEmailHash             string   `json:"admin_email_hash"`
+		AdminEmailHashes           []string `json:"admin_email_hashes"`
+		VerifyEnabled              string   `json:"verify_enabled"`
+		VerifyHoneypot             string   `json:"verify_honeypot"`
+		VerifyVersion              string   `json:"verify_version"`
+		EmojiCdnURL                string   `json:"emoji_cdn_url"`
+		EmojiCdnURLs               []string `json:"emoji_cdn_urls"`
+		EmojiEnabled               string   `json:"emoji_enabled"`
 	} `json:"data"`
 }
 

@@ -73,7 +73,8 @@ export default async (c: Context): Promise<Response> => {
   }
 };
 
-function verificationResultPage(success: boolean, message: string): string {
+/** 结果页与链接同步确认端点共用（保持同一套视觉与状态语义） */
+export function verificationResultPage(success: boolean, message: string): string {
   const icon = success ? "&#10003;" : "&#10007;";
   const color = success ? "#28a745" : "#dc3545";
   const title = success ? "验证成功" : "验证失败";

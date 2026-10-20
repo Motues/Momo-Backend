@@ -4,8 +4,26 @@ import { setSetting } from '../../utils/settings';
 import { checkContent, sanitizeUrl, isValidIpBlacklistJson, MAX_CONTENT, MAX_AUTHOR, MAX_EMAIL, MAX_URL, MAX_POST_SLUG } from '../../utils/security';
 import { parseMarkdown, sanitizeHtml } from '../../utils/markdown';
 import { validateSpamSettings } from '../../utils/spam';
-import { validateEmojiCdnUrl, validateEmojiEnabled, normalizeEmojiEnabled } from '../../utils/emoji';
+import {
+  validateEmojiCdnUrl,
+  validateEmojiCdnUrls,
+  validateEmojiEnabled,
+  normalizeEmojiEnabled,
+} from '../../utils/emoji';
+import { getAdminConfig, validateAdminSettingsBody, ADMIN_EMAILS_KEY, NOTIFY_EMAIL_KEY } from '../../utils/adminEmails';
+import {
+  LINK_SWITCH_KEYS,
+  LINK_DORMANT_DAYS_KEY,
+  normalizeSwitch,
+  parseDormantDays,
+  validateLinkSecuritySettings,
+} from '../../utils/linkSecurity';
 import { toMillis } from '../../utils/time';
+import {
+  MAIL_LOG_RETENTION_KEY,
+  resolveMailLogRetentionDays,
+  validateMailLogRetentionDays,
+} from '../../utils/mailLog';
 
 // 导入时不允许用空值覆盖已有值的敏感字段
 const SENSITIVE_SETTINGS = new Set(["email_password", "admin_comment_key"]);
@@ -84,6 +102,7 @@ export const importSettings = async (c: Context<{ Bindings: Bindings }>) => {
 
   const allowList = new Set([
     "site_name", "admin_email", "admin_name",
+    "admin_emails", "notify_email",
     "smtp_host", "smtp_port", "email_user", "email_password", "email_secure",
     "allow_origin", "email_enabled",
     "reply_template", "notification_template",
@@ -104,6 +123,7 @@ export const importSettings = async (c: Context<{ Bindings: Bindings }>) => {
     "admin_comment_key_enabled",
     "email_verify_enabled",
     "verify_base_url",
+    "mail_log_retention_days",
     "comment_verify_enabled",
     "comment_verify_difficulty",
     "comment_verify_instr_enabled",
@@ -113,7 +133,12 @@ export const importSettings = async (c: Context<{ Bindings: Bindings }>) => {
     "comment_verify_log_challenge",
     "trust_proxy",
     "emoji_cdn_url",
+    "emoji_cdn_urls",
     "emoji_enabled",
+    "link_security_enabled",
+    "link_dormant_days",
+    "link_sync_enabled",
+    "link_dormant_notice_enabled",
   ]);
 
   if ("ip_blacklist" in body && !isValidIpBlacklistJson(String(body.ip_blacklist ?? ""))) {
@@ -139,15 +164,53 @@ export const importSettings = async (c: Context<{ Bindings: Bindings }>) => {
       return c.json({ code: 400, message: cdnError }, 400);
     }
   }
+  let emojiCdnUrlsJson: string | undefined;
+  if ("emoji_cdn_urls" in body) {
+    const result = validateEmojiCdnUrls(body.emoji_cdn_urls);
+    if (result.error) {
+      return c.json({ code: 400, message: result.error }, 400);
+    }
+    emojiCdnUrlsJson = JSON.stringify(result.urls);
+  }
+
+  // 链接安全审查：与 PUT /admin/settings 同一套校验（口径见 doc/link_security.md）
+  const linkError = validateLinkSecuritySettings(body);
+  if (linkError) {
+    return c.json({ code: 400, message: linkError }, 400);
+  }
+
+  // 邮件日志保留天数：与 PUT /admin/settings 同一套校验（0–3650，0 = 永久保留）
+  if ("mail_log_retention_days" in body) {
+    const retentionError = validateMailLogRetentionDays(body.mail_log_retention_days);
+    if (retentionError) {
+      return c.json({ code: 400, message: retentionError }, 400);
+    }
+  }
+
+  // 多管理员邮箱：与 PUT /admin/settings 同一套校验（口径见 doc/admin_emails.md）
+  const adminConfig = await getAdminConfig(c.env);
+  const adminWrite = validateAdminSettingsBody(body, adminConfig.admins);
+  if (adminWrite.error) {
+    return c.json({ code: 400, message: adminWrite.error }, 400);
+  }
 
   const updated: string[] = [];
   for (const [key, value] of Object.entries(body)) {
     if (!allowList.has(key) || value === undefined || value === null) continue;
     // 导出的敏感字段是空串：留空表示「未修改」，不得覆盖已有值
     if (SENSITIVE_SETTINGS.has(key) && String(value) === "") continue;
-    // 与 PUT /admin/settings 一致：存归一化后的值（开关小写、地址去空格）
+    // 与 PUT /admin/settings 一致：存归一化后的值（开关小写、地址去空格、列表重新序列化）
     if (key === "emoji_enabled") await setSetting(c.env, key, normalizeEmojiEnabled(value));
     else if (key === "emoji_cdn_url") await setSetting(c.env, key, String(value).trim());
+    else if (key === "emoji_cdn_urls") await setSetting(c.env, key, emojiCdnUrlsJson ?? '[]');
+    else if (key === ADMIN_EMAILS_KEY) await setSetting(c.env, key, adminWrite.adminEmailsJson ?? '[]');
+    else if (key === NOTIFY_EMAIL_KEY) await setSetting(c.env, key, adminWrite.notifyEmail ?? '');
+    else if (LINK_SWITCH_KEYS.includes(key as (typeof LINK_SWITCH_KEYS)[number])) {
+      await setSetting(c.env, key, normalizeSwitch(value));
+    } else if (key === LINK_DORMANT_DAYS_KEY) await setSetting(c.env, key, String(parseDormantDays(value)));
+    else if (key === MAIL_LOG_RETENTION_KEY) {
+      await setSetting(c.env, key, String(resolveMailLogRetentionDays(value)));
+    } else if (key === "admin_email") await setSetting(c.env, key, String(value));
     else await setSetting(c.env, key, String(value));
     updated.push(key);
   }

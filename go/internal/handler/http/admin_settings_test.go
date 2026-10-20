@@ -82,6 +82,7 @@ func TestGetSettingsTypeGroups(t *testing.T) {
 		"smtp_host": "smtp.x.com", "smtp_port": "587", "email_user": "u@x.com",
 		"email_password": "p", "email_secure": "true", "email_verify_enabled": "true",
 		"verify_base_url": "https://x.com", "reply_template": "回复模板", "notification_template": "通知模板",
+		"mail_log_retention_days": "30",
 		"allow_origin": "https://a.com", "admin_comment_key": "k", "admin_comment_key_enabled": "true",
 		"ip_blacklist": `[]`, "email_blacklist": `[]`,
 		"comment_verify_enabled": "true", "comment_verify_difficulty": "12", "trust_proxy": "false",
@@ -118,6 +119,8 @@ func TestGetSettingsTypeGroups(t *testing.T) {
 			mustHave: []string{
 				"smtp_host", "smtp_port", "email_user", "email_password", "email_secure",
 				"email_verify_enabled", "verify_base_url", "reply_template", "notification_template",
+				// 邮件日志保留天数（面板「邮件通知设置 → 邮件记录」）
+				"mail_log_retention_days",
 			},
 			mustNotHave: []string{"site_name", "ip_blacklist", "admin_name"},
 		},

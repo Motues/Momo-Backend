@@ -22,7 +22,7 @@ import (
 // 使用文件库（而非 :memory:）是因为仓库层通过连接池可能使用多个连接。
 func newTestDB(t *testing.T) *sqlx.DB {
 	t.Helper()
-	db, err := sqlx.Connect("sqlite", filepath.Join(t.TempDir(), "repo.db"))
+	db, err := OpenDB(filepath.Join(t.TempDir(), "repo.db"))
 	if err != nil {
 		t.Fatalf("连接测试数据库失败: %v", err)
 	}
@@ -98,7 +98,7 @@ func requireCount(t *testing.T, db *sqlx.DB, query string, want int, args ...int
 func TestInitSchemaCreatesAllTables(t *testing.T) {
 	db := newTestDB(t)
 
-	for _, table := range []string{"Comment", "Settings", "EmailVerification", "SchemaMigration", "VerifyRecord"} {
+	for _, table := range []string{"Comment", "Settings", "EmailVerification", "SchemaMigration", "VerifyRecord", "TrustedLink"} {
 		var name string
 		err := db.Get(&name, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", table)
 		if err != nil {
@@ -110,6 +110,7 @@ func TestInitSchemaCreatesAllTables(t *testing.T) {
 	for _, index := range []string{
 		"idx_post_slug", "idx_status", "idx_ev_email", "idx_ev_token",
 		"idx_vr_created", "idx_vr_event", "idx_vr_cid",
+		"idx_tl_email_url", "idx_tl_email",
 	} {
 		var name string
 		err := db.Get(&name, "SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?", index)

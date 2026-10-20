@@ -6,11 +6,39 @@ import (
 	"path/filepath"
 	"testing"
 
-	"momo-backend-go/internal/repository/sqlite"
-
 	"github.com/jmoiron/sqlx"
 	_ "modernc.org/sqlite"
 )
+
+// settingsTableDDL 与 sqlite.InitSchema 里的 Settings 建表语句逐字一致。
+//
+// 这里刻意不调用 sqlite.InitSchema：那会让本包的测试依赖整个 sqlite 实现，
+// 而 sqlite 仓库层已经依赖本包（客户端分布归一化 / 窗口指标），
+// 两者叠加会形成 test-only 的导入环（utils[test] → sqlite → utils）。
+// 本包的所有用例只用得到 Settings 一张表，所以在这里单独建这一张表。
+const settingsTableDDL = `
+	CREATE TABLE IF NOT EXISTS Settings (
+		key TEXT PRIMARY KEY,
+		value TEXT NOT NULL,
+		updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+	);`
+
+// mailLogTableDDL 与 sqlite.InitSchema 里的 MailLog 建表语句逐字一致。
+//
+// 邮件发送日志（MailLog）由本包的底层发送函数写入，因此本包的测试也需要这张表；
+// 同样不能调用 sqlite.InitSchema（会形成 test-only 导入环，见上面的说明）。
+const mailLogTableDDL = `
+	CREATE TABLE IF NOT EXISTS MailLog (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		type TEXT NOT NULL,
+		recipient TEXT NOT NULL,
+		subject TEXT NOT NULL,
+		status TEXT NOT NULL,
+		error TEXT,
+		created_at TEXT NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS idx_ml_created ON MailLog(created_at);
+	CREATE INDEX IF NOT EXISTS idx_ml_status ON MailLog(status);`
 
 // testSettingsDB 是 utils 包测试共享的 Settings 数据库。
 //
@@ -26,14 +54,22 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	db, err := sqlx.Connect("sqlite", filepath.Join(dir, "test.db"))
+	// DSN 里带上 busy_timeout：本包的邮件日志用例会在发送路径上写库
+	// （与 sqlite.OpenDB 同一口径；这里不能 import sqlite —— 会形成 test-only 导入环）
+	db, err := sqlx.Connect("sqlite", filepath.Join(dir, "test.db")+"?_pragma=busy_timeout(10000)")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "连接测试数据库失败: %v\n", err)
 		_ = os.RemoveAll(dir)
 		os.Exit(1)
 	}
-	if err := sqlite.InitSchema(db); err != nil {
+	if _, err := db.Exec(settingsTableDDL); err != nil {
 		fmt.Fprintf(os.Stderr, "初始化表结构失败: %v\n", err)
+		_ = db.Close()
+		_ = os.RemoveAll(dir)
+		os.Exit(1)
+	}
+	if _, err := db.Exec(mailLogTableDDL); err != nil {
+		fmt.Fprintf(os.Stderr, "初始化邮件日志表失败: %v\n", err)
 		_ = db.Close()
 		_ = os.RemoveAll(dir)
 		os.Exit(1)

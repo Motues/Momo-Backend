@@ -46,7 +46,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	db, err := sqlx.Connect("sqlite", filepath.Join(dir, "test.db"))
+	db, err := sqlite.OpenDB(filepath.Join(dir, "test.db"))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "连接测试数据库失败: %v\n", err)
 		_ = os.RemoveAll(dir)
@@ -93,7 +93,10 @@ func truncateAll() {
 	if testDB != nil {
 		// VerifyRecord 也必须清空：认证记录的用例会断言「恰好 N 条」，
 		// 残留行会让后续用例出现假失败
-		for _, table := range []string{"Comment", "Settings", "EmailVerification", "VerifyRecord"} {
+		for _, table := range []string{
+			"Comment", "Settings", "EmailVerification", "VerifyRecord",
+			"LinkSyncRequest", "TrustedLink", "MailLog", "DormantNotice",
+		} {
 			_, _ = testDB.Exec("DELETE FROM " + table)
 		}
 		_, _ = testDB.Exec("DELETE FROM sqlite_sequence")

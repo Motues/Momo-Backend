@@ -3,8 +3,31 @@ import { getAllSettings, setSetting } from "../../utils/settings";
 import { sendTestEmail } from "../../utils/email";
 import { checkKey, extractToken, isValidIpBlacklistJson } from "../../utils/security";
 import { validateSpamSettings } from "../../utils/spam";
-import { normalizeEmojiEnabled, validateEmojiCdnUrl, validateEmojiEnabled } from "../../utils/emoji";
+import {
+  normalizeEmojiCdnUrls,
+  normalizeEmojiEnabled,
+  validateEmojiCdnUrl,
+  validateEmojiCdnUrls,
+  validateEmojiEnabled,
+} from "../../utils/emoji";
+import {
+  getAdminEmailList,
+  normalizeAdminEmails,
+  normalizeEmail,
+  parseAdminEmails,
+  resolveNotifyEmail,
+  validateAdminEmails,
+  validateNotifyEmail,
+} from "../../utils/adminEmails";
+import {
+  LINK_SWITCH_KEYS,
+  normalizeLinkSwitch,
+  resolveDormantDays,
+  validateDormantDays,
+  validateLinkSwitch,
+} from "../../utils/linkSecurity";
 import { applyTrustProxySetting, hasTrustProxyEnvOverride } from "../../utils/ip";
+import { validateMailLogRetentionDays, resolveMailLogRetentionDays } from "../../utils/mailLog";
 import LogService from "../../utils/log";
 
 // 敏感字段：读取时始终置空。comment_verify_secret 由系统自动生成，不对外开放读写
@@ -12,7 +35,7 @@ const SENSITIVE_KEYS = ["admin_password", "email_password", "admin_comment_key",
 
 // 可配置的字段白名单
 const ALLOWED_SETTINGS = [
-  "site_name", "admin_email", "admin_name",
+  "site_name", "admin_email", "admin_emails", "notify_email", "admin_name",
   "smtp_host", "smtp_port", "email_user", "email_password", "email_secure",
   "allow_origin", "email_enabled",
   "reply_template", "notification_template",
@@ -34,6 +57,8 @@ const ALLOWED_SETTINGS = [
   "admin_comment_key_enabled",
   "email_verify_enabled",
   "verify_base_url",
+  // 外发邮件日志（面板「邮件管理」）的保留天数：0 = 永久保留
+  "mail_log_retention_days",
   "comment_verify_enabled",
   "comment_verify_difficulty",
   "comment_verify_instr_enabled",
@@ -44,19 +69,27 @@ const ALLOWED_SETTINGS = [
   "comment_verify_retention_days",
   "comment_verify_log_challenge",
   "trust_proxy",
-  // 表情：是否启用 + OwO 格式的表情来源地址（见 doc/emoji.md）
+  // 表情：是否启用 + OwO 格式的表情来源（数组，见 doc/emoji.md）
   "emoji_enabled",
   "emoji_cdn_url",
+  "emoji_cdn_urls",
+  // 链接安全审查：休眠链接 + 历史链接批量更新 + 休眠提醒邮件（见 doc/link_security.md）
+  "link_security_enabled",
+  "link_dormant_days",
+  "link_sync_enabled",
+  "link_dormant_notice_enabled",
 ];
 
 // 按模块分组的设置键
 const SETTINGS_GROUPS: Record<string, string[]> = {
-  basic: ["site_name", "admin_email", "comment_auto_approve", "comment_spam_keywords", "comment_spam_max_links", "comment_spam_min_length", "comment_spam_duplicate_window", "blogger_badge_enabled", "blogger_badge_text", "placeholder_name", "placeholder_email", "placeholder_content", "placeholder_url"],
-  email: ["smtp_host", "smtp_port", "email_user", "email_password", "email_secure", "email_enabled", "email_verify_enabled", "verify_base_url", "reply_template", "notification_template"],
+  basic: ["site_name", "admin_email", "admin_emails", "notify_email", "comment_auto_approve", "comment_spam_keywords", "comment_spam_max_links", "comment_spam_min_length", "comment_spam_duplicate_window", "blogger_badge_enabled", "blogger_badge_text", "placeholder_name", "placeholder_email", "placeholder_content", "placeholder_url"],
+  email: ["smtp_host", "smtp_port", "email_user", "email_password", "email_secure", "email_enabled", "email_verify_enabled", "verify_base_url", "mail_log_retention_days", "reply_template", "notification_template"],
   security: ["allow_origin", "admin_comment_key", "admin_comment_key_enabled", "ip_blacklist", "email_blacklist", "comment_verify_enabled", "comment_verify_difficulty", "comment_verify_instr_enabled", "comment_verify_block_automated", "comment_verify_domain_enabled", "comment_verify_retention_days", "comment_verify_log_challenge", "trust_proxy"],
   account: ["admin_name"],
-  // 表情设置：启用开关 + 表情来源地址
-  emoji: ["emoji_enabled", "emoji_cdn_url"],
+  // 表情设置：启用开关 + 表情来源列表（外加兼容用的单地址键）
+  emoji: ["emoji_enabled", "emoji_cdn_urls", "emoji_cdn_url"],
+  // 链接安全审查：休眠链接 + 历史链接批量更新 + 休眠提醒邮件
+  link: ["link_security_enabled", "link_dormant_days", "link_sync_enabled", "link_dormant_notice_enabled"],
 };
 
 function checkAuth(c: Context): boolean {
@@ -149,6 +182,55 @@ export async function updateSettings(c: Context): Promise<Response> {
       return c.json({ code: 400, message: cdnError }, 400);
     }
   }
+  if ("emoji_cdn_urls" in body) {
+    const cdnError = validateEmojiCdnUrls(body.emoji_cdn_urls);
+    if (cdnError) {
+      return c.json({ code: 400, message: cdnError }, 400);
+    }
+  }
+
+  // 多管理员邮箱：列表严格校验；通知邮箱必须命中列表
+  // （同一次请求里带了 admin_emails 就用新列表判定，否则用库里的当前列表）
+  if ("admin_emails" in body) {
+    const adminError = validateAdminEmails(body.admin_emails);
+    if (adminError) {
+      return c.json({ code: 400, message: adminError }, 400);
+    }
+  }
+  if ("notify_email" in body) {
+    const effectiveAdmins =
+      "admin_emails" in body
+        ? parseAdminEmails(normalizeAdminEmails(body.admin_emails))
+        : await getAdminEmailList();
+    const notifyError = validateNotifyEmail(body.notify_email, effectiveAdmins);
+    if (notifyError) {
+      return c.json({ code: 400, message: notifyError }, 400);
+    }
+  }
+
+  // 链接安全审查：开关 fail-closed（含休眠提醒邮件开关）、天数 1–3650
+  for (const key of LINK_SWITCH_KEYS) {
+    if (key in body) {
+      const linkError = validateLinkSwitch(body[key], key);
+      if (linkError) {
+        return c.json({ code: 400, message: linkError }, 400);
+      }
+    }
+  }
+  if ("link_dormant_days" in body) {
+    const daysError = validateDormantDays(body.link_dormant_days);
+    if (daysError) {
+      return c.json({ code: 400, message: daysError }, 400);
+    }
+  }
+
+  // 邮件日志保留天数：0–3650 的整数（0 = 永久保留）
+  if ("mail_log_retention_days" in body) {
+    const retentionError = validateMailLogRetentionDays(body.mail_log_retention_days);
+    if (retentionError) {
+      return c.json({ code: 400, message: retentionError }, 400);
+    }
+  }
 
   const smtpChanged =
     ("smtp_host" in body) || ("smtp_port" in body) ||
@@ -166,6 +248,36 @@ export async function updateSettings(c: Context): Promise<Response> {
       // 开关统一存归一化后的小写值（口径见 doc/emoji.md 第 3.1 节）
       if (key === "emoji_enabled") {
         await setSetting(key, normalizeEmojiEnabled(value));
+        continue;
+      }
+      // 表情来源列表：存归一化后的 JSON 数组（trim + 去空）
+      if (key === "emoji_cdn_urls") {
+        await setSetting(key, normalizeEmojiCdnUrls(value));
+        continue;
+      }
+      // 管理员邮箱列表：存归一化（trim + 小写 + 去重）后的 JSON 数组
+      if (key === "admin_emails") {
+        await setSetting(key, normalizeAdminEmails(value));
+        continue;
+      }
+      // 通知邮箱：trim + 小写后落库（是否命中列表已在上面校验）
+      if (key === "notify_email") {
+        await setSetting(key, normalizeEmail(value));
+        continue;
+      }
+      // 链接安全开关（含休眠提醒邮件开关）：同样是归一化后的小写值
+      if (LINK_SWITCH_KEYS.includes(key)) {
+        await setSetting(key, normalizeLinkSwitch(value));
+        continue;
+      }
+      // 休眠天数：合法整数（已校验）归一化后落库
+      if (key === "link_dormant_days") {
+        await setSetting(key, String(resolveDormantDays(value)));
+        continue;
+      }
+      // 邮件日志保留天数：存规范化后的十进制（"030" / " 30 " → "30"，0 = 永久保留）
+      if (key === "mail_log_retention_days") {
+        await setSetting(key, String(resolveMailLogRetentionDays(value)));
         continue;
       }
       await setSetting(key, String(value));
@@ -192,13 +304,18 @@ export async function testEmail(c: Context): Promise<Response> {
   }
 
   const all = await getAllSettings();
-  const adminEmail = all["admin_email"] || "";
-  if (!adminEmail) {
+  // 测试邮件发给**解析后的通知邮箱**（未配置时回落管理员列表第一个，见 doc/admin_emails.md 第 6 节）
+  const target = resolveNotifyEmail(
+    all["notify_email"],
+    all["admin_emails"],
+    all["admin_email"]
+  );
+  if (!target) {
     return c.json({ code: 400, message: "Admin email is not configured. " }, 400);
   }
 
   try {
-    await sendTestEmail(adminEmail);
+    await sendTestEmail(target);
     return c.json({ code: 200, message: "A test email has been sent" });
   } catch (e: any) {
     return c.json({ code: 400, message: "邮件发送失败，请检查 SMTP 配置" }, 400);

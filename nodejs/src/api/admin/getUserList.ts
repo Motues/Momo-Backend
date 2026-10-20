@@ -22,7 +22,13 @@ export default async (c: Context): Promise<Response> => {
     verified = "all";
   }
 
-  const result = await CommentService.getUserList(page, limit, search, verified);
+  // 网站链接状态筛选：all（默认）/ dormant / trusted / normal / none（无法识别的取值不筛选）
+  let linkStatus = getQueryString(c.req.query("linkStatus"), "all").trim().toLowerCase();
+  if (!["dormant", "trusted", "normal", "none"].includes(linkStatus)) {
+    linkStatus = "all";
+  }
+
+  const result = await CommentService.getUserList(page, limit, search, verified, linkStatus);
 
   return c.json({
     code: 200,

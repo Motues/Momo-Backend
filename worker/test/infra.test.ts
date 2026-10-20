@@ -1,7 +1,7 @@
 /**
  * 测试基础设施自检（替代原先的 smoke.test.ts）。
  *
- * 覆盖：注入的建表语句可用、五张表建全、建表幂等、D1 写入读取、KV 可用，
+ * 覆盖：注入的建表语句可用、九张表建全、建表幂等、D1 写入读取、KV 可用，
  * 以及 vitest-pool-workers 的 isolatedStorage 契约（每个用例独立存储）。
  */
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -26,15 +26,23 @@ describe('测试基础设施', () => {
 		expect(statements.some((s) => /CREATE TABLE IF NOT EXISTS Comment/i.test(s))).toBe(true);
 	});
 
-	it('createSchema 应建出 schemas/comment.sql 里的五张表', async () => {
+	it('createSchema 应建出 schemas/comment.sql 里的九张表', async () => {
 		await createSchema();
 		const names = await tableNames();
 		for (const table of EXPECTED_TABLES) {
 			expect(names).toContain(table);
 		}
 		// VerifyRecord 是认证记录表：新库靠 comment.sql 建表，旧库靠 0002 迁移补齐
-		expect(EXPECTED_TABLES).toHaveLength(5);
+		// LinkSyncRequest 是历史链接同步的待确认记录：新库建表，旧库靠 0004 迁移补齐
+		// TrustedLink 是休眠链接的人工确认：新库建表，旧库靠 0005 迁移补齐
+		// MailLog 是邮件发送日志：新库建表，旧库靠 0007 迁移补齐
+		// DormantNotice 是休眠提醒的状态机：新库建表，旧库靠 0008 迁移补齐
+		expect(EXPECTED_TABLES).toHaveLength(9);
 		expect(names).toContain('VerifyRecord');
+		expect(names).toContain('LinkSyncRequest');
+		expect(names).toContain('TrustedLink');
+		expect(names).toContain('MailLog');
+		expect(names).toContain('DormantNotice');
 	});
 
 	it('createSchema 应可重复调用（幂等）', async () => {

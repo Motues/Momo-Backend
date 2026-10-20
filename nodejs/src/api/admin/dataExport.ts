@@ -56,6 +56,8 @@ export async function exportSettings(c: Context): Promise<Response> {
     admin_comment_key_enabled: true,
     email_verify_enabled: true,
     verify_base_url: true,
+    // 外发邮件日志保留天数（非敏感）：0 = 永久保留
+    mail_log_retention_days: true,
     comment_verify_enabled: true,
     comment_verify_difficulty: true,
     comment_verify_instr_enabled: true,
@@ -64,9 +66,18 @@ export async function exportSettings(c: Context): Promise<Response> {
     comment_verify_retention_days: true,
     comment_verify_log_challenge: true,
     trust_proxy: true,
-    // 表情设置：启用开关 + 表情来源地址（非敏感，正常导出）
+    // 表情设置：启用开关 + 表情来源列表/单地址（非敏感，正常导出）
     emoji_enabled: true,
     emoji_cdn_url: true,
+    emoji_cdn_urls: true,
+    // 多管理员邮箱与通知收件人（非敏感，正常导出）
+    admin_emails: true,
+    notify_email: true,
+    // 链接安全审查：休眠链接 + 历史链接批量更新 + 休眠提醒邮件
+    link_security_enabled: true,
+    link_dormant_days: true,
+    link_sync_enabled: true,
+    link_dormant_notice_enabled: true,
   };
 
   const filtered: Record<string, string> = {};

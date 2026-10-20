@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { adminToken, api, bearer } from '../helpers/http';
-import { createSchema, rawSetting, rawSettings, seedSettings } from '../helpers/db';
+import { createSchema, rawSetting, rawSettings, seedSettings, testEnv } from '../helpers/db';
 import { resetSentMails, sentMails, failNextSendMail } from '../stubs/nodemailer';
 
 let token: string;
@@ -394,6 +394,199 @@ describe('PUT /admin/settings', () => {
 		const full = await api('/admin/settings', { headers: authed() });
 		expect(full.body.data.comment_verify_domain_enabled).toBe('true');
 	});
+
+	it('多管理员邮箱：admin_emails 存归一化去重后的 JSON 数组', async () => {
+		const res = await api('/admin/settings', {
+			method: 'PUT',
+			headers: authed(),
+			body: { admin_emails: '["  A@X.com ", "b@y.com", "a@x.com"]' },
+		});
+		expect(res.status).toBe(200);
+		expect(await rawSetting('admin_emails')).toBe('["a@x.com","b@y.com"]');
+
+		// 属于 basic 分组
+		const basic = await api('/admin/settings?type=basic', { headers: authed() });
+		expect(basic.body.data.admin_emails).toBe('["a@x.com","b@y.com"]');
+	});
+
+	it('多管理员邮箱：notify_email 必须在列表里（同一次请求用新列表判定）', async () => {
+		const ok = await api('/admin/settings', {
+			method: 'PUT',
+			headers: authed(),
+			body: { admin_emails: '["a@x.com","b@y.com"]', notify_email: '  B@Y.COM  ' },
+		});
+		expect(ok.status).toBe(200);
+		expect(await rawSetting('notify_email')).toBe('b@y.com');
+
+		const bad = await api('/admin/settings', {
+			method: 'PUT',
+			headers: authed(),
+			body: { notify_email: 'c@z.com', site_name: '不应写入' },
+		});
+		expect(bad.status).toBe(400);
+		expect(bad.body.message).toBe('notify_email 必须在管理员邮箱列表中');
+		expect(await rawSetting('site_name')).toBeNull();
+	});
+
+	it('多管理员邮箱：非法 admin_emails 与 notify_email 的固定文案', async () => {
+		const cases: Array<[Record<string, string>, string]> = [
+			[{ admin_emails: 'not json' }, 'admin_emails 必须是 JSON 数组'],
+			[{ admin_emails: '[1]' }, 'admin_emails 的每一项都必须是字符串'],
+			[{ admin_emails: '["nope"]' }, 'admin_emails 包含非法邮箱地址'],
+			[
+				{
+					admin_emails: JSON.stringify(
+						Array.from({ length: 11 }, (_, index) => `admin${index + 1}@example.com`)
+					),
+				},
+				'admin_emails 最多 10 个邮箱',
+			],
+			[{ admin_emails: '["a@x.com"]', notify_email: 'nope' }, 'notify_email 必须是合法的邮箱地址'],
+		];
+		for (const [body, message] of cases) {
+			const res = await api('/admin/settings', { method: 'PUT', headers: authed(), body });
+			expect(res.status, JSON.stringify(body)).toBe(400);
+			expect(res.body.message, JSON.stringify(body)).toBe(message);
+			expect(await rawSetting('admin_emails')).toBeNull();
+		}
+	});
+
+	it('多管理员邮箱：清空 notify_email 永远合法（读取时回落列表第一个）', async () => {
+		await seedSettings({ admin_emails: '["a@x.com"]', notify_email: 'a@x.com' });
+		const res = await api('/admin/settings', {
+			method: 'PUT',
+			headers: authed(),
+			body: { notify_email: '' },
+		});
+		expect(res.status).toBe(200);
+		expect(await rawSetting('notify_email')).toBe('');
+	});
+
+	it('链接安全：四个键属于新的 link 分组，且做写入校验', async () => {
+		const put = await api('/admin/settings', {
+			method: 'PUT',
+			headers: authed(),
+			body: {
+				link_security_enabled: ' TRUE ',
+				link_dormant_days: ' 30 ',
+				link_sync_enabled: 'False',
+				link_dormant_notice_enabled: ' True ',
+			},
+		});
+		expect(put.status).toBe(200);
+		expect(await rawSetting('link_security_enabled')).toBe('true');
+		expect(await rawSetting('link_dormant_days')).toBe('30');
+		expect(await rawSetting('link_sync_enabled')).toBe('false');
+		expect(await rawSetting('link_dormant_notice_enabled')).toBe('true');
+
+		const link = await api('/admin/settings?type=link', { headers: authed() });
+		expect(link.body.data.link_security_enabled).toBe('true');
+		expect(link.body.data.link_dormant_days).toBe('30');
+		expect(link.body.data.link_sync_enabled).toBe('false');
+		expect(link.body.data.link_dormant_notice_enabled).toBe('true');
+	});
+
+	it('链接安全：非法值整批拒绝且文案固定', async () => {
+		const cases: Array<[Record<string, string>, string]> = [
+			[{ link_security_enabled: 'yes' }, 'link_security_enabled 只能是 true 或 false'],
+			[{ link_sync_enabled: 'on' }, 'link_sync_enabled 只能是 true 或 false'],
+			[{ link_dormant_notice_enabled: 'on' }, 'link_dormant_notice_enabled 只能是 true 或 false'],
+			[{ link_dormant_days: '0' }, 'link_dormant_days 必须是 1-3650 之间的整数'],
+			[{ link_dormant_days: '1.5' }, 'link_dormant_days 必须是 1-3650 之间的整数'],
+			[{ link_dormant_days: '3651' }, 'link_dormant_days 必须是 1-3650 之间的整数'],
+		];
+		for (const [body, message] of cases) {
+			const res = await api('/admin/settings', {
+				method: 'PUT',
+				headers: authed(),
+				body: { ...body, site_name: '不应写入' },
+			});
+			expect(res.status, JSON.stringify(body)).toBe(400);
+			expect(res.body.message, JSON.stringify(body)).toBe(message);
+			expect(await rawSetting('site_name')).toBeNull();
+		}
+	});
+
+	it('邮件日志保留天数：合法值归一化落库、非法值整批拒绝', async () => {
+		const put = await api('/admin/settings', {
+			method: 'PUT',
+			headers: authed(),
+			body: { mail_log_retention_days: ' 045 ' },
+		});
+		expect(put.status).toBe(200);
+		expect(await rawSetting('mail_log_retention_days')).toBe('45');
+
+		const email = await api('/admin/settings?type=email', { headers: authed() });
+		expect(email.body.data.mail_log_retention_days).toBe('45');
+
+		for (const bad of ['', '-1', '1.5', '3651', 'abc', '30d']) {
+			const res = await api('/admin/settings', {
+				method: 'PUT',
+				headers: authed(),
+				body: { mail_log_retention_days: bad, site_name: '不应写入' },
+			});
+			expect(res.status, bad).toBe(400);
+			expect(res.body.message, bad).toBe('mail_log_retention_days 必须是 0-3650 之间的整数');
+			expect(await rawSetting('site_name')).toBeNull();
+		}
+	});
+
+	it('导入路径同样校验并归一化新增设置（admin_emails / notify_email / link / emoji_cdn_urls）', async () => {
+		const res = await api('/admin/data/import/settings', {
+			method: 'POST',
+			headers: authed(),
+			body: {
+				admin_emails: '[" A@X.com ", "a@x.com"]',
+				notify_email: 'A@X.com',
+				link_security_enabled: ' TRUE ',
+				link_dormant_days: '45',
+				link_sync_enabled: 'false',
+				link_dormant_notice_enabled: 'True',
+				emoji_cdn_urls: '["https://a.example.com/owo.json"]',
+			},
+		});
+		expect(res.status).toBe(200);
+		expect(await rawSetting('admin_emails')).toBe('["a@x.com"]');
+		expect(await rawSetting('notify_email')).toBe('a@x.com');
+		expect(await rawSetting('link_security_enabled')).toBe('true');
+		expect(await rawSetting('link_dormant_days')).toBe('45');
+		expect(await rawSetting('link_sync_enabled')).toBe('false');
+		expect(await rawSetting('link_dormant_notice_enabled')).toBe('true');
+		expect(await rawSetting('emoji_cdn_urls')).toBe('["https://a.example.com/owo.json"]');
+	});
+
+	it('导入路径：非法 link_dormant_days 被拒绝且不落库', async () => {
+		const res = await api('/admin/data/import/settings', {
+			method: 'POST',
+			headers: authed(),
+			body: { link_dormant_days: 'abc', site_name: '不应写入' },
+		});
+		expect(res.status).toBe(400);
+		expect(res.body.message).toBe('link_dormant_days 必须是 1-3650 之间的整数');
+		expect(await rawSetting('site_name')).toBeNull();
+	});
+
+	it('导出包含新增的六个键', async () => {
+		await seedSettings({
+			admin_emails: '["a@x.com"]',
+			notify_email: 'a@x.com',
+			link_security_enabled: 'true',
+			link_dormant_days: '30',
+			link_sync_enabled: 'true',
+			link_dormant_notice_enabled: 'true',
+			emoji_cdn_urls: '["https://a.example.com/owo.json"]',
+		});
+		const exported = await api('/admin/data/export/settings', { headers: authed() });
+		expect(exported.body.data.settings).toMatchObject({
+			admin_emails: '["a@x.com"]',
+			notify_email: 'a@x.com',
+			link_security_enabled: 'true',
+			link_dormant_days: '30',
+			link_sync_enabled: 'true',
+			link_dormant_notice_enabled: 'true',
+			emoji_cdn_urls: '["https://a.example.com/owo.json"]',
+		});
+	});
 });
 
 describe('POST /admin/settings/test-email', () => {
@@ -456,5 +649,26 @@ describe('POST /admin/settings/test-email', () => {
 		const res = await api('/admin/settings/test-email', { method: 'POST', headers: authed() });
 		expect(res.status).toBe(400);
 		expect(res.body.message).toBe('邮件发送失败，请检查 SMTP 配置');
+	});
+
+	it('收件人是解析后的 notify_email（不是列表第一个）', async () => {
+		await seedSettings({
+			...SMTP,
+			admin_emails: '["a@x.com","b@y.com"]',
+			notify_email: 'b@y.com',
+			site_name: 'Momo Blog',
+		});
+		const res = await api('/admin/settings/test-email', { method: 'POST', headers: authed() });
+		expect(res.status).toBe(200);
+		expect(sentMails).toHaveLength(1);
+		expect(sentMails[0].to).toBe('b@y.com');
+	});
+
+	it('notify_email 未配置时回落到管理员列表第一个', async () => {
+		await seedSettings({ ...SMTP, admin_emails: '["a@x.com","b@y.com"]' });
+		await testEnv.MOMO_DB.prepare("DELETE FROM Settings WHERE key = 'admin_email'").run();
+		const res = await api('/admin/settings/test-email', { method: 'POST', headers: authed() });
+		expect(res.status).toBe(200);
+		expect(sentMails[0].to).toBe('a@x.com');
 	});
 });

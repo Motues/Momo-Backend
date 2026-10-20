@@ -30,6 +30,15 @@
                 { label: '邮箱未验证', value: 'false' },
               ]"
               @change="handleFilterChange" />
+            <SelectMenu v-model="linkStatusFilter" class="shrink-0" accent="blue" title="按网站链接状态筛选"
+              :options="[
+                { label: '全部链接', value: 'all' },
+                { label: '休眠', value: 'dormant' },
+                { label: '已确认', value: 'trusted' },
+                { label: '正常', value: 'normal' },
+                { label: '无链接', value: 'none' },
+              ]"
+              data-test="user-link-filter" @change="handleFilterChange" />
           </div>
           <span v-if="searchKeyword.trim()" class="text-xs text-gray-500 whitespace-nowrap">
             搜索：<strong class="text-blue-600">{{ searchKeyword.trim() }}</strong>
@@ -56,10 +65,41 @@
                       class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-gray-100 text-gray-500 border border-gray-200 whitespace-nowrap">
                       <i class="fa-solid fa-envelope mr-1"></i>邮箱未验证
                     </span>
+                    <!-- 移动端只对异常状态加徽章（未知 / 无链接 / 休眠 / 已确认），正常的链接不额外占位 -->
+                    <span v-if="linkStatus(user) === 'unknown'" data-test="user-link-badge"
+                      :title="LINK_UNKNOWN_TITLE"
+                      class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-gray-100 text-gray-500 border border-gray-200 whitespace-nowrap">
+                      <i class="fa-solid fa-link-slash mr-1"></i>未知
+                    </span>
+                    <span v-else-if="linkStatus(user) === 'none'" data-test="user-link-badge"
+                      class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-gray-100 text-gray-500 border border-gray-200 whitespace-nowrap">
+                      <i class="fa-solid fa-link-slash mr-1"></i>无链接
+                    </span>
+                    <a v-else-if="linkStatus(user) === 'dormant'" data-test="user-link-badge" :href="user.url"
+                      target="_blank" rel="noopener noreferrer" :title="user.url"
+                      class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 text-amber-600 border border-amber-200 whitespace-nowrap">
+                      <i class="fa-solid fa-moon mr-1"></i>休眠
+                    </a>
+                    <span v-else-if="linkStatus(user) === 'trusted'" data-test="user-link-badge"
+                      :title="trustTitle(user)"
+                      class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-50 text-blue-600 border border-blue-200 whitespace-nowrap">
+                      <i class="fa-solid fa-shield-halved mr-1"></i>已确认
+                    </span>
                   </div>
                   <span class="text-xs block truncate text-gray-400">{{ user.email }}</span>
                 </div>
                 <div class="flex flex-col gap-1.5 flex-shrink-0">
+                  <button v-if="linkStatus(user) === 'dormant'" @click="trustLink(user)"
+                    data-test="user-trust-button"
+                    class="px-3 py-1 text-xs font-medium rounded-lg bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white transition-all">
+                    确认安全
+                  </button>
+                  <button v-else-if="linkStatus(user) === 'trusted'" @click="revokeLinkTrust(user)"
+                    data-test="user-trust-revoke-button"
+                    :title="trustTitle(user)"
+                    class="px-3 py-1 text-xs font-medium rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-600 hover:text-white transition-all">
+                    撤销确认
+                  </button>
                   <button @click="viewUserComments(user)"
                     class="px-3 py-1 text-xs font-medium rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white transition-all">
                     查看评论
@@ -88,7 +128,7 @@
             </div>
           </div>
           <div v-if="users.length === 0" class="px-5 py-8 text-center text-sm text-gray-400">
-            {{ searchKeyword.trim() || verifiedFilter !== 'all' ? '未找到匹配的用户' : '暂无用户数据' }}
+            {{ searchKeyword.trim() || verifiedFilter !== 'all' || linkStatusFilter !== 'all' ? '未找到匹配的用户' : '暂无用户数据' }}
           </div>
         </div>
 
@@ -100,6 +140,7 @@
                 <th class="px-4 py-3 text-xs font-semibold uppercase text-gray-500">作者</th>
                 <th class="px-4 py-3 text-xs font-semibold uppercase text-gray-500">邮箱</th>
                 <th class="px-4 py-3 text-xs font-semibold uppercase text-gray-500">邮箱验证</th>
+                <th class="px-4 py-3 text-xs font-semibold uppercase text-gray-500">网站链接</th>
                 <th class="px-4 py-3 text-xs font-semibold uppercase text-gray-500">评论数</th>
                 <th class="px-4 py-3 text-xs font-semibold uppercase text-gray-500">已通过</th>
                 <th class="px-4 py-3 text-xs font-semibold uppercase text-gray-500">待审核</th>
@@ -133,6 +174,29 @@
                   </span>
                 </td>
                 <td class="px-4 py-3">
+                  <!-- 个人网站：最新一条非空链接（按邮箱归一身份）；休眠链接用琥珀色提醒并**可点击打开**
+                       （管理员要先人工看一眼才能判断是否安全），已人工确认的用蓝色、hover 看到期时间。
+                       老后端根本不返回 url 字段时给一个灰色的 —，避免把「后端没下发」误读成「没有链接」 -->
+                  <span v-if="linkStatus(user) === 'unknown'" data-test="user-link-unknown"
+                    :title="LINK_UNKNOWN_TITLE" class="text-sm text-gray-400">—</span>
+                  <span v-else-if="linkStatus(user) === 'none'" data-test="user-link-status"
+                    class="text-sm text-gray-400">无链接</span>
+                  <a v-else-if="linkStatus(user) === 'dormant'" data-test="user-link-status" :href="user.url"
+                    target="_blank" rel="noopener noreferrer" :title="`${user.url}（点击在新窗口打开，确认安全后可人工放行）`"
+                    class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-600 border border-amber-200 whitespace-nowrap hover:bg-amber-100 transition-colors">
+                    <i class="fa-solid fa-moon mr-1"></i>休眠
+                  </a>
+                  <span v-else-if="linkStatus(user) === 'trusted'" data-test="user-link-status"
+                    :title="trustTitle(user)"
+                    class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-600 border border-blue-200 whitespace-nowrap">
+                    <i class="fa-solid fa-shield-halved mr-1"></i>已确认
+                  </span>
+                  <span v-else data-test="user-link-status" :title="user.url"
+                    class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-600 border border-emerald-200 whitespace-nowrap">
+                    <i class="fa-solid fa-link mr-1"></i>正常
+                  </span>
+                </td>
+                <td class="px-4 py-3">
                   <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">{{ user.commentCount }}</span>
                 </td>
                 <td class="px-4 py-3 text-sm text-green-600">{{ user.approvedCount }}</td>
@@ -141,6 +205,17 @@
                 <td class="px-4 py-3 text-sm text-gray-500">{{ formatDate(user.lastCommentDate) }}</td>
                 <td class="px-4 py-3 text-right whitespace-nowrap">
                   <div class="flex items-center justify-end gap-2">
+                    <button v-if="linkStatus(user) === 'dormant'" @click="trustLink(user)"
+                      data-test="user-trust-button" title="人工确认该链接安全：确认期内不再标记为休眠"
+                      class="px-3 py-1.5 text-xs font-medium rounded-lg bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white transition-all">
+                      确认安全
+                    </button>
+                    <button v-else-if="linkStatus(user) === 'trusted'" @click="revokeLinkTrust(user)"
+                      data-test="user-trust-revoke-button"
+                      :title="trustTitle(user)"
+                      class="px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-600 hover:text-white transition-all">
+                      撤销确认
+                    </button>
                     <button @click="viewUserComments(user)"
                       class="px-3 py-1.5 text-xs font-medium rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white transition-all">
                       查看评论
@@ -157,8 +232,8 @@
                 </td>
               </tr>
               <tr v-if="users.length === 0">
-                <td colspan="9" class="px-5 py-8 text-center text-sm text-gray-400">
-                  {{ searchKeyword.trim() || verifiedFilter !== 'all' ? '未找到匹配的用户' : '暂无用户数据' }}
+                <td colspan="10" class="px-5 py-8 text-center text-sm text-gray-400">
+                  {{ searchKeyword.trim() || verifiedFilter !== 'all' || linkStatusFilter !== 'all' ? '未找到匹配的用户' : '暂无用户数据' }}
                 </td>
               </tr>
             </tbody>
@@ -200,6 +275,8 @@ const pagination = ref({ page: 1, limit: 20, totalPage: 1 });
 const searchKeyword = ref('');
 // 邮箱验证筛选：all / true（已验证）/ false（未验证）
 const verifiedFilter = ref('all');
+// 网站链接状态筛选：all / dormant（休眠）/ trusted（已确认）/ normal（正常）/ none（无链接）
+const linkStatusFilter = ref('all');
 
 const fetchUsers = async (page = 1) => {
   loading.value = true;
@@ -208,6 +285,7 @@ const fetchUsers = async (page = 1) => {
     const keyword = searchKeyword.value.trim();
     if (keyword) params.search = keyword;
     if (verifiedFilter.value !== 'all') params.verified = verifiedFilter.value;
+    if (linkStatusFilter.value !== 'all') params.linkStatus = linkStatusFilter.value;
     const res = await request.get('/admin/stats/users', { params });
     if (res.data) {
       users.value = res.data.users || [];
@@ -263,6 +341,63 @@ const viewUserComments = (user) => {
     path: '/user-comments',
     query: { author: user.author, email: user.email }
   });
+};
+
+/**
+ * 个人网站链接状态：
+ * - 'unknown' 后端压根没下发 url 字段（老版本后端）—— 与「没有链接」含义不同，必须区分展示
+ * - 'none'    没有留下过链接（字段在、但值为空）
+ * - 'trusted' 管理员人工确认过该链接且未过期（doc/link_security.md §2.4；后端同时会把 urlDormant 置 false）
+ * - 'dormant' 链接休眠（doc/link_security.md §2；仅在 url 非空且功能开启时后端才置 true）
+ * - 'normal'  正常链接
+ */
+const LINK_UNKNOWN_TITLE = '后端版本过旧，未下发该字段（请升级/重启后端）';
+
+const linkStatus = (user) => {
+  if (user.url === undefined || user.url === null) return 'unknown';
+  if (!user.url) return 'none';
+  if (user.urlTrustedUntil) return 'trusted';
+  return user.urlDormant ? 'dormant' : 'normal';
+};
+
+/**
+ * 「已确认」的说明文案：区分「管理员人工确认」与「评论者本人从提醒邮件里确认仍在用」
+ * （后端用 urlTrustedSource 区分，老后端不下发该字段时按人工确认展示）。
+ */
+const trustTitle = (user) => {
+  const who = user.urlTrustedSource === 'self' ? '本人已确认仍在使用' : '已人工确认安全';
+  return `${who}，${formatDateTime(user.urlTrustedUntil)} 到期；到期后若无新评论会自动恢复休眠`;
+};
+
+/**
+ * 人工确认某条休眠链接安全（有效期 = 后端当前的 link_dormant_days 天）。
+ * 确认后重新拉一次列表：该链接到底是「已确认」还是「本来就正常」由后端判定，
+ * 前端不自行猜状态。
+ */
+const trustLink = async (user) => {
+  try {
+    const res = await request.post('/admin/links/trust', { email: user.email, url: user.url });
+    if (res.code === 200) {
+      toast.success(`已确认安全，${formatDate(res.data?.expiresAt)} 到期`);
+      fetchUsers(pagination.value.page);
+    }
+  } catch (error) {
+    toast.error('确认失败，请重试');
+  }
+};
+
+/** 撤销人工确认：链接立刻回到正常判定（该休眠就继续休眠） */
+const revokeLinkTrust = async (user) => {
+  if (!window.confirm(`确定撤销对 ${user.author}（${user.email}）这条链接的人工确认吗？撤销后会立刻恢复休眠判定。`)) return;
+  try {
+    const res = await request.delete('/admin/links/trust', { params: { email: user.email, url: user.url } });
+    if (res.code === 200) {
+      toast.success('已撤销人工确认');
+      fetchUsers(pagination.value.page);
+    }
+  } catch (error) {
+    toast.error('撤销失败，请重试');
+  }
 };
 
 const formatDate = (str) => {

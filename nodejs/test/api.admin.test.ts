@@ -87,6 +87,57 @@ describe("admin 认证 — token 校验", () => {
   });
 });
 
+/**
+ * `/admin/comments/list` 的文章标识筛选（数据统计页「热门文章 Top 5」点击跳转用）。
+ *
+ * 精确匹配：`/posts/a` 不应命中 `/posts/ab`；`trim` 后为空表示不筛选。
+ */
+describe("GET /admin/comments/list — 按文章标识筛选", () => {
+  it("postSlug 精确匹配，不做前缀匹配", async () => {
+    seedComment({ post_slug: "/posts/a", author: "甲", email: "a@x.com" });
+    seedComment({ post_slug: "/posts/ab", author: "乙", email: "b@x.com" });
+    seedComment({ post_slug: "/posts/b", author: "丙", email: "c@x.com" });
+
+    const token = await loginToken();
+    const body = await json(await api("/admin/comments/list?postSlug=/posts/a", { token }));
+    expect(body.data.comments).toHaveLength(1);
+    expect(body.data.comments[0].postSlug).toBe("/posts/a");
+    expect(body.data.pagination.totalPage).toBe(1);
+  });
+
+  it("可与 status 组合筛选", async () => {
+    seedComment({ post_slug: "/posts/a", status: "pending" });
+    seedComment({ post_slug: "/posts/a", status: "approved" });
+
+    const token = await loginToken();
+    const body = await json(
+      await api("/admin/comments/list?postSlug=/posts/a&status=pending", { token })
+    );
+    expect(body.data.comments).toHaveLength(1);
+    expect(body.data.comments[0].status).toBe("pending");
+  });
+
+  it("postSlug 为空或只有空白时不筛选", async () => {
+    seedComment({ post_slug: "/posts/a" });
+    seedComment({ post_slug: "/posts/b" });
+
+    const token = await loginToken();
+    const empty = await json(await api("/admin/comments/list?postSlug=", { token }));
+    expect(empty.data.comments).toHaveLength(2);
+    const blank = await json(await api("/admin/comments/list?postSlug=%20%20", { token }));
+    expect(blank.data.comments).toHaveLength(2);
+  });
+
+  it("没有匹配的评论时返回空列表", async () => {
+    seedComment({ post_slug: "/posts/a" });
+
+    const token = await loginToken();
+    const body = await json(await api("/admin/comments/list?postSlug=/posts/none", { token }));
+    expect(body.data.comments).toEqual([]);
+    expect(body.data.pagination.totalPage).toBe(0);
+  });
+});
+
 describe("POST /admin/login", () => {
   it("默认凭据登录成功并返回 token", async () => {
     const res = await api("/admin/login", {

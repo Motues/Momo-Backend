@@ -762,7 +762,18 @@ describe('CommentItem —— 拍平后的父评论锚点跳转', () => {
 });
 
 describe('CommentItem —— 管理员密钥输入', () => {
-	it('adminCommentKeyConfigured + 邮箱哈希匹配时显示密钥输入框', async () => {
+	it('adminCommentKeyConfigured + 邮箱哈希命中数组时显示密钥输入框', async () => {
+		const hash = await sha256HexOf('a@b.com');
+		const { container } = renderItem({
+			replyingToId: 1,
+			email: 'a@b.com',
+			adminCommentKeyConfigured: true,
+			adminEmailHashes: ['deadbeef', hash],
+		});
+		await waitFor(() => expect(container.querySelector('#reply-admin-key-1')).toBeTruthy());
+	});
+
+	it('哈希数组为空时回落到旧的单哈希属性（旧调用方兼容）', async () => {
 		const hash = await sha256HexOf('a@b.com');
 		const { container } = renderItem({
 			replyingToId: 1,
@@ -779,7 +790,7 @@ describe('CommentItem —— 管理员密钥输入', () => {
 			replyingToId: 1,
 			email: '  A@B.com  ',
 			adminCommentKeyConfigured: true,
-			adminEmailHash: hash,
+			adminEmailHashes: [hash],
 		});
 		await waitFor(() => expect(container.querySelector('#reply-admin-key-1')).toBeTruthy());
 	});
@@ -790,7 +801,7 @@ describe('CommentItem —— 管理员密钥输入', () => {
 			replyingToId: 1,
 			email: 'a@b.com',
 			adminCommentKeyConfigured: true,
-			adminEmailHash: hash,
+			adminEmailHashes: [hash],
 		});
 		await tick();
 		expect(container.querySelector('#reply-admin-key-1')).toBeNull();
@@ -802,7 +813,7 @@ describe('CommentItem —— 管理员密钥输入', () => {
 			replyingToId: 1,
 			email: 'a@b.com',
 			adminCommentKeyConfigured: false,
-			adminEmailHash: hash,
+			adminEmailHashes: [hash],
 		});
 		await tick();
 		expect(container.querySelector('#reply-admin-key-1')).toBeNull();
@@ -812,7 +823,7 @@ describe('CommentItem —— 管理员密钥输入', () => {
 		const hash = await sha256HexOf('a@b.com');
 		const details = [];
 		const { container, rerender } = renderItem(
-			{ author: 'Admin', email: 'a@b.com', adminCommentKeyConfigured: true, adminEmailHash: hash },
+			{ author: 'Admin', email: 'a@b.com', adminCommentKeyConfigured: true, adminEmailHashes: [hash] },
 			{ submit: (e) => details.push(e.detail) }
 		);
 		// 走真实流程：点回复（用用户信息预填昵称/邮箱）-> 父组件打开表单
@@ -939,5 +950,136 @@ describe('CommentItem —— 语言切换的响应性（记录现状）', () => 
 		// 但 t 是 const t = i18nit(language) 只在初始化执行一次，文案仍是中文
 		expect(findButton(container, '回复')).toBeTruthy();
 		expect(findButton(container, 'Reply')).toBeUndefined();
+	});
+});
+
+describe('CommentItem —— 休眠链接（urlDormant）', () => {
+	const AUTHOR = 'https://me.example.com';
+	const dormantComment = (overrides = {}) =>
+		makeComment({ url: AUTHOR, urlDormant: true, author: 'Alice', ...overrides });
+
+	const tip = (container) => container.querySelector('[data-test="link-dormant-tip"]');
+	const authorBtn = (container) => container.querySelector('[data-test="link-dormant-author"]');
+
+	it('urlDormant 为真时昵称与头像都不是 <a>，而是按钮（且不再有休眠徽章）', () => {
+		const { container } = renderItem({ c: dormantComment(), language: 'zh-cn' });
+
+		expect(container.querySelectorAll('a').length).toBe(0);
+		expect(authorBtn(container)?.textContent.trim()).toBe('Alice');
+		expect(container.querySelector('[data-test="link-dormant-avatar"]')).toBeTruthy();
+		// 徽章已按要求移除：不再有独立的休眠标签
+		expect(container.querySelector('[data-test="link-dormant-badge"]')).toBeNull();
+		expect(container.textContent).not.toContain('链接已休眠');
+	});
+
+	it('urlDormant 为假（未下发/无网址）时行为与以前完全一致：普通 <a>，没有浮窗', () => {
+		for (const c of [
+			makeComment({ url: AUTHOR }),
+			makeComment({ url: AUTHOR, urlDormant: false }),
+			makeComment({ url: '' , urlDormant: true }),
+		]) {
+			const { container } = renderItem({ c });
+			expect(container.querySelectorAll('a').length, JSON.stringify(c.urlDormant)).toBe(c.url ? 2 : 0);
+			expect(tip(container)).toBeNull();
+			expect(container.querySelector('[data-test="link-dormant-author"]')).toBeNull();
+			cleanup();
+		}
+	});
+
+	it('urlDormant 为真但网址不安全（协议被拦）时不显示浮窗', () => {
+		const { container } = renderItem({ c: makeComment({ url: 'javascript:alert(1)', urlDormant: true }) });
+		expect(tip(container)).toBeNull();
+		expect(container.querySelectorAll('a').length).toBe(0);
+	});
+
+	it('点击昵称弹出小浮窗（不是全屏弹窗），文案说明暂时无法跳转', async () => {
+		const { container } = renderItem({ c: dormantComment(), language: 'zh-cn' });
+		expect(tip(container)).toBeNull();
+
+		await fireEvent.click(authorBtn(container));
+
+		const box = tip(container);
+		expect(box).toBeTruthy();
+		expect(box.textContent.trim()).toBe('该评论已经休眠，暂时无法由本站跳转访问');
+		// 小浮窗：没有全屏遮罩、没有对话框
+		expect(container.querySelector('[data-test="link-dormant-overlay"]')).toBeNull();
+		expect(container.querySelector('[data-test="link-dormant-dialog"]')).toBeNull();
+		expect(box.getAttribute('role')).toBe('tooltip');
+		// 位置用 fixed 坐标贴在触发元素下方
+		expect(box.className).toContain('fixed');
+		expect(box.getAttribute('style')).toContain('top:');
+	});
+
+	it('点击头像同样弹出浮窗，再次点击昵称关闭', async () => {
+		const { container } = renderItem({ c: dormantComment(), language: 'zh-cn' });
+		await fireEvent.click(container.querySelector('[data-test="link-dormant-avatar"]'));
+		expect(tip(container)).toBeTruthy();
+
+		await fireEvent.click(authorBtn(container));
+		expect(tip(container)).toBeNull();
+	});
+
+	it('点击浮窗与触发元素之外关闭；点在浮窗内部不关闭', async () => {
+		const { container } = renderItem({ c: dormantComment(), language: 'zh-cn' });
+		await fireEvent.click(authorBtn(container));
+
+		// 点浮窗内部：保持打开
+		await fireEvent.click(tip(container));
+		expect(tip(container)).toBeTruthy();
+
+		// 点页面其他位置：关闭
+		await fireEvent.click(document.body);
+		expect(tip(container)).toBeNull();
+	});
+
+	it('按 Esc 关闭浮窗', async () => {
+		const { container } = renderItem({ c: dormantComment(), language: 'zh-cn' });
+		await fireEvent.click(authorBtn(container));
+		expect(tip(container)).toBeTruthy();
+
+		await fireEvent.keyDown(window, { key: 'Escape' });
+		expect(tip(container)).toBeNull();
+	});
+
+	it('滚动时关闭浮窗（避免与昵称脱位）', async () => {
+		const { container } = renderItem({ c: dormantComment(), language: 'zh-cn' });
+		await fireEvent.click(authorBtn(container));
+		expect(tip(container)).toBeTruthy();
+
+		await fireEvent.scroll(window);
+		expect(tip(container)).toBeNull();
+	});
+
+	it('浮窗里没有任何可跳转的链接，也不打开新窗口', async () => {
+		const open = vi.fn();
+		vi.stubGlobal('open', open);
+		const { container } = renderItem({ c: dormantComment(), language: 'zh-cn' });
+		await fireEvent.click(authorBtn(container));
+
+		const box = tip(container);
+		expect(box.querySelectorAll('a')).toHaveLength(0);
+		expect(box.getAttribute('href')).toBeNull();
+		// 整个休眠评论不含指向目标地址的链接
+		expect(container.querySelectorAll(`a[href="${AUTHOR}"]`)).toHaveLength(0);
+		expect(open).not.toHaveBeenCalled();
+	});
+
+	it('英文语言下浮窗文案是英文', async () => {
+		const { container } = renderItem({ c: dormantComment(), language: 'en' });
+		await fireEvent.click(authorBtn(container));
+
+		expect(tip(container).textContent).toContain("cannot be opened from this site");
+	});
+
+	it('不使用 window.confirm，浮窗样式只用评论区 CSS 变量', async () => {
+		const confirm = vi.fn();
+		vi.stubGlobal('confirm', confirm);
+		const { container } = renderItem({ c: dormantComment(), language: 'zh-cn' });
+		await fireEvent.click(authorBtn(container));
+
+		expect(confirm).not.toHaveBeenCalled();
+		expect(tip(container).className).toContain('link-dormant-tip');
+		expect(container.querySelector('[data-test="link-dormant-avatar"]').getAttribute('title'))
+			.toBe('该评论已经休眠，暂时无法由本站跳转访问');
 	});
 });

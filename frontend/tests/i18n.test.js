@@ -68,6 +68,8 @@ const CONTRACT_KEYS = [
 	'emojiPanel',
 	'emojiRetry',
 	'emojiStale',
+	'emojiPartial',
+	'linkDormantTip',
 ];
 
 afterEach(() => {

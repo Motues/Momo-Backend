@@ -58,6 +58,8 @@ export interface Translation {
         emojiRetry: string;
         emojiEmpty: string;
         emojiStale: string;
+        emojiPartial: string;
         emojiClose: string;
+        linkDormantTip: string;
     },
 }

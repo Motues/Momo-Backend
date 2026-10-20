@@ -1,5 +1,15 @@
 import { Hono } from "hono";
-import { getCommentBySlug, postComment, verifyEmail, verifyChallenge, verifySolution } from "../api/index"; // public
+import {
+  getCommentBySlug,
+  postComment,
+  verifyEmail,
+  verifyChallenge,
+  verifySolution,
+  linkSyncConfirm,
+  linkDormantNoticePage,
+  linkDormantNoticeConfirm,
+  linkDormantNoticeUpdate,
+} from "../api/index"; // public
 import {
   getAllComments,
   changeCommentStatus,
@@ -10,6 +20,8 @@ import {
   getUserComments,
   addUserToBlacklist,
   removeUserFromBlacklist,
+  addLinkTrust,
+  removeLinkTrust,
   getSettings,
   updateSettings,
   changePassword,
@@ -21,6 +33,7 @@ import {
   exportComments,
   verifyOverview,
   verifyRecords,
+  mailList,
 } from "../api/index"; // admin
 import fs from "fs";
 import path from "path";
@@ -31,6 +44,14 @@ const router = new Hono();
 router.get("/api/comments", getCommentBySlug);
 router.post("/api/comments", postComment);
 router.get("/api/verify-email/verify", verifyEmail);
+
+// 链接安全审查：历史链接批量更新的确认链接（邮件里点开的纯链接）
+router.get("/api/link-sync/confirm", linkSyncConfirm);
+
+// 链接安全审查：休眠链接提醒页（邮件里点开的纯链接；确认仍在用 / 提交新链接）
+router.get("/api/link-dormant/notice", linkDormantNoticePage);
+router.post("/api/link-dormant/confirm", linkDormantNoticeConfirm);
+router.post("/api/link-dormant/update", linkDormantNoticeUpdate);
 
 // 无感验证（Turnstile 风格）
 router.post("/api/verify/challenge", verifyChallenge);
@@ -58,9 +79,16 @@ router.get("/admin/stats/users/comments", getUserComments);
 router.get("/admin/verify/overview", verifyOverview);
 router.get("/admin/verify/records", verifyRecords);
 
+// Admin 邮件管理（外发邮件日志，默认保留 30 天）
+router.get("/admin/mails", mailList);
+
 // Admin user blacklist
 router.post("/admin/users/blacklist", addUserToBlacklist);
 router.delete("/admin/users/blacklist", removeUserFromBlacklist);
+
+// Admin 休眠链接的人工确认（有效期 = 确认时的 link_dormant_days 天）
+router.post("/admin/links/trust", addLinkTrust);
+router.delete("/admin/links/trust", removeLinkTrust);
 
 // Admin data import/export
 router.post("/admin/data/import/comments", importComments);

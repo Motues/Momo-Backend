@@ -1,7 +1,36 @@
 import { db, schema } from "./client";
-import { eq, and, inArray, desc, gte, asc, count, sql } from "drizzle-orm";
+import { eq, and, inArray, desc, gte, lt, asc, count, sql } from "drizzle-orm";
+import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 import { Comment, CreateCommentInput, rowToComment, rowsToComments, CommentRow } from "../type/prisma";
 import { getSetting } from "../utils/settings";
+import { normalizeEmail } from "../utils/adminEmails";
+import {
+  LINK_DORMANT_DAYS_KEY,
+  LINK_SECURITY_ENABLED_KEY,
+  isLinkDormant,
+  isTrustActive,
+  linkTrustKey,
+  resolveLinkSwitch,
+} from "../utils/linkSecurity";
+import {
+  mergeDistribution,
+  normalizeBrowserFamily,
+  normalizeDeviceType,
+  normalizeOsFamily,
+} from "../utils/statsDistribution";
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * 环比：与上一个等长窗口比较的整数百分比；上一窗口为 0 时返回 null。
+ *
+ * 口径与认证记录概览（`verifyRecordService.ts` 的 `deltaPct`）一致：
+ * 没有对照数据时下发 null，而不是 0 或 100% —— 前者会让前端显示「持平」这种假结论。
+ */
+function deltaPct(current: number, previous: number): number | null {
+  if (!previous) return null;
+  return Math.round(((current - previous) / previous) * 100);
+}
 
 class CommentService {
   /*
@@ -17,12 +46,15 @@ class CommentService {
 
   /*
    * 获取所有评论，按照最新发布时间排序
-   * 支持按状态筛选
+   * 支持按状态筛选、按文章标识精确筛选（数据统计页的「热门文章」点击跳转用）
    */
-  async getAllComments(status?: string): Promise<Comment[]> {
+  async getAllComments(status?: string, postSlug?: string): Promise<Comment[]> {
     const conditions = [];
     if (status) {
       conditions.push(eq(schema.comments.status, status));
+    }
+    if (postSlug) {
+      conditions.push(eq(schema.comments.post_slug, postSlug));
     }
 
     const query = db
@@ -101,6 +133,188 @@ class CommentService {
       .limit(1)
       .all()) as unknown as { id: number }[];
     return rows.length > 0;
+  }
+
+  /*
+   * 链接安全审查：按归一化邮箱取「最后评论时间 + 最新一次留下的网址」
+   *
+   * 用户列表的「网站链接是否休眠」列用它：身份是邮箱（与公开评论区的 urlDormant 同一口径），
+   * 因此同一个人用不同昵称留下的评论会归到同一组。一次查询解决，避免 N+1。
+   */
+  async getLinkStatusByEmail(
+    emails: string[]
+  ): Promise<Map<string, { lastAt: number; latestUrl: string }>> {
+    const result = new Map<string, { lastAt: number; latestUrl: string }>();
+    const normalized = Array.from(
+      new Set(emails.map((email) => String(email ?? "").trim().toLowerCase()).filter((email) => email !== ""))
+    );
+    if (normalized.length === 0) return result;
+
+    const placeholders = sql.join(
+      normalized.map((email) => sql`${email}`),
+      sql`, `
+    );
+    const rows = db.all(
+      sql`SELECT lower(trim("email")) AS "email", "pub_date" AS "at", COALESCE("url", '') AS "url"
+            FROM "Comment"
+           WHERE status NOT IN ('rejected', 'deleted')
+             AND lower(trim("email")) IN (${placeholders})
+           ORDER BY "pub_date" ASC`
+    ) as unknown as { email: string; at: number; url: string }[];
+
+    // 升序遍历：最后一条决定 lastAt；只在网址非空时覆盖 latestUrl（「以最新链接为准」）
+    for (const row of rows) {
+      const key = String(row.email).toLowerCase();
+      const at = Number(row.at);
+      const url = String(row.url ?? "").trim();
+      const current = result.get(key);
+      result.set(key, {
+        lastAt: Number.isFinite(at) ? at : current?.lastAt ?? 0,
+        latestUrl: url !== "" ? url : current?.latestUrl ?? "",
+      });
+    }
+    return result;
+  }
+
+  /*
+   * 链接安全审查：取这批邮箱下**仍未过期**的人工确认记录
+   *
+   * 返回 `linkTrustKey(邮箱, 网址) → { expiresAt, source }`，供公开评论区与用户列表判断豁免。
+   * `source` 区分「管理员人工确认」(`admin`) 与「评论者本人从提醒邮件里确认」(`self`)。
+   * 只查传入的邮箱集合（本页涉及的邮箱），一次查询解决，避免 N+1；
+   * 「是否过期」由纯函数 isTrustActive 判定（脏值/格式不符一律不豁免，见 doc/link_security.md 第 2.4 节）。
+   */
+  async getActiveTrustedLinks(
+    emails: string[],
+    nowMs: number
+  ): Promise<Map<string, { expiresAt: string; source: string }>> {
+    const result = new Map<string, { expiresAt: string; source: string }>();
+    const normalized = Array.from(
+      new Set(emails.map((email) => String(email ?? "").trim().toLowerCase()).filter((email) => email !== ""))
+    );
+    if (normalized.length === 0) return result;
+
+    const placeholders = sql.join(
+      normalized.map((email) => sql`${email}`),
+      sql`, `
+    );
+    const rows = db.all(
+      sql`SELECT lower(trim("email")) AS "email", "url" AS "url", "expires_at" AS "expires_at",
+                 COALESCE("source", 'admin') AS "source"
+            FROM "TrustedLink"
+           WHERE lower(trim("email")) IN (${placeholders})`
+    ) as unknown as { email: string; url: string; expires_at: string; source: string }[];
+
+    for (const row of rows) {
+      const expiresAt = String(row.expires_at ?? "");
+      if (!isTrustActive(expiresAt, nowMs)) continue;
+      result.set(linkTrustKey(String(row.email), String(row.url)), {
+        expiresAt,
+        source: String(row.source ?? "admin") === "self" ? "self" : "admin",
+      });
+    }
+    return result;
+  }
+
+  /*
+   * 链接安全审查：写入 / 刷新一条人工确认（管理员在用户列表点「确认安全」，或评论者本人从提醒邮件确认）
+   *
+   * 幂等 upsert：同一 (邮箱, 网址) 重复确认只刷新到期时间与来源，不新增行。
+   */
+  async trustLink(
+    email: string,
+    url: string,
+    expiresAt: string,
+    createdAt: string,
+    source: "admin" | "self" = "admin"
+  ): Promise<void> {
+    db.run(
+      sql`INSERT INTO "TrustedLink" ("email", "url", "expires_at", "created_at", "source")
+              VALUES (${email}, ${url}, ${expiresAt}, ${createdAt}, ${source})
+          ON CONFLICT("email", "url") DO UPDATE SET
+              "expires_at" = ${expiresAt},
+              "created_at" = ${createdAt},
+              "source" = ${source}`
+    );
+  }
+
+  /*
+   * 链接安全审查：撤销一条人工确认；返回是否真的删掉了记录（幂等，重复撤销返回 false）
+   */
+  async revokeTrustedLink(email: string, url: string): Promise<boolean> {
+    const result = db.run(
+      sql`DELETE FROM "TrustedLink" WHERE "email" = ${email} AND "url" = ${url}`
+    );
+    return Number(result.changes ?? 0) > 0;
+  }
+
+  /*
+   * 链接安全审查：按归一化邮箱取「最后一条评论时间」（跨文章统计）
+   *
+   * 只查传入的邮箱集合（本页评论涉及的邮箱），一次分组查询解决，避免 N+1。
+   * 状态口径见 doc/link_security.md 第 2.1 节：rejected / deleted 不计入。
+   */
+  async getLastCommentTimeByEmail(emails: string[]): Promise<Map<string, number>> {
+    const result = new Map<string, number>();
+    const normalized = Array.from(
+      new Set(emails.map((email) => String(email ?? "").trim().toLowerCase()).filter((email) => email !== ""))
+    );
+    if (normalized.length === 0) return result;
+
+    const placeholders = sql.join(
+      normalized.map((email) => sql`${email}`),
+      sql`, `
+    );
+    const rows = db.all(
+      sql`SELECT lower(trim("email")) AS "email", MAX("pub_date") AS "last"
+            FROM "Comment"
+           WHERE status NOT IN ('rejected', 'deleted')
+             AND lower(trim("email")) IN (${placeholders})
+           GROUP BY lower(trim("email"))`
+    ) as unknown as { email: string; last: number }[];
+
+    for (const row of rows) {
+      const last = Number(row.last);
+      if (Number.isFinite(last)) result.set(String(row.email).toLowerCase(), last);
+    }
+    return result;
+  }
+
+  /*
+   * 链接安全审查：某邮箱的历史评论（只看网址字段，用于判断要不要发确认邮件 / 批量更新）
+   */
+  async getCommentsByEmail(email: string): Promise<{ id: number; url: string; status: string }[]> {
+    const normalized = String(email ?? "").trim().toLowerCase();
+    if (normalized === "") return [];
+    const rows = db.all(
+      sql`SELECT id, COALESCE(url, '') AS url, status
+            FROM "Comment"
+           WHERE lower(trim("email")) = ${normalized}
+             AND status NOT IN ('rejected', 'deleted')`
+    ) as unknown as { id: number; url: string; status: string }[];
+    return rows.map((row) => ({ id: Number(row.id), url: String(row.url ?? ""), status: String(row.status) }));
+  }
+
+  /*
+   * 链接安全审查：把某邮箱的历史评论网址批量更新为新网址
+   *
+   * - 只改本来就有网址、且与目标网址不同的评论（幂等：重复确认不会产生额外写入）；
+   * - 不动空网址的评论（原本没留链接的评论不该被凭空补上）；
+   * - rejected / deleted 不动。
+   */
+  async updateCommentUrlsByEmail(email: string, newUrl: string): Promise<number> {
+    const normalized = String(email ?? "").trim().toLowerCase();
+    if (normalized === "" || !newUrl) return 0;
+    const result = db.run(
+      sql`UPDATE "Comment"
+             SET url = ${newUrl}
+           WHERE lower(trim("email")) = ${normalized}
+             AND status NOT IN ('rejected', 'deleted')
+             AND url IS NOT NULL
+             AND trim(url) <> ''
+             AND url <> ${newUrl}`
+    );
+    return Number(result.changes ?? 0);
   }
 
   /*
@@ -344,6 +558,127 @@ class CommentService {
         lastCommentDate: new Date(c.lastCommentDate).toISOString(),
       }));
 
+    // 时间窗口指标
+    //
+    // 窗口起点必须与上面趋势分桶的起点**严格一致**，否则「窗口新增」和折线图的总和对不上
+    // （range=0 时折线图是 12 个自然月，不是滚动 365 天）。
+    const todayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    let windowStart: number;
+    let prevWindowStart: number;
+    if (range === 0) {
+      windowStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1);
+      prevWindowStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 23, 1);
+    } else {
+      windowStart = todayStart - (range - 1) * MS_PER_DAY;
+      prevWindowStart = windowStart - range * MS_PER_DAY;
+    }
+
+    /** 窗口内评论数（含所有状态）：[from, to) */
+    const countInWindow = (from: number, to?: number): number => {
+      const conditions = [gte(schema.comments.pub_date, from)];
+      if (to !== undefined) conditions.push(lt(schema.comments.pub_date, to));
+      const row = db
+        .select({ value: count() })
+        .from(schema.comments)
+        .where(and(...conditions))
+        .all() as unknown as { value: number }[];
+      return row[0]?.value ?? 0;
+    };
+
+    /** 窗口内活跃评论者数（author + email 去重，与 totalUsers 同口径） */
+    const usersInWindow = (from: number, to?: number): number => {
+      const conditions = [gte(schema.comments.pub_date, from)];
+      if (to !== undefined) conditions.push(lt(schema.comments.pub_date, to));
+      const rows = db
+        .select({ author: schema.comments.author, email: schema.comments.email })
+        .from(schema.comments)
+        .where(and(...conditions))
+        .all() as unknown as { author: string; email: string }[];
+      return new Set(rows.map((u) => `${u.author}|${u.email}`)).size;
+    };
+
+    const windowComments = countInWindow(windowStart);
+    const prevWindowComments = countInWindow(prevWindowStart, windowStart);
+    const windowUsers = usersInWindow(windowStart);
+    const prevWindowUsers = usersInWindow(prevWindowStart, windowStart);
+    // 「今日」「近 7 天」与窗口无关，统一按 UTC 日切分（与趋势分桶同一时区口径）
+    const todayComments = countInWindow(todayStart);
+    const last7DaysComments = countInWindow(todayStart - 6 * MS_PER_DAY);
+
+    // 热门文章 Top 5（并列时按文章标识升序，保证三端顺序一致）
+    const postRows = db
+      .select({
+        postSlug: schema.comments.post_slug,
+        value: count(),
+        lastDate: sql<number>`MAX(${schema.comments.pub_date})`,
+      })
+      .from(schema.comments)
+      .groupBy(schema.comments.post_slug)
+      .orderBy(desc(count()), asc(schema.comments.post_slug))
+      .limit(5)
+      .all() as unknown as { postSlug: string; value: number; lastDate: number }[];
+
+    const topPosts = postRows.map((p) => ({
+      postSlug: p.postSlug,
+      count: p.value,
+      lastCommentDate: new Date(p.lastDate).toISOString(),
+    }));
+
+    // 客户端分布 Top 5：先按原始值分组，再归一化 + 同名合并（见 utils/statsDistribution.ts）
+    // 列类型用 AnySQLiteColumn：三列虽然都是 TEXT，但 Drizzle 的列类型按列名标称，不能互相赋值
+    const distributionOf = (
+      column: AnySQLiteColumn,
+      normalize: (raw: string | null | undefined) => string
+    ) => {
+      const rows = db
+        .select({ name: column, value: count() })
+        .from(schema.comments)
+        .groupBy(column)
+        .all() as unknown as { name: string | null; value: number }[];
+      return mergeDistribution(
+        rows.map((row) => ({ name: row.name, count: row.value })),
+        normalize
+      );
+    };
+
+    const deviceDistribution = distributionOf(schema.comments.device, normalizeDeviceType);
+    const browserDistribution = distributionOf(schema.comments.browser, normalizeBrowserFamily);
+    const osDistribution = distributionOf(schema.comments.os, normalizeOsFamily);
+
+    // 最新评论动态（最近 5 条，含所有状态；并列时间用 id 兜底排序）
+    const latestRows = db
+      .select({
+        id: schema.comments.id,
+        author: schema.comments.author,
+        email: schema.comments.email,
+        postSlug: schema.comments.post_slug,
+        contentText: schema.comments.content_text,
+        status: schema.comments.status,
+        pubDate: schema.comments.pub_date,
+      })
+      .from(schema.comments)
+      .orderBy(desc(schema.comments.pub_date), desc(schema.comments.id))
+      .limit(5)
+      .all() as unknown as {
+      id: number;
+      author: string;
+      email: string;
+      postSlug: string;
+      contentText: string;
+      status: string;
+      pubDate: number;
+    }[];
+
+    const latestComments = latestRows.map((c) => ({
+      id: c.id,
+      author: c.author,
+      email: c.email,
+      postSlug: c.postSlug,
+      contentText: c.contentText,
+      status: c.status,
+      pubDate: new Date(c.pubDate).toISOString(),
+    }));
+
     return {
       totalComments,
       totalUsers,
@@ -351,14 +686,33 @@ class CommentService {
       statusDistribution,
       recentComments,
       topCommenters,
+      windowComments,
+      prevWindowComments,
+      commentsDelta: deltaPct(windowComments, prevWindowComments),
+      windowUsers,
+      prevWindowUsers,
+      usersDelta: deltaPct(windowUsers, prevWindowUsers),
+      todayComments,
+      last7DaysComments,
+      topPosts,
+      deviceDistribution,
+      browserDistribution,
+      osDistribution,
+      latestComments,
     };
   }
 
   /*
    * 获取用户列表（按 author + email 分组）
-   * 支持按昵称/邮箱搜索（不区分大小写），并标记邮箱是否在黑名单中
+   * 支持按昵称/邮箱搜索（不区分大小写）、按邮箱验证状态与网站链接状态筛选
    */
-  async getUserList(page: number, limit: number, search?: string, verified?: string) {
+  async getUserList(
+    page: number,
+    limit: number,
+    search?: string,
+    verified?: string,
+    linkStatusFilter?: string
+  ) {
     // 获取所有唯一用户
     const rawUsers = db
       .select({
@@ -428,6 +782,49 @@ class CommentService {
       }
     }
 
+    // 链接安全审查：给**全部**用户算一次链接状态（筛选必须发生在分页之前），
+    // 仍然只多两次查询（最后评论时间/最新网址 + 未过期的人工确认），不会变成 N+1。
+    // 功能关闭时 `urlDormant` 恒为 false，但 `url` 仍然下发，后台照样能看到用户留的链接。
+    const linkSecurityEnabled = resolveLinkSwitch(await getSetting(LINK_SECURITY_ENABLED_KEY));
+    const linkDormantDays = await getSetting(LINK_DORMANT_DAYS_KEY);
+    const now = Date.now();
+    const allEmails = uniqueUsers.map((u) => u.email);
+    const linkStatusMap = await this.getLinkStatusByEmail(allEmails);
+    // 人工确认（未过期）的 (邮箱, 网址)：与「最后评论时间」一起算进 urlDormant
+    const trustedLinks = await this.getActiveTrustedLinks(allEmails, now);
+
+    /**
+     * 单个用户的网站链接状态（面板 `linkStatus()` 的同一口径）：
+     * none 无链接 / trusted 人工确认未过期 / dormant 休眠 / normal 正常。
+     */
+    const linkStateOf = (email: string) => {
+      const link = linkStatusMap.get(normalizeEmail(email));
+      const url = link?.latestUrl ?? "";
+      const trust = url === "" ? undefined : trustedLinks.get(linkTrustKey(email, url));
+      const urlTrustedUntil = trust?.expiresAt ?? "";
+      const urlTrustedSource = trust?.source ?? "";
+      const urlDormant = isLinkDormant({
+        enabled: linkSecurityEnabled,
+        hasUrl: url !== "",
+        days: linkDormantDays,
+        ageMs: link === undefined ? null : now - link.lastAt,
+        trusted: urlTrustedUntil !== "",
+      });
+      const status =
+        url === "" ? "none" : urlTrustedUntil !== "" ? "trusted" : urlDormant ? "dormant" : "normal";
+      return { url, urlDormant, urlTrustedUntil, urlTrustedSource, status };
+    };
+
+    // 按网站链接状态筛选（dormant / trusted / normal / none；缺省与无法识别的取值都不筛选）
+    const wantedLinkStatus = ["dormant", "trusted", "normal", "none"].includes(
+      String(linkStatusFilter ?? "")
+    )
+      ? String(linkStatusFilter)
+      : "all";
+    if (wantedLinkStatus !== "all") {
+      uniqueUsers = uniqueUsers.filter((u) => linkStateOf(u.email).status === wantedLinkStatus);
+    }
+
     const total = uniqueUsers.length;
     const totalPages = Math.ceil(total / limit);
     const startIndex = (page - 1) * limit;
@@ -459,9 +856,16 @@ class CommentService {
         const lastCommentDate =
           comments.length > 0 ? new Date(comments[0].pub_date).toISOString() : "";
 
+        // 网站链接状态：复用上面按「全部用户」算好的结果（身份口径与公开评论区一致）
+        const { url, urlDormant, urlTrustedUntil, urlTrustedSource } = linkStateOf(u.email);
+
         return {
           author: u.author,
           email: u.email,
+          url,
+          urlDormant,
+          urlTrustedUntil,
+          urlTrustedSource,
           commentCount,
           approvedCount,
           pendingCount,

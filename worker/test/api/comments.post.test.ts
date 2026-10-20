@@ -1,10 +1,22 @@
 /**
  * POST /api/comments —— 评论提交的完整链路（校验 → 限流 → 黑名单 → 人机验证 → 落库 → 通知）。
  */
-import { describe, it, expect, beforeEach } from 'vitest';
-import { api } from '../helpers/http';
-import { createSchema, getComment, getVerification, lastCommentId, seedComment, seedSettings, testEnv } from '../helpers/db';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { api, rawRequest } from '../helpers/http';
+import {
+	allLinkSyncRequests,
+	createSchema,
+	getComment,
+	getVerification,
+	lastCommentId,
+	seedComment,
+	seedLinkSyncRequest,
+	seedSettings,
+	seedVerification,
+	testEnv,
+} from '../helpers/db';
 import { resetSentMails, sentMails } from '../stubs/nodemailer';
+import { resetEmailEmojiCache } from '../../src/utils/emailEmoji';
 import { createTicket, checkVerifyDomain } from '../../src/utils/verify';
 import {
 	MAX_AUTHOR,
@@ -41,9 +53,30 @@ const SMTP_ONLY = {
 };
 const SMTP = { ...SMTP_ONLY, admin_email: 'admin@example.com' };
 
+/**
+ * 本文件的网络替身：发信路径会按 `emoji_cdn_urls` 拉取 owo.json 做短代码水合
+ * （doc/mail.md 第 4 节）。这里让所有出站请求立即失败 —— 水合按契约降级为纯文本，
+ * 邮件照常「发出」；断言水合成功路径的用例见 `test/unit/email.test.ts`（那里同样
+ * 在文件内部用 `vi.stubGlobal` 覆盖）。
+ *
+ * 刻意在**模块加载时**就装上并且不 `unstubAllGlobals()`：pending 的后台任务若落在
+ * “已卸载替身、尚未装回”的窗口里，就会真的发起网络请求（测试期不该有真实网络）。
+ */
+const disabledFetch = async (): Promise<Response> => {
+	throw new Error('network disabled in tests');
+};
+vi.stubGlobal('fetch', disabledFetch);
+
 beforeEach(async () => {
 	await createSchema();
 	resetSentMails();
+	resetEmailEmojiCache();
+	vi.stubGlobal('fetch', disabledFetch);
+});
+
+afterEach(() => {
+	// 不用 unstubAllGlobals：那会恢复真实的 fetch，让测试重新暴露在网络之下
+	vi.stubGlobal('fetch', disabledFetch);
 });
 
 describe('POST /api/comments —— 成功路径', () => {
@@ -329,6 +362,22 @@ describe('POST /api/comments —— 同 IP 频率限制', () => {
 		expect((await postComment({ email: 'admin@example.com' }, ip)).status).toBe(200);
 		expect((await postComment({ email: 'admin@example.com' }, ip)).status).toBe(429);
 	});
+
+	it('admin_emails 列表里的成员同样免 60 秒冷却（大小写/空格归一后命中）', async () => {
+		await seedSettings({ admin_emails: '["a@x.com","b@y.com"]' });
+		const ip = '198.51.100.10';
+
+		expect((await postComment({ email: '  A@X.com  ' }, ip)).status).toBe(200);
+		expect((await postComment({ email: 'b@y.com' }, ip)).status).toBe(200);
+	});
+
+	it('不在 admin_emails 列表里的邮箱仍受限流约束', async () => {
+		await seedSettings({ admin_emails: '["a@x.com"]' });
+		const ip = '198.51.100.11';
+
+		expect((await postComment({ email: 'other@example.com' }, ip)).status).toBe(200);
+		expect((await postComment({ email: 'other@example.com' }, ip)).status).toBe(429);
+	});
 });
 
 describe('POST /api/comments —— IP 黑名单', () => {
@@ -454,6 +503,30 @@ describe('POST /api/comments —— 博主密钥', () => {
 		});
 		expect((await postComment({ email: ADMIN_EMAIL }, '203.0.113.54')).status).toBe(403);
 	});
+
+	it('admin_emails 列表里的任一成员都能用密钥直接通过审核（旧键不再必需）', async () => {
+		await seedSettings({
+			admin_emails: '["a@x.com","b@y.com"]',
+			admin_comment_key: 'super-key',
+			admin_comment_key_enabled: 'true',
+			comment_auto_approve: 'false',
+		});
+		const res = await postComment({ email: '  B@Y.com ', admin_key: 'super-key' }, '203.0.113.55');
+		expect(res.status).toBe(200);
+		expect((await getComment((await lastCommentId()) as number))?.status).toBe('approved');
+	});
+
+	it('列表外的邮箱即使带正确密钥也不会被当成博主（密钥不生效）', async () => {
+		await seedSettings({
+			admin_emails: '["a@x.com"]',
+			admin_comment_key: 'super-key',
+			admin_comment_key_enabled: 'true',
+			comment_auto_approve: 'false',
+		});
+		const res = await postComment({ email: 'other@example.com', admin_key: 'super-key' }, '203.0.113.56');
+		expect(res.status).toBe(200);
+		expect((await getComment((await lastCommentId()) as number))?.status).toBe('pending');
+	});
 });
 
 describe('POST /api/comments —— 无感验证票据', () => {
@@ -534,19 +607,21 @@ describe('POST /api/comments —— 邮件通知', () => {
 		expect(sentMails).toHaveLength(0);
 	});
 
-	it('回复评论时给父评论作者发送回复通知', async () => {
+	it('回复评论时给父评论作者发送回复通知（正文用父评论渲染后的 HTML）', async () => {
 		await seedSettings({ ...SMTP, site_name: 'Momo Blog' });
 		const parentId = await seedComment({
 			email: 'parent@example.com',
 			author: 'Parent',
 			content_text: 'parent says hi',
+			content_html: '<p>parent says hi</p>',
 		});
 		expect((await postComment({ parent_id: parentId, email: 'child@example.com' }, '203.0.113.73')).status).toBe(200);
 
 		expect(sentMails).toHaveLength(1);
 		expect(sentMails[0].to).toBe('parent@example.com');
 		expect(sentMails[0].subject).toContain('回复');
-		expect(sentMails[0].html).toContain('parent says hi');
+		// {{parentCommentHtml}} 原样插入（不转义）
+		expect(sentMails[0].html).toContain('<p>parent says hi</p>');
 	});
 
 	it('回复自己的评论时不发回复通知', async () => {
@@ -563,6 +638,28 @@ describe('POST /api/comments —— 邮件通知', () => {
 		});
 		await postComment({ post_title: '<b>T</b>', author: 'A&B' }, '203.0.113.75');
 		expect(sentMails[0].html).toBe('<p>&lt;b&gt;T&lt;/b&gt;|A&amp;B|hello</p>');
+	});
+
+	it('通知收件人是解析后的 notify_email（不是列表第一个）', async () => {
+		await seedSettings({
+			...SMTP_ONLY,
+			admin_emails: '["a@x.com","b@y.com"]',
+			notify_email: 'b@y.com',
+			site_name: 'Momo Blog',
+		});
+		await postComment({}, '203.0.113.76');
+		expect(sentMails).toHaveLength(1);
+		expect(sentMails[0].to).toBe('b@y.com');
+	});
+
+	it('通知邮件正文用渲染后的 HTML（*Html 占位符原样插入）', async () => {
+		await seedSettings({
+			...SMTP,
+			notification_template: '<div>{{commentContent}}|{{commentContentHtml}}</div>',
+		});
+		await postComment({ content: '**hi**' }, '203.0.113.77');
+		// content_html 由 marked 渲染；emoji 水合在测试环境断网，按契约降级为纯文本
+		expect(sentMails[0].html).toBe('<div>**hi**|<p><strong>hi</strong></p>\n</div>');
 	});
 });
 
@@ -1095,5 +1192,203 @@ describe('POST /api/comments —— 来源域名绑定', () => {
 		// 白名单内来源才会走到限流，命中 60 秒冷却
 		const throttled = await postComment({}, ip, { Origin: ORIGIN_A });
 		expect(throttled.status).toBe(429);
+	});
+});
+
+/**
+ * 历史链接批量更新（doc/link_security.md 第 3 节）：触发条件 + 确认端点端到端。
+ *
+ * 注意这里刻意只用 SMTP_ONLY（不配 admin_email）：新评论通知被跳过，
+ * `sentMails` 里只会有链接同步的确认邮件，断言更干净。
+ */
+describe('POST /api/comments —— 历史链接同步', () => {
+	const EMAIL = 'alice@example.com';
+	const OLD_URL = 'https://old.example.com';
+	const NEW_URL = 'https://new.example.com';
+	const NEWER_URL = 'https://newer.example.com';
+
+	async function linkSyncReady(overrides: Record<string, string> = {}) {
+		await seedSettings({
+			...SMTP_ONLY,
+			email_verify_enabled: 'true',
+			link_sync_enabled: 'true',
+			site_name: 'Momo Blog',
+			...overrides,
+		});
+		await seedVerification({ email: EMAIL, verified: 1 });
+		await seedComment({
+			post_slug: SLUG,
+			email: EMAIL,
+			author: 'Alice',
+			url: OLD_URL,
+			pub_date: 1730000000000,
+		});
+	}
+
+	async function commentUrls(): Promise<string[]> {
+		const { results } = await testEnv.MOMO_DB.prepare(
+			'SELECT url FROM Comment WHERE lower(trim(email)) = ? ORDER BY id'
+		)
+			.bind(EMAIL)
+			.all<{ url: string | null }>();
+		return (results ?? []).map((row) => row.url ?? '');
+	}
+
+	it('满足全部条件：写一条待确认记录 + 异步发确认邮件，历史评论暂不改动', async () => {
+		await linkSyncReady();
+		const res = await postComment({ email: EMAIL, url: NEW_URL }, '203.0.113.90');
+		expect(res.status).toBe(200);
+
+		const rows = await allLinkSyncRequests();
+		expect(rows).toHaveLength(1);
+		expect(rows[0]).toMatchObject({ email: EMAIL, new_url: NEW_URL, confirmed: 0 });
+		expect(rows[0].token).toMatch(/^[0-9a-f-]{36}$/);
+		// 24 小时有效
+		expect(Date.parse(rows[0].expires_at) - Date.now()).toBeGreaterThan(23 * 3600 * 1000);
+
+		expect(sentMails).toHaveLength(1);
+		expect(sentMails[0].to).toBe(EMAIL);
+		expect(sentMails[0].subject).toBe('确认更新您在 Momo Blog 上的历史评论链接');
+		expect(sentMails[0].html).toContain(OLD_URL);
+		expect(sentMails[0].html).toContain(NEW_URL);
+		expect(sentMails[0].html).toContain(`token=${encodeURIComponent(rows[0].token)}`);
+		expect(sentMails[0].html).toContain('24 小时内有效');
+
+		// 确认前历史评论的 url 保持旧值
+		expect(await commentUrls()).toEqual([OLD_URL, NEW_URL]);
+	});
+
+	it('确认端点：批量更新该邮箱所有历史评论并标记已确认（幂等重放）', async () => {
+		await linkSyncReady();
+		await postComment({ email: EMAIL, url: NEW_URL }, '203.0.113.91');
+		const row = (await allLinkSyncRequests())[0];
+
+		const confirmPath = `/api/link-sync/confirm?token=${encodeURIComponent(row.token)}&email=${encodeURIComponent(EMAIL)}`;
+		const page = await rawRequest(confirmPath);
+		expect(page.status).toBe(200);
+		const html = await page.text();
+		expect(html).toContain('链接同步完成！共 1 条历史评论的网址已更新');
+
+		expect(await commentUrls()).toEqual([NEW_URL, NEW_URL]);
+		expect((await allLinkSyncRequests())[0].confirmed).toBe(1);
+
+		// 重放：一次性令牌（已确认）返回「该链接同步已完成」，不再产生写入
+		const replay = await rawRequest(confirmPath);
+		expect(await replay.text()).toContain('该链接同步已完成');
+		expect(await commentUrls()).toEqual([NEW_URL, NEW_URL]);
+	});
+
+	it('缺少 token / email → 缺少确认参数', async () => {
+		const missingToken = await rawRequest(`/api/link-sync/confirm?email=${encodeURIComponent(EMAIL)}`);
+		expect(await missingToken.text()).toContain('缺少确认参数');
+		const missingEmail = await rawRequest('/api/link-sync/confirm?token=t1');
+		expect(await missingEmail.text()).toContain('缺少确认参数');
+	});
+
+	it('token / email 不匹配 → 确认链接无效', async () => {
+		await seedLinkSyncRequest({ email: EMAIL, token: 'tok-1', new_url: NEW_URL });
+		const page = await rawRequest(`/api/link-sync/confirm?token=tok-1&email=${encodeURIComponent('other@example.com')}`);
+		expect(await page.text()).toContain('确认链接无效');
+	});
+
+	it('已过期 → 固定文案，且不做任何写入', async () => {
+		await seedComment({ post_slug: SLUG, email: EMAIL, url: OLD_URL });
+		await seedLinkSyncRequest({
+			email: EMAIL,
+			token: 'tok-expired',
+			new_url: NEW_URL,
+			expires_at: new Date(Date.now() - 1000).toISOString(),
+		});
+		const page = await rawRequest(
+			`/api/link-sync/confirm?token=tok-expired&email=${encodeURIComponent(EMAIL)}`
+		);
+		expect(await page.text()).toContain('确认链接已过期，请重新提交评论以获取新的确认邮件');
+		expect(await commentUrls()).toEqual([OLD_URL]);
+	});
+
+	it('去重：同一邮箱 + 同一新网址不重复发信', async () => {
+		await linkSyncReady();
+		await postComment({ email: EMAIL, url: NEW_URL }, '203.0.113.92');
+		await postComment({ email: EMAIL, url: NEW_URL }, '203.0.113.93');
+
+		expect(await allLinkSyncRequests()).toHaveLength(1);
+		expect(sentMails).toHaveLength(1);
+	});
+
+	it('换了新网址：作废旧记录并重新发信（旧链接立刻失效）', async () => {
+		await linkSyncReady();
+		await postComment({ email: EMAIL, url: NEW_URL }, '203.0.113.94');
+		await postComment({ email: EMAIL, url: NEWER_URL }, '203.0.113.95');
+
+		const rows = await allLinkSyncRequests();
+		expect(rows).toHaveLength(1);
+		expect(rows[0].new_url).toBe(NEWER_URL);
+		expect(sentMails).toHaveLength(2);
+	});
+
+	it('link_sync_enabled 关闭（默认）时不触发', async () => {
+		await linkSyncReady({ link_sync_enabled: 'false' });
+		await postComment({ email: EMAIL, url: NEW_URL }, '203.0.113.96');
+		expect(await allLinkSyncRequests()).toHaveLength(0);
+		expect(sentMails).toHaveLength(0);
+	});
+
+	it('email_verify_enabled 未开启时不触发（硬前提）', async () => {
+		await linkSyncReady({ email_verify_enabled: 'false' });
+		await postComment({ email: EMAIL, url: NEW_URL }, '203.0.113.97');
+		expect(await allLinkSyncRequests()).toHaveLength(0);
+		expect(sentMails).toHaveLength(0);
+	});
+
+	it('邮箱未通过验证时不触发', async () => {
+		await seedSettings({ ...SMTP_ONLY, email_verify_enabled: 'true', link_sync_enabled: 'true' });
+		await seedVerification({ email: EMAIL, verified: 0 });
+		await seedComment({ post_slug: SLUG, email: EMAIL, url: OLD_URL });
+		await postComment({ email: EMAIL, url: NEW_URL }, '203.0.113.98');
+		expect(await allLinkSyncRequests()).toHaveLength(0);
+	});
+
+	it('提交的 url 为空时不触发', async () => {
+		await linkSyncReady();
+		await postComment({ email: EMAIL }, '203.0.113.99');
+		expect(await allLinkSyncRequests()).toHaveLength(0);
+		expect(sentMails).toHaveLength(0);
+	});
+
+	it('没有「url 非空且与本次不同」的历史评论时不触发', async () => {
+		await seedSettings({ ...SMTP_ONLY, email_verify_enabled: 'true', link_sync_enabled: 'true' });
+		await seedVerification({ email: EMAIL, verified: 1 });
+		await seedComment({ post_slug: SLUG, email: EMAIL, url: NEW_URL, pub_date: 1730000000000 });
+		await postComment({ email: EMAIL, url: NEW_URL }, '203.0.113.100');
+		expect(await allLinkSyncRequests()).toHaveLength(0);
+		expect(sentMails).toHaveLength(0);
+	});
+
+	it('历史评论只有 rejected / deleted 时不算「历史评论」', async () => {
+		await seedSettings({ ...SMTP_ONLY, email_verify_enabled: 'true', link_sync_enabled: 'true' });
+		await seedVerification({ email: EMAIL, verified: 1 });
+		await seedComment({ post_slug: SLUG, email: EMAIL, url: OLD_URL, status: 'rejected' });
+		await postComment({ email: EMAIL, url: NEW_URL }, '203.0.113.101');
+		expect(await allLinkSyncRequests()).toHaveLength(0);
+	});
+
+	it('SMTP 不可用时不触发', async () => {
+		await seedSettings({ email_verify_enabled: 'true', link_sync_enabled: 'true' });
+		await seedVerification({ email: EMAIL, verified: 1 });
+		await seedComment({ post_slug: SLUG, email: EMAIL, url: OLD_URL });
+		await postComment({ email: EMAIL, url: NEW_URL }, '203.0.113.102');
+		expect(await allLinkSyncRequests()).toHaveLength(0);
+	});
+
+	it('确认端点按归一化邮箱匹配（大小写/空格无关）', async () => {
+		await linkSyncReady();
+		await postComment({ email: '  ALICE@Example.com  ', url: NEW_URL }, '203.0.113.103');
+		const row = (await allLinkSyncRequests())[0];
+		expect(row.email).toBe(EMAIL);
+
+		const page = await rawRequest(
+			`/api/link-sync/confirm?token=${encodeURIComponent(row.token)}&email=${encodeURIComponent(' Alice@Example.com ')}`
+		);
+		expect(await page.text()).toContain('链接同步完成！共 1 条历史评论的网址已更新');
 	});
 });

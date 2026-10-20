@@ -1,6 +1,12 @@
 import getCommentBySlug from "./public/getCommentBySlug";
 import postComment from "./public/postComment";
 import verifyEmail from "./public/verifyEmail";
+import linkSyncConfirm from "./public/linkSyncConfirm";
+import {
+  linkDormantNoticePage,
+  linkDormantNoticeConfirm,
+  linkDormantNoticeUpdate,
+} from "./public/linkDormantNotice";
 import verifyChallenge from "./public/verifyChallenge";
 import verifySolution from "./public/verifySolution";
 
@@ -12,6 +18,7 @@ import getStatsOverview from "./admin/getStatsOverview";
 import getUserList from "./admin/getUserList";
 import getUserComments from "./admin/getUserComments";
 import { addUserToBlacklist, removeUserFromBlacklist } from "./admin/userBlacklist";
+import { addLinkTrust, removeLinkTrust } from "./admin/linkTrust";
 import { getSettings, updateSettings, testEmail } from "./admin/settings";
 import changePassword from "./admin/password";
 import logout from "./admin/logout";
@@ -19,6 +26,7 @@ import { importComments, importSettings } from "./admin/dataImport";
 import { exportSettings, exportComments } from "./admin/dataExport";
 import verifyOverview from "./admin/verifyOverview";
 import verifyRecords from "./admin/verifyRecords";
+import mailList from "./admin/mailList";
 
-export { getCommentBySlug, postComment, verifyEmail, verifyChallenge, verifySolution };
-export { getAllComments, changeCommentStatus, updateComment, login, getStatsOverview, getUserList, getUserComments, getSettings, updateSettings, changePassword, logout, testEmail, importComments, importSettings, exportSettings, exportComments, addUserToBlacklist, removeUserFromBlacklist, verifyOverview, verifyRecords };
+export { getCommentBySlug, postComment, verifyEmail, verifyChallenge, verifySolution, linkSyncConfirm, linkDormantNoticePage, linkDormantNoticeConfirm, linkDormantNoticeUpdate };
+export { getAllComments, changeCommentStatus, updateComment, login, getStatsOverview, getUserList, getUserComments, getSettings, updateSettings, changePassword, logout, testEmail, importComments, importSettings, exportSettings, exportComments, addUserToBlacklist, removeUserFromBlacklist, addLinkTrust, removeLinkTrust, verifyOverview, verifyRecords, mailList };

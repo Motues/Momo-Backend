@@ -1,10 +1,11 @@
 /**
  * GET /api/comments —— 公开评论列表（只读 approved、嵌套、分页、博主标识、人机验证配置）。
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { api } from '../helpers/http';
-import { createSchema, seedComment, seedSettings } from '../helpers/db';
+import { createSchema, seedComment, seedSettings, seedTrustedLink, testEnv } from '../helpers/db';
 import { allowRequest } from '../../src/utils/rateLimit';
+import { DEFAULT_LINK_DORMANT_DAYS, DAY_MS } from '../../src/utils/linkSecurity';
 
 const SLUG = '/posts/demo';
 const ADMIN_EMAIL = 'admin@example.com';
@@ -19,7 +20,21 @@ async function getComments(query: string, headers: Record<string, string> = {}) 
 	});
 }
 
+/** 固定「现在」以断言休眠边界（刚好 N 天 vs N 天 + 1 毫秒） */
+async function withFrozenNow<T>(now: number, run: () => Promise<T>): Promise<T> {
+	const spy = vi.spyOn(Date, 'now').mockReturnValue(now);
+	try {
+		return await run();
+	} finally {
+		spy.mockRestore();
+	}
+}
+
 beforeEach(createSchema);
+
+afterEach(() => {
+	vi.restoreAllMocks();
+});
 
 describe('GET /api/comments —— 参数校验', () => {
 	it('缺少 post_slug 返回 400', async () => {
@@ -357,5 +372,317 @@ describe('GET /api/comments —— 限流', () => {
 		}
 		expect((await api(`/api/comments?post_slug=${SLUG}`, { ip: blockedIp })).status).toBe(429);
 		expect((await api(`/api/comments?post_slug=${SLUG}`, { ip: '198.51.100.253' })).status).toBe(200);
+	});
+});
+
+async function sha256Hex(value: string): Promise<string> {
+	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+	return Array.from(new Uint8Array(digest))
+		.map((byte) => byte.toString(16).padStart(2, '0'))
+		.join('');
+}
+
+describe('GET /api/comments —— 多管理员邮箱（doc/admin_emails.md）', () => {
+	it('admin_emails 列表里的每个人都标记 isBlogger（归一化后命中）', async () => {
+		await seedSettings({ admin_emails: '["a@x.com","b@y.com"]' });
+		await seedComment({ post_slug: SLUG, author: 'A', email: '  A@X.com ', pub_date: 1730000003000 });
+		await seedComment({ post_slug: SLUG, author: 'B', email: 'b@y.com', pub_date: 1730000002000 });
+		await seedComment({ post_slug: SLUG, author: 'Guest', email: 'g@z.com', pub_date: 1730000001000 });
+		const res = await getComments(`?post_slug=${SLUG}`);
+		const byAuthor = Object.fromEntries(res.body.data.comments.map((c: any) => [c.author, c.isBlogger]));
+		expect(byAuthor).toEqual({ A: true, B: true, Guest: false });
+	});
+
+	it('列表为空时回落旧键 admin_email（大小写/空格归一后命中）', async () => {
+		await seedSettings({ admin_email: 'Admin@Example.com' });
+		await seedComment({ post_slug: SLUG, author: 'Admin', email: 'admin@example.com' });
+		const res = await getComments(`?post_slug=${SLUG}`);
+		expect(res.body.data.comments[0].isBlogger).toBe(true);
+	});
+
+	it('密钥开启时下发 admin_email_hashes，且 admin_email_hash = 通知邮箱的哈希（旧前端兼容）', async () => {
+		await seedSettings({
+			admin_emails: '["a@x.com","b@y.com"]',
+			notify_email: 'b@y.com',
+			admin_comment_key_enabled: 'true',
+		});
+		const res = await getComments(`?post_slug=${SLUG}`);
+		expect(res.body.data.admin_email_hashes).toEqual([
+			await sha256Hex('a@x.com'),
+			await sha256Hex('b@y.com'),
+		]);
+		expect(res.body.data.admin_email_hash).toBe(await sha256Hex('b@y.com'));
+	});
+
+	it('密钥关闭时不下发哈希数组（避免离线枚举管理员邮箱）', async () => {
+		await seedSettings({ admin_emails: '["a@x.com"]', notify_email: 'a@x.com' });
+		const res = await getComments(`?post_slug=${SLUG}`);
+		expect(res.body.data.admin_email_hashes).toEqual([]);
+		expect(res.body.data.admin_email_hash).toBe('');
+	});
+
+	it('没有管理员时哈希数组为空、isBlogger 全为 false', async () => {
+		await seedSettings({ admin_email: 'nope', admin_comment_key_enabled: 'true' });
+		await seedComment({ post_slug: SLUG, email: ADMIN_EMAIL });
+		const res = await getComments(`?post_slug=${SLUG}`);
+		expect(res.body.data.admin_email_hashes).toEqual([]);
+		expect(res.body.data.admin_email_hash).toBe('');
+		expect(res.body.data.comments[0].isBlogger).toBe(false);
+	});
+});
+
+describe('GET /api/comments —— 休眠链接 urlDormant（doc/link_security.md）', () => {
+	const DORMANT_URL = 'https://sleepy.example.com';
+	const SLEEPY = 'sleepy@example.com';
+
+	it('功能关闭（默认）时恒为 false，字段始终存在（两种分支）', async () => {
+		await seedComment({ post_slug: SLUG, email: SLEEPY, url: DORMANT_URL, pub_date: 1 });
+		for (const query of [`?post_slug=${SLUG}`, `?post_slug=${SLUG}&nested=false`]) {
+			const res = await getComments(query);
+			expect(res.body.data.comments[0].urlDormant).toBe(false);
+			expect('urlDormant' in res.body.data.comments[0]).toBe(true);
+		}
+	});
+
+	it('开关是脏值时 fail-closed：不标记', async () => {
+		await seedSettings({ link_security_enabled: 'yes' });
+		await seedComment({ post_slug: SLUG, email: SLEEPY, url: DORMANT_URL, pub_date: 1 });
+		const res = await getComments(`?post_slug=${SLUG}`);
+		expect(res.body.data.comments[0].urlDormant).toBe(false);
+	});
+
+	it('刚好 N 天不算休眠（严格大于）', async () => {
+		const now = Date.now();
+		await seedSettings({ link_security_enabled: 'true', link_dormant_days: String(DEFAULT_LINK_DORMANT_DAYS) });
+		await seedComment({
+			post_slug: SLUG,
+			email: SLEEPY,
+			url: DORMANT_URL,
+			pub_date: now - DEFAULT_LINK_DORMANT_DAYS * DAY_MS,
+		});
+		const res = await withFrozenNow(now, () => getComments(`?post_slug=${SLUG}`));
+		expect(res.body.data.comments[0].urlDormant).toBe(false);
+	});
+
+	it('N 天 + 1 毫秒就算休眠', async () => {
+		const now = Date.now();
+		await seedSettings({ link_security_enabled: 'true' });
+		await seedComment({
+			post_slug: SLUG,
+			email: SLEEPY,
+			url: DORMANT_URL,
+			pub_date: now - DEFAULT_LINK_DORMANT_DAYS * DAY_MS - 1,
+		});
+		const res = await withFrozenNow(now, () => getComments(`?post_slug=${SLUG}`));
+		expect(res.body.data.comments[0].urlDormant).toBe(true);
+	});
+
+	it('没有个人网址时不标记（即使很久没来）', async () => {
+		const now = Date.now();
+		await seedSettings({ link_security_enabled: 'true' });
+		await seedComment({
+			post_slug: SLUG,
+			email: SLEEPY,
+			url: null,
+			pub_date: now - 100 * DAY_MS,
+		});
+		const res = await withFrozenNow(now, () => getComments(`?post_slug=${SLUG}`));
+		expect(res.body.data.comments[0].urlDormant).toBe(false);
+	});
+
+	it('最后评论跨文章统计：在别的文章评论过就立刻解除休眠', async () => {
+		const now = Date.now();
+		await seedSettings({ link_security_enabled: 'true' });
+		await seedComment({
+			post_slug: SLUG,
+			email: SLEEPY,
+			url: DORMANT_URL,
+			pub_date: now - 100 * DAY_MS,
+		});
+		await seedComment({
+			post_slug: '/posts/other',
+			email: SLEEPY,
+			pub_date: now - 1000,
+		});
+		const res = await withFrozenNow(now, () => getComments(`?post_slug=${SLUG}`));
+		expect(res.body.data.comments[0].urlDormant).toBe(false);
+	});
+
+	it('pending 也算「来过」，rejected / deleted 不算', async () => {
+		const now = Date.now();
+		await seedSettings({ link_security_enabled: 'true' });
+		await seedComment({
+			post_slug: SLUG,
+			email: SLEEPY,
+			url: DORMANT_URL,
+			pub_date: now - 100 * DAY_MS,
+		});
+		await seedComment({
+			post_slug: '/posts/other',
+			email: SLEEPY,
+			status: 'pending',
+			pub_date: now - 1000,
+		});
+		const pendingRes = await withFrozenNow(now, () => getComments(`?post_slug=${SLUG}`));
+		expect(pendingRes.body.data.comments[0].urlDormant).toBe(false);
+
+		// 把那条 pending 改成 rejected：最后「有效」评论回到 100 天前 → 休眠
+		await testEnv.MOMO_DB.prepare(
+			"UPDATE Comment SET status = 'rejected' WHERE post_slug = '/posts/other'"
+		).run();
+		const rejectedRes = await withFrozenNow(now, () => getComments(`?post_slug=${SLUG}`));
+		expect(rejectedRes.body.data.comments[0].urlDormant).toBe(true);
+	});
+
+	it('最后评论时间无法解析时 fail-open：不标记', async () => {
+		const now = Date.now();
+		await seedSettings({ link_security_enabled: 'true' });
+		await seedComment({ post_slug: SLUG, email: SLEEPY, url: DORMANT_URL, pub_date: 'garbage' });
+		const res = await withFrozenNow(now, () => getComments(`?post_slug=${SLUG}`));
+		expect(res.body.data.comments[0].urlDormant).toBe(false);
+	});
+
+	it('天数写入上限 3650：3651 天前评论 → 标记', async () => {
+		const now = Date.now();
+		await seedSettings({ link_security_enabled: 'true', link_dormant_days: '3650' });
+		await seedComment({
+			post_slug: SLUG,
+			email: SLEEPY,
+			url: DORMANT_URL,
+			pub_date: now - 3651 * DAY_MS,
+		});
+		const res = await withFrozenNow(now, () => getComments(`?post_slug=${SLUG}`));
+		expect(res.body.data.comments[0].urlDormant).toBe(true);
+	});
+
+	it('休眠判定只看「有网址」的邮箱，不会误伤其他评论', async () => {
+		const now = Date.now();
+		await seedSettings({ link_security_enabled: 'true' });
+		await seedComment({
+			post_slug: SLUG,
+			email: SLEEPY,
+			author: 'Sleepy',
+			url: DORMANT_URL,
+			pub_date: now - 100 * DAY_MS,
+		});
+		await seedComment({
+			post_slug: SLUG,
+			email: 'active@example.com',
+			author: 'Active',
+			url: 'https://active.example.com',
+			pub_date: now - 1000,
+		});
+		const res = await withFrozenNow(now, () => getComments(`?post_slug=${SLUG}`));
+		const byAuthor = Object.fromEntries(res.body.data.comments.map((c: any) => [c.author, c.urlDormant]));
+		expect(byAuthor).toEqual({ Sleepy: true, Active: false });
+	});
+});
+
+/**
+ * 人工确认（TrustedLink）对公开评论列表的豁免：有效确认时 `urlDormant = false`，
+ * 到期（含恰好等于 now）后照常休眠，且只影响「归一化邮箱 + 逐字相等 url」那一条。
+ */
+describe('GET /api/comments —— 人工确认豁免休眠（TrustedLink）', () => {
+	const DORMANT_URL = 'https://sleepy.example.com';
+	const SLEEPY = 'sleepy@example.com';
+	const OTHER = 'other@example.com';
+	const OTHER_URL = 'https://other.example.com';
+
+	const dormant = () =>
+		seedSettings({ link_security_enabled: 'true', link_dormant_days: '30' });
+
+	it('有效确认 → urlDormant false；同一页其他邮箱的链接不受影响', async () => {
+		const now = Date.now();
+		await dormant();
+		await seedComment({
+			post_slug: SLUG,
+			email: SLEEPY,
+			author: 'Sleepy',
+			url: DORMANT_URL,
+			pub_date: now - 100 * DAY_MS,
+		});
+		await seedComment({
+			post_slug: SLUG,
+			email: OTHER,
+			author: 'Other',
+			url: OTHER_URL,
+			pub_date: now - 100 * DAY_MS,
+		});
+		await seedTrustedLink({
+			email: SLEEPY,
+			url: DORMANT_URL,
+			expires_at: new Date(now + 10 * DAY_MS).toISOString(),
+		});
+
+		const res = await withFrozenNow(now, () => getComments(`?post_slug=${SLUG}`));
+		const byAuthor = Object.fromEntries(res.body.data.comments.map((c: any) => [c.author, c.urlDormant]));
+		expect(byAuthor).toEqual({ Sleepy: false, Other: true });
+	});
+
+	it('过期与恰好到期（严格大于）都照常休眠', async () => {
+		const now = Date.now();
+		await dormant();
+		await seedComment({ post_slug: SLUG, email: SLEEPY, url: DORMANT_URL, pub_date: now - 100 * DAY_MS });
+		await seedTrustedLink({
+			email: SLEEPY,
+			url: DORMANT_URL,
+			expires_at: new Date(now - 1).toISOString(),
+		});
+
+		let res = await withFrozenNow(now, () => getComments(`?post_slug=${SLUG}`));
+		expect(res.body.data.comments[0].urlDormant).toBe(true);
+
+		// 恰好等于 now：仍然算过期
+		await testEnv.MOMO_DB.prepare('UPDATE TrustedLink SET expires_at = ?')
+			.bind(new Date(now).toISOString())
+			.run();
+		res = await withFrozenNow(now, () => getComments(`?post_slug=${SLUG}`));
+		expect(res.body.data.comments[0].urlDormant).toBe(true);
+	});
+
+	it('确认的是另一个网址时不豁免（url 逐字相等）', async () => {
+		const now = Date.now();
+		await dormant();
+		await seedComment({ post_slug: SLUG, email: SLEEPY, url: DORMANT_URL, pub_date: now - 100 * DAY_MS });
+		await seedTrustedLink({
+			email: SLEEPY,
+			url: OTHER_URL,
+			expires_at: new Date(now + 10 * DAY_MS).toISOString(),
+		});
+
+		const res = await withFrozenNow(now, () => getComments(`?post_slug=${SLUG}`));
+		expect(res.body.data.comments[0].urlDormant).toBe(true);
+	});
+
+	it('邮箱按归一化匹配：评论邮箱大小写 / 空白不同也算同一条确认', async () => {
+		const now = Date.now();
+		await dormant();
+		await seedComment({
+			post_slug: SLUG,
+			email: ' Sleepy@Example.COM ',
+			url: DORMANT_URL,
+			pub_date: now - 100 * DAY_MS,
+		});
+		await seedTrustedLink({
+			email: 'sleepy@example.com',
+			url: DORMANT_URL,
+			expires_at: new Date(now + 10 * DAY_MS).toISOString(),
+		});
+
+		const res = await withFrozenNow(now, () => getComments(`?post_slug=${SLUG}`));
+		expect(res.body.data.comments[0].urlDormant).toBe(false);
+	});
+
+	it('功能关闭时不做任何豁免查询：urlDormant 恒为 false', async () => {
+		const now = Date.now();
+		await seedComment({ post_slug: SLUG, email: SLEEPY, url: DORMANT_URL, pub_date: now - 100 * DAY_MS });
+		await seedTrustedLink({
+			email: SLEEPY,
+			url: DORMANT_URL,
+			expires_at: new Date(now + 10 * DAY_MS).toISOString(),
+		});
+
+		const res = await withFrozenNow(now, () => getComments(`?post_slug=${SLUG}`));
+		expect(res.body.data.comments[0].urlDormant).toBe(false);
 	});
 });

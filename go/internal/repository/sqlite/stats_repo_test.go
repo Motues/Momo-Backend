@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"reflect"
 	"regexp"
 	"testing"
 	"time"
 
 	"momo-backend-go/internal/model"
+	"momo-backend-go/internal/pkg/utils"
 	"momo-backend-go/internal/repository"
 )
 
@@ -95,6 +97,24 @@ func TestGetStatsOverviewEmptyDatabase(t *testing.T) {
 		}
 		if stats.TopCommenters == nil {
 			t.Errorf("TopCommenters 应为空数组而不是 nil（避免 JSON null）")
+		}
+		// 扩展字段同样必须是空数组，绝不能是 null
+		if stats.TopPosts == nil || stats.DeviceDistribution == nil || stats.BrowserDistribution == nil ||
+			stats.OSDistribution == nil || stats.LatestComments == nil {
+			t.Errorf("空库的列表字段必须都初始化为空数组，实际 %+v", stats)
+		}
+		if len(stats.TopPosts) != 0 || len(stats.DeviceDistribution) != 0 || len(stats.BrowserDistribution) != 0 ||
+			len(stats.OSDistribution) != 0 || len(stats.LatestComments) != 0 {
+			t.Errorf("空库的列表字段都应为空，实际 %+v", stats)
+		}
+		if stats.CommentsDelta != nil || stats.UsersDelta != nil {
+			t.Errorf("空库（上一窗口为 0）的两个 delta 都应为 null，实际 %v / %v",
+				stats.CommentsDelta, stats.UsersDelta)
+		}
+		if stats.WindowComments != 0 || stats.PrevWindowComments != 0 ||
+			stats.WindowUsers != 0 || stats.PrevWindowUsers != 0 ||
+			stats.TodayComments != 0 || stats.Last7DaysComments != 0 {
+			t.Errorf("空库的窗口指标应全为 0，实际 %+v", stats)
 		}
 		if len(stats.RecentComments) == 0 {
 			t.Errorf("RecentComments 应至少返回一个分桶")
@@ -261,6 +281,413 @@ func TestGetStatsOverviewTopCommenterLastCommentDateIsMax(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// GetStatsOverview — 扩展字段：时间窗口 / 热门文章 / 客户端分布 / 最新评论
+// ---------------------------------------------------------------------------
+
+// startOfTodayUtcMillis 今天（UTC）00:00 的毫秒时间戳，与仓库层的窗口起点同口径
+func startOfTodayUtcMillis() int64 {
+	now := time.Now().UTC()
+	return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).UnixMilli()
+}
+
+// dayAtIndex 相对「今天（UTC）00:00」的自然日偏移：0 = 今天 00:00，-7 = 7 天前 00:00
+func dayAtIndex(days int) int64 {
+	return startOfTodayUtcMillis() + int64(days)*86400000
+}
+
+// clientComment 构造一条可指定 browser / os / device **原始值**的评论（nil = SQLite 的 NULL）
+func clientComment(slug, author, email string, pubDate int64, browser, osName, device *string) *model.Comment {
+	c := sampleComment(slug, author, email, pubDate, "approved")
+	c.Browser, c.OS, c.Device = browser, osName, device
+	return c
+}
+
+// TestGetStatsOverviewTopPosts 热门文章：count DESC, post_slug ASC, LIMIT 5
+func TestGetStatsOverviewTopPosts(t *testing.T) {
+	_, repo := newTestRepo(t)
+
+	// 6 篇文章，计数 3/3/2/2/1/1：既验证 tie-break（同计数按 slug 升序），也验证 LIMIT 5
+	seed := func(slug string, count int, lastAt int64) {
+		for i := 0; i < count; i++ {
+			at := int64(1_000_000 + i)
+			if i == count-1 {
+				at = lastAt
+			}
+			seedComments(t, repo, sampleComment(slug, "a", "a@x.com", at, "approved"))
+		}
+	}
+	seed("/f", 1, 1_100_000)
+	seed("/e", 1, 1_200_000)
+	seed("/d", 2, 1_300_000)
+	seed("/c", 2, 1_400_000)
+	seed("/b", 3, 1_500_000)
+	seed("/a", 3, 1_600_000)
+
+	stats, err := repo.GetStatsOverview(context.Background(), "7")
+	if err != nil {
+		t.Fatalf("GetStatsOverview 失败: %v", err)
+	}
+	if len(stats.TopPosts) != 5 {
+		t.Fatalf("热门文章最多 5 条，实际 %d: %+v", len(stats.TopPosts), stats.TopPosts)
+	}
+	wantSlugs := []string{"/a", "/b", "/c", "/d", "/e"} // 同计数按 slug 升序；/f 被截断
+	for i, want := range wantSlugs {
+		if stats.TopPosts[i].PostSlug != want {
+			t.Errorf("第 %d 篇期望 %q，实际 %q（%+v）", i+1, want, stats.TopPosts[i].PostSlug, stats.TopPosts)
+		}
+	}
+	if stats.TopPosts[0].Count != 3 || stats.TopPosts[1].Count != 3 || stats.TopPosts[4].Count != 1 {
+		t.Errorf("计数不正确: %+v", stats.TopPosts)
+	}
+	wantDate := time.UnixMilli(1_600_000).UTC().Format("2006-01-02T15:04:05.000Z")
+	if stats.TopPosts[0].LastCommentDate != wantDate {
+		t.Errorf("/a 的 lastCommentDate 应取最大 pub_date %q，实际 %q", wantDate, stats.TopPosts[0].LastCommentDate)
+	}
+	if !isoMillisRe.MatchString(stats.TopPosts[0].LastCommentDate) {
+		t.Errorf("lastCommentDate 格式应为毫秒 ISO，实际 %q", stats.TopPosts[0].LastCommentDate)
+	}
+}
+
+// TestGetStatsOverviewWindowMetrics 窗口指标：窗口边界、活跃评论者、环比百分比
+func TestGetStatsOverviewWindowMetrics(t *testing.T) {
+	t.Run("range=7 的窗口与上一窗口", func(t *testing.T) {
+		_, repo := newTestRepo(t)
+		seedComments(t, repo,
+			sampleComment("/p", "alice", "a@x.com", dayAtIndex(0)+3_600_000, "approved"), // 窗口内
+			sampleComment("/p", "bob", "b@x.com", dayAtIndex(-2), "pending"),              // 窗口内
+			sampleComment("/p", "alice", "a@x.com", dayAtIndex(-6), "rejected"),           // 窗口内（含所有状态）
+			sampleComment("/p", "alice", "a@x.com", dayAtIndex(-7), "approved"),           // 上一窗口
+			sampleComment("/p", "carol", "c@x.com", dayAtIndex(-13), "approved"),          // 上一窗口起点（含）
+			sampleComment("/p", "dave", "d@x.com", dayAtIndex(-14), "approved"),           // 两个窗口之外
+		)
+
+		stats, err := repo.GetStatsOverview(context.Background(), "7")
+		if err != nil {
+			t.Fatalf("GetStatsOverview 失败: %v", err)
+		}
+		if stats.WindowComments != 3 {
+			t.Errorf("windowComments 期望 3，实际 %d", stats.WindowComments)
+		}
+		if stats.PrevWindowComments != 2 {
+			t.Errorf("prevWindowComments 期望 2，实际 %d", stats.PrevWindowComments)
+		}
+		if stats.WindowUsers != 2 { // alice, bob
+			t.Errorf("windowUsers 期望 2，实际 %d", stats.WindowUsers)
+		}
+		if stats.PrevWindowUsers != 2 { // alice, carol
+			t.Errorf("prevWindowUsers 期望 2，实际 %d", stats.PrevWindowUsers)
+		}
+		if stats.CommentsDelta == nil || *stats.CommentsDelta != 50 {
+			t.Errorf("commentsDelta 期望 50，实际 %v", stats.CommentsDelta)
+		}
+		if stats.UsersDelta == nil || *stats.UsersDelta != 0 {
+			t.Errorf("usersDelta 期望 0，实际 %v", stats.UsersDelta)
+		}
+	})
+
+	t.Run("range=1：窗口只有今天，昨天落在上一窗口", func(t *testing.T) {
+		_, repo := newTestRepo(t)
+		seedComments(t, repo,
+			sampleComment("/p", "alice", "a@x.com", dayAtIndex(0)+60_000, "approved"),
+			sampleComment("/p", "bob", "b@x.com", dayAtIndex(-1)+60_000, "approved"),
+			sampleComment("/p", "carol", "c@x.com", dayAtIndex(-2), "approved"),
+		)
+
+		stats, err := repo.GetStatsOverview(context.Background(), "1")
+		if err != nil {
+			t.Fatalf("GetStatsOverview 失败: %v", err)
+		}
+		if stats.WindowComments != 1 || stats.PrevWindowComments != 1 {
+			t.Errorf("windowComments/prevWindowComments 期望 1/1，实际 %d/%d",
+				stats.WindowComments, stats.PrevWindowComments)
+		}
+		if stats.CommentsDelta == nil || *stats.CommentsDelta != 0 {
+			t.Errorf("commentsDelta 期望 0，实际 %v", stats.CommentsDelta)
+		}
+		if stats.WindowUsers != 1 || stats.PrevWindowUsers != 1 {
+			t.Errorf("windowUsers/prevWindowUsers 期望 1/1，实际 %d/%d",
+				stats.WindowUsers, stats.PrevWindowUsers)
+		}
+	})
+
+	t.Run("上一窗口为 0：两个 delta 都是 null（不是 0 也不是 100）", func(t *testing.T) {
+		_, repo := newTestRepo(t)
+		seedComments(t, repo,
+			sampleComment("/p", "alice", "a@x.com", dayAtIndex(0)+60_000, "approved"),
+		)
+
+		stats, err := repo.GetStatsOverview(context.Background(), "7")
+		if err != nil {
+			t.Fatalf("GetStatsOverview 失败: %v", err)
+		}
+		if stats.PrevWindowComments != 0 || stats.PrevWindowUsers != 0 {
+			t.Fatalf("上一窗口应为空，实际 %d/%d", stats.PrevWindowComments, stats.PrevWindowUsers)
+		}
+		if stats.CommentsDelta != nil {
+			t.Errorf("prev=0 时 commentsDelta 应为 null，实际 %d", *stats.CommentsDelta)
+		}
+		if stats.UsersDelta != nil {
+			t.Errorf("prev=0 时 usersDelta 应为 null，实际 %d", *stats.UsersDelta)
+		}
+	})
+}
+
+// TestGetStatsOverviewAllWindowIsTwelveMonths range=0/all 的窗口就是月度分桶的 12 个月
+func TestGetStatsOverviewAllWindowIsTwelveMonths(t *testing.T) {
+	_, repo := newTestRepo(t)
+	now := time.Now().UTC()
+	seedComments(t, repo,
+		sampleComment("/p", "a", "a@x.com", now.AddDate(0, -1, 0).UnixMilli(), "approved"),  // 12 个月窗口内
+		sampleComment("/p", "b", "b@x.com", now.AddDate(0, -13, 0).UnixMilli(), "approved"), // 上一窗口（12..24 个月前）
+		sampleComment("/p", "c", "c@x.com", now.AddDate(0, -25, 0).UnixMilli(), "approved"), // 两个窗口之外
+	)
+
+	for _, rangeVal := range []string{"all", "0"} {
+		stats, err := repo.GetStatsOverview(context.Background(), rangeVal)
+		if err != nil {
+			t.Fatalf("GetStatsOverview(%q) 失败: %v", rangeVal, err)
+		}
+		if stats.WindowComments != 1 {
+			t.Errorf("range=%q windowComments 期望 1，实际 %d", rangeVal, stats.WindowComments)
+		}
+		if stats.PrevWindowComments != 1 {
+			t.Errorf("range=%q prevWindowComments 期望 1，实际 %d", rangeVal, stats.PrevWindowComments)
+		}
+		var sum int64
+		for _, dc := range stats.RecentComments {
+			sum += dc.Count
+		}
+		if sum != stats.WindowComments {
+			t.Errorf("range=%q windowComments(%d) 应等于月度分桶之和(%d)", rangeVal, stats.WindowComments, sum)
+		}
+		if stats.CommentsDelta == nil || *stats.CommentsDelta != 0 {
+			t.Errorf("range=%q commentsDelta 期望 0，实际 %v", rangeVal, stats.CommentsDelta)
+		}
+	}
+}
+
+// TestGetStatsOverviewTodayAndLast7Days 今日 / 最近 7 个 UTC 自然日（含今天，边界闭合）
+func TestGetStatsOverviewTodayAndLast7Days(t *testing.T) {
+	_, repo := newTestRepo(t)
+	seedComments(t, repo,
+		sampleComment("/p", "a", "a@x.com", dayAtIndex(0)+1_000, "approved"), // 今天
+		sampleComment("/p", "b", "b@x.com", dayAtIndex(0)+2_000, "pending"),  // 今天
+		sampleComment("/p", "c", "c@x.com", dayAtIndex(-1), "approved"),      // 昨天
+		sampleComment("/p", "d", "d@x.com", dayAtIndex(-6), "approved"),      // 第 7 天（含边界）
+		sampleComment("/p", "e", "e@x.com", dayAtIndex(-7), "approved"),      // 第 8 天（不含）
+		sampleComment("/p", "f", "f@x.com", dayAtIndex(-30), "deleted"),      // 更早
+	)
+
+	for _, rangeVal := range []string{"7", "30", "all"} {
+		stats, err := repo.GetStatsOverview(context.Background(), rangeVal)
+		if err != nil {
+			t.Fatalf("GetStatsOverview(%q) 失败: %v", rangeVal, err)
+		}
+		if stats.TodayComments != 2 {
+			t.Errorf("range=%q todayComments 期望 2，实际 %d", rangeVal, stats.TodayComments)
+		}
+		if stats.Last7DaysComments != 4 {
+			t.Errorf("range=%q last7DaysComments 期望 4，实际 %d", rangeVal, stats.Last7DaysComments)
+		}
+	}
+}
+
+// TestGetStatsOverviewBrowserDistribution 浏览器分布：版本合并 + 脏值并入未知 + 排序 + LIMIT 5
+func TestGetStatsOverviewBrowserDistribution(t *testing.T) {
+	_, repo := newTestRepo(t)
+
+	seedBrowser := func(raw *string, n int) {
+		for i := 0; i < n; i++ {
+			seedComments(t, repo, clientComment("/p", "a", "a@x.com", int64(1000+i),
+				raw, strPtr("Windows 10"), strPtr("Desktop")))
+		}
+	}
+	seedBrowser(strPtr("Chrome 145.0.0.0"), 2)
+	seedBrowser(strPtr("Chrome 120"), 1) // 与上一行合并成 Chrome(3)
+	seedBrowser(strPtr("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36"), 2)
+	seedBrowser(strPtr(""), 1)
+	seedBrowser(nil, 1) // SQL 的 NULL 与空串同分支
+	seedBrowser(strPtr("Safari 17.0"), 2)
+	seedBrowser(strPtr("Mobile Safari 17.0"), 2)
+	seedBrowser(strPtr("Edge 147.0.0.0"), 1)
+	seedBrowser(strPtr("Firefox 121.0"), 1)
+	seedBrowser(strPtr("Opera 9.80"), 1)
+
+	stats, err := repo.GetStatsOverview(context.Background(), "7")
+	if err != nil {
+		t.Fatalf("GetStatsOverview 失败: %v", err)
+	}
+	want := []utils.NameCount{
+		{Name: "未知", Count: 4}, // 原始 UA 2 + 空串 1 + NULL 1
+		{Name: "Chrome", Count: 3},
+		{Name: "Mobile Safari", Count: 2}, // 同为 2，按名字升序
+		{Name: "Safari", Count: 2},
+		{Name: "Edge", Count: 1}, // 第 6 / 7 名（Firefox / Opera）被 LIMIT 5 截断
+	}
+	if !reflect.DeepEqual(stats.BrowserDistribution, want) {
+		t.Errorf("浏览器分布期望 %+v，实际 %+v", want, stats.BrowserDistribution)
+	}
+}
+
+// TestGetStatsOverviewOSDistribution 系统分布：版本合并 + 脏值并入未知
+func TestGetStatsOverviewOSDistribution(t *testing.T) {
+	_, repo := newTestRepo(t)
+
+	seedOS := func(raw *string, n int) {
+		for i := 0; i < n; i++ {
+			seedComments(t, repo, clientComment("/p", "a", "a@x.com", int64(1000+i),
+				strPtr("Chrome 120"), raw, strPtr("Desktop")))
+		}
+	}
+	seedOS(strPtr("Windows 10"), 2)
+	seedOS(strPtr("Windows 10.0"), 1) // 与上面合并成 Windows(3)
+	seedOS(strPtr("macOS 10.15.7"), 1)
+	seedOS(strPtr(""), 1)
+	seedOS(nil, 1)
+	seedOS(strPtr("Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko)"), 1)
+
+	stats, err := repo.GetStatsOverview(context.Background(), "7")
+	if err != nil {
+		t.Fatalf("GetStatsOverview 失败: %v", err)
+	}
+	want := []utils.NameCount{
+		{Name: "Windows", Count: 3},
+		{Name: "未知", Count: 3}, // 空串 1 + NULL 1 + 原始 UA 1
+		{Name: "macOS", Count: 1},
+	}
+	if !reflect.DeepEqual(stats.OSDistribution, want) {
+		t.Errorf("系统分布期望 %+v，实际 %+v", want, stats.OSDistribution)
+	}
+}
+
+// TestGetStatsOverviewDeviceDistribution 设备分布：四分类 + 空值=桌面 + 移动关键词优先
+func TestGetStatsOverviewDeviceDistribution(t *testing.T) {
+	_, repo := newTestRepo(t)
+
+	seedDevice := func(raw *string, n int) {
+		for i := 0; i < n; i++ {
+			seedComments(t, repo, clientComment("/p", "a", "a@x.com", int64(1000+i),
+				strPtr("Chrome 120"), strPtr("Windows 10"), raw))
+		}
+	}
+	seedDevice(strPtr("Desktop"), 2)
+	seedDevice(strPtr(""), 1)
+	seedDevice(nil, 1) // 空值 / NULL 都是桌面
+	seedDevice(strPtr("iPad"), 1)
+	seedDevice(strPtr("Windows Phone"), 1) // 移动关键词优先于桌面关键词
+	seedDevice(strPtr("ABR-AL60"), 1)      // 只剩机型码 → 移动
+	seedDevice(strPtr("Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko)"), 1)
+
+	stats, err := repo.GetStatsOverview(context.Background(), "7")
+	if err != nil {
+		t.Fatalf("GetStatsOverview 失败: %v", err)
+	}
+	want := []utils.NameCount{
+		{Name: "桌面", Count: 4},
+		{Name: "移动", Count: 2},
+		{Name: "平板", Count: 1}, // 平(U+5E73) < 未(U+672A)
+		{Name: "未知", Count: 1},
+	}
+	if !reflect.DeepEqual(stats.DeviceDistribution, want) {
+		t.Errorf("设备分布期望 %+v，实际 %+v", want, stats.DeviceDistribution)
+	}
+}
+
+// TestGetStatsOverviewLatestComments 最新评论：pub_date DESC, id DESC, LIMIT 5
+func TestGetStatsOverviewLatestComments(t *testing.T) {
+	_, repo := newTestRepo(t)
+	base := int64(1_700_000_000_000)
+	seedComments(t, repo,
+		sampleComment("/p1", "alice", "a@x.com", base+1000, "approved"),
+		sampleComment("/p2", "bob", "b@x.com", base+3000, "pending"),
+		sampleComment("/p3", "carol", "c@x.com", base+3000, "deleted"), // 与上一条同 pub_date，id 更大
+		sampleComment("/p4", "dave", "d@x.com", base+2000, "rejected"),
+		sampleComment("/p5", "erin", "e@x.com", base+5000, "approved"),
+		sampleComment("/p6", "frank", "f@x.com", base+4000, "approved"),
+	)
+
+	stats, err := repo.GetStatsOverview(context.Background(), "7")
+	if err != nil {
+		t.Fatalf("GetStatsOverview 失败: %v", err)
+	}
+	if len(stats.LatestComments) != 5 {
+		t.Fatalf("最新评论最多 5 条，实际 %d: %+v", len(stats.LatestComments), stats.LatestComments)
+	}
+	// 5000(id5), 4000(id6), 3000(id3), 3000(id2), 2000(id4)；最旧的 id1 被截断
+	wantIDs := []int64{5, 6, 3, 2, 4}
+	for i, want := range wantIDs {
+		if stats.LatestComments[i].ID != want {
+			t.Errorf("第 %d 条 id 期望 %d，实际 %d（%+v）", i+1, want, stats.LatestComments[i].ID, stats.LatestComments)
+		}
+	}
+	if stats.LatestComments[2].Author != "carol" || stats.LatestComments[3].Author != "bob" {
+		t.Errorf("pub_date 相同时应按 id DESC（carol 在后写入），实际 %q / %q",
+			stats.LatestComments[2].Author, stats.LatestComments[3].Author)
+	}
+
+	first := stats.LatestComments[0]
+	if first.Author != "erin" || first.Email != "e@x.com" || first.PostSlug != "/p5" || first.Status != "approved" {
+		t.Errorf("最新评论字段不正确: %+v", first)
+	}
+	if first.ContentText != "内容 erin" { // 正文不截断
+		t.Errorf("contentText 期望 %q，实际 %q", "内容 erin", first.ContentText)
+	}
+	wantPub := time.UnixMilli(base+5000).UTC().Format("2006-01-02T15:04:05.000Z")
+	if first.PubDate != wantPub {
+		t.Errorf("pubDate 期望 %q，实际 %q", wantPub, first.PubDate)
+	}
+	if !isoMillisRe.MatchString(first.PubDate) {
+		t.Errorf("pubDate 格式应为毫秒 ISO，实际 %q", first.PubDate)
+	}
+	// 含所有状态：pending / deleted / rejected 都要在下发的 5 条里看得到
+	seen := map[string]bool{}
+	for _, c := range stats.LatestComments {
+		seen[c.Status] = true
+	}
+	for _, status := range []string{"approved", "pending", "deleted", "rejected"} {
+		if !seen[status] {
+			t.Errorf("最新评论应含所有状态，缺少 %q: %+v", status, stats.LatestComments)
+		}
+	}
+}
+
+// TestPercentDeltaRounding 环比取整与 JS 的 Math.round 逐位一致（含半值与负数边界）
+func TestPercentDeltaRounding(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		cur      int64
+		prev     int64
+		want     *int64
+		wantNull bool
+	}{
+		{"上一窗口为 0 → null", 5, 0, nil, true},
+		{"0/0 → null", 0, 0, nil, true},
+		{"整数增长", 3, 2, int64Ptr(50), false},
+		{"零增长", 2, 2, int64Ptr(0), false},
+		{"下降取整（向 +∞）", 2, 3, int64Ptr(-33), false},   // -33.33… → -33
+		{"下降取整（远离 0 的分界）", 1, 3, int64Ptr(-67), false}, // -66.66… → -67
+		{"正好 -0.5 → 0（JS Math.round(-0.5) 为 -0）", 199, 200, int64Ptr(0), false},
+		{"正好 -99.5 → -99（不是 -100）", 1, 200, int64Ptr(-99), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := percentDelta(tc.cur, tc.prev)
+			if tc.wantNull {
+				if got != nil {
+					t.Fatalf("期望 null，实际 %d", *got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("期望 %d，实际 null", *tc.want)
+			}
+			if *got != *tc.want {
+				t.Errorf("percentDelta(%d, %d) 期望 %d，实际 %d", tc.cur, tc.prev, *tc.want, *got)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
 // GetUserList
 // ---------------------------------------------------------------------------
 
@@ -299,12 +726,9 @@ func TestGetUserList(t *testing.T) {
 	_, repo := newTestRepo(t)
 	times := seedUserListData(t, repo)
 
-	users, total, err := repo.GetUserList(context.Background(), 0, 20, "", "all")
+	users, err := repo.GetUserList(context.Background(), "", "all")
 	if err != nil {
 		t.Fatalf("GetUserList 失败: %v", err)
-	}
-	if total != 3 {
-		t.Errorf("唯一用户数期望 3，实际 %d", total)
 	}
 	if len(users) != 3 {
 		t.Fatalf("用户条数期望 3，实际 %d", len(users))
@@ -373,11 +797,12 @@ func TestGetUserListSearch(t *testing.T) {
 		{"_ 被当作通配符（匹配全部）", "_", 3, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			users, total, err := repo.GetUserList(context.Background(), 0, 20, tc.search, "all")
+			users, err := repo.GetUserList(context.Background(), tc.search, "all")
 			if err != nil {
 				t.Fatalf("GetUserList 失败: %v", err)
 			}
-			if total != tc.want {
+			total := len(users)
+			if int64(total) != tc.want {
 				t.Errorf("total 期望 %d，实际 %d", tc.want, total)
 			}
 			if tc.authors != nil {
@@ -417,12 +842,12 @@ func TestGetUserListVerifiedFilter(t *testing.T) {
 		{"未知取值不过滤", "garbage", 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			users, total, err := repo.GetUserList(context.Background(), 0, 20, "", tc.verified)
+			users, err := repo.GetUserList(context.Background(), "", tc.verified)
 			if err != nil {
 				t.Fatalf("GetUserList 失败: %v", err)
 			}
-			if total != tc.want {
-				t.Errorf("total 期望 %d，实际 %d", tc.want, total)
+			if int64(len(users)) != tc.want {
+				t.Errorf("total 期望 %d，实际 %d", tc.want, len(users))
 			}
 			if len(users) != int(tc.want) {
 				t.Errorf("条数期望 %d，实际 %d", tc.want, len(users))
@@ -462,55 +887,106 @@ func TestGetUserListVerifiedIsCaseSensitiveInSQL(t *testing.T) {
 		t.Fatalf("插入邮箱验证记录失败: %v", err)
 	}
 
-	_, total, err := repo.GetUserList(context.Background(), 0, 20, "", "true")
+	users, err := repo.GetUserList(context.Background(), "", "true")
 	if err != nil {
 		t.Fatalf("GetUserList 失败: %v", err)
 	}
-	if total != 0 {
-		t.Errorf("邮箱大小写不同不应命中已验证筛选（当前为精确匹配），实际 total=%d", total)
+	if len(users) != 0 {
+		t.Errorf("邮箱大小写不同不应命中已验证筛选（当前为精确匹配），实际 %d 条", len(users))
 	}
 }
 
+// TestGetUserListPagination 分页已上移到 handler（链接状态筛选必须先于分页）：
+// 仓库层一次返回**全部**匹配用户，顺序仍是 commentCount DESC。
 func TestGetUserListPagination(t *testing.T) {
 	_, repo := newTestRepo(t)
 	seedUserListData(t, repo)
 
-	for _, tc := range []struct {
-		name    string
-		offset  int
-		limit   int
-		wantLen int
-	}{
-		{"第一页", 0, 1, 1},
-		{"第二页", 1, 1, 1},
-		{"第三页", 2, 1, 1},
-		{"越界", 10, 1, 0},
-		{"limit 为 0", 0, 0, 0},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			users, total, err := repo.GetUserList(context.Background(), tc.offset, tc.limit, "", "all")
-			if err != nil {
-				t.Fatalf("GetUserList 失败: %v", err)
-			}
-			if total != 3 {
-				t.Errorf("total 应始终为 3，实际 %d", total)
-			}
-			if len(users) != tc.wantLen {
-				t.Errorf("条数期望 %d，实际 %d", tc.wantLen, len(users))
-			}
-		})
+	users, err := repo.GetUserList(context.Background(), "", "all")
+	if err != nil {
+		t.Fatalf("GetUserList 失败: %v", err)
+	}
+	if len(users) != 3 {
+		t.Fatalf("仓库层应一次返回全部 3 个用户（分页由 handler 负责），实际 %d", len(users))
+	}
+	// 顺序仍按评论数降序：alice(3) > carol(2) > bob(1)
+	wantOrder := []string{"alice", "carol", "bob"}
+	for i, want := range wantOrder {
+		if users[i].Author != want {
+			t.Errorf("第 %d 条作者期望 %q，实际 %q", i, want, users[i].Author)
+		}
 	}
 }
 
 func TestGetUserListEmpty(t *testing.T) {
 	_, repo := newTestRepo(t)
 
-	users, total, err := repo.GetUserList(context.Background(), 0, 20, "", "all")
+	users, err := repo.GetUserList(context.Background(), "", "all")
 	if err != nil {
 		t.Fatalf("GetUserList 失败: %v", err)
 	}
-	if total != 0 || len(users) != 0 {
-		t.Errorf("空库应返回 0 条，实际 %d 条 / total=%d", len(users), total)
+	if len(users) != 0 {
+		t.Errorf("空库应返回 0 条，实际 %d 条", len(users))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// LinkStatusByEmails（用户列表的 url / urlDormant 列）
+// ---------------------------------------------------------------------------
+
+func TestLinkStatusByEmails(t *testing.T) {
+	_, repo := newTestRepo(t)
+
+	base := int64(1_800_000_000_000)
+	// url 为 nil 的评论（「较晚的评论没留网址」）
+	noURL := func(slug, author, email string, at int64, status string) *model.Comment {
+		c := sampleComment(slug, author, email, at, status)
+		c.URL = nil
+		return c
+	}
+
+	// 身份按归一化邮箱：大小写 + 首尾空白 + 不同昵称都归到同一个 a@x.com
+	newest := sampleComment("/p2", "甲（改名）", " a@x.com ", base+3000, "approved")
+	newest.URL = strPtr("https://new.example.com")
+	seedComments(t, repo,
+		sampleComment("/p1", "甲", "A@X.com ", base+1000, "approved"), // 旧网址
+		noURL("/p1", "甲", "a@x.com", base+2000, "approved"),          // 较晚且没留网址 → 不清空
+		newest, // 最新非空网址胜出
+		noURL("/p1", "甲", "a@x.com", base+4000, "approved"),         // 最后一条没留网址
+		sampleComment("/p1", "乙", "b@x.com", base+5000, "deleted"),  // deleted 不算「来过」
+		sampleComment("/p1", "丙", "c@x.com", base+5000, "rejected"), // rejected 不算「来过」
+		sampleComment("/p1", "丁", "d@x.com", base+5000, "pending"),  // pending 算「来过」
+	)
+
+	statuses, err := repo.LinkStatusByEmails(context.Background(),
+		[]string{"a@x.com", "b@x.com", "c@x.com", "d@x.com", "nobody@x.com"})
+	if err != nil {
+		t.Fatalf("LinkStatusByEmails 失败: %v", err)
+	}
+
+	if got := statuses["a@x.com"].LastAt; got != base+4000 {
+		t.Errorf("a@x.com 的最后评论时间期望 %d，实际 %d", base+4000, got)
+	}
+	if got := statuses["a@x.com"].LatestURL; got != "https://new.example.com" {
+		t.Errorf("a@x.com 的最新非空网址不正确，实际 %q", got)
+	}
+	// rejected / deleted 不计入「来过」，因此不该出现在结果里
+	for _, email := range []string{"b@x.com", "c@x.com", "nobody@x.com"} {
+		if entry, ok := statuses[email]; ok {
+			t.Errorf("%s 不应出现在结果里，实际 %+v", email, entry)
+		}
+	}
+	if got := statuses["d@x.com"].LastAt; got != base+5000 {
+		t.Errorf("pending 应算「来过」，d@x.com 的最后评论时间期望 %d，实际 %d", base+5000, got)
+	}
+
+	// 空邮箱集合：不查询、返回空 map
+	empty, err := repo.LinkStatusByEmails(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("LinkStatusByEmails(nil) 失败: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("空邮箱集合应返回空 map，实际 %+v", empty)
 	}
 }
 

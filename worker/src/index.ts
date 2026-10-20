@@ -8,6 +8,8 @@ import { ensureMigrated } from './utils/migrations'
 import { getComments } from './api/public/getComments'
 import { postComment } from './api/public/postComment'
 import { verifyEmail } from './api/public/verifyEmail'
+import { linkSyncConfirm } from './api/public/linkSyncConfirm'
+import { dormantNoticePage, dormantLinkConfirm, dormantLinkUpdate } from './api/public/dormantNotice'
 import { verifyChallenge } from './api/public/verifyChallenge'
 import { verifySolutionHandler } from './api/public/verifySolution'
 import { adminLogin } from './api/admin/login'
@@ -20,8 +22,10 @@ import { statsOverview } from './api/admin/statsOverview'
 import { verifyOverview } from './api/admin/verifyOverview'
 import { verifyRecords } from './api/admin/verifyRecords'
 import { userList } from './api/admin/userList'
+import { listMails } from './api/admin/mailList'
 import { userComments } from './api/admin/userComments'
 import { addUserToBlacklist, removeUserFromBlacklist } from './api/admin/userBlacklist'
+import { trustLink, revokeLinkTrust } from './api/admin/linkTrust'
 import { exportSettings, exportComments } from './api/admin/dataExport'
 import { importComments, importSettings } from './api/admin/dataImport'
 
@@ -44,6 +48,12 @@ app.use('/api/*', async (c, next) => {
 app.get('/api/comments', getComments)
 app.post('/api/comments', postComment)
 app.get('/api/verify-email/verify', verifyEmail)
+// 历史链接批量更新：邮件里的确认链接即凭据（无需登录）
+app.get('/api/link-sync/confirm', linkSyncConfirm)
+// 休眠链接提醒：邮件里的提醒页令牌即凭据（无需登录）
+app.get('/api/link-dormant/notice', dormantNoticePage)
+app.post('/api/link-dormant/confirm', dormantLinkConfirm)
+app.post('/api/link-dormant/update', dormantLinkUpdate)
 
 // 无感验证（Turnstile 风格）
 app.post('/api/verify/challenge', verifyChallenge)
@@ -67,6 +77,11 @@ app.get('/admin/stats/users', userList);
 app.get('/admin/stats/users/comments', userComments);
 app.post('/admin/users/blacklist', addUserToBlacklist);
 app.delete('/admin/users/blacklist', removeUserFromBlacklist);
+// 休眠链接的人工确认（TrustedLink）：写入 / 撤销
+app.post('/admin/links/trust', trustLink);
+app.delete('/admin/links/trust', revokeLinkTrust);
+// 邮件发送日志（MailLog）：保留最近 30 天
+app.get('/admin/mails', listMails);
 app.get('/admin/data/export/settings', exportSettings);
 app.get('/admin/data/export/comments', exportComments);
 app.post('/admin/data/import/comments', importComments);

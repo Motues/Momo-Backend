@@ -4,6 +4,7 @@ import { getQueryClampedNumber, getQueryBoolean, getQueryString } from "../../ut
 import { getResponseComment } from "../../utils/content";
 import { getClientIP } from "../../utils/ip";
 import { allowRequest } from "../../utils/rateLimit";
+import { resolveBaseUrl } from "../../utils/baseUrl";
 
 // 公开评论列表限流：缓解批量遍历 post_slug 采集博主邮箱哈希等爬取行为
 const RATE_LIMIT = 120;
@@ -27,5 +28,12 @@ export default async (c: Context): Promise<Response> => {
   }
 
   const comments = await CommentService.getCommentBySlug(postSlug);
-  return c.json(await getResponseComment(comments, page, limit, nested, postSlug));
+  // 站点基址用于「休眠链接提醒」邮件里的提醒页地址（邮件发送本身是异步的，不阻塞响应）
+  const noticeBaseUrl = await resolveBaseUrl({
+    origin: c.req.header("Origin"),
+    host: c.req.header("Host"),
+  });
+  return c.json(
+    await getResponseComment(comments, page, limit, nested, postSlug, noticeBaseUrl)
+  );
 };

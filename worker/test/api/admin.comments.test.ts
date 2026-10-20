@@ -105,6 +105,73 @@ describe('GET /admin/comments/list', () => {
 		const res = await api('/admin/comments/list?page=99', { headers: authed() });
 		expect(res.body.data.comments).toEqual([]);
 	});
+
+	it('postSlug 精确匹配（不做前缀匹配）', async () => {
+		await seedComment({ author: 'A', post_slug: '/posts/a' });
+		await seedComment({ author: 'AB', post_slug: '/posts/ab' });
+		await seedComment({ author: 'B', post_slug: '/posts/b' });
+
+		const res = await api(`/admin/comments/list?postSlug=${encodeURIComponent('/posts/a')}`, {
+			headers: authed(),
+		});
+		expect(res.body.data.comments.map((c: any) => c.author)).toEqual(['A']);
+		expect(res.body.data.pagination.totalPage).toBe(1);
+
+		const prefix = await api(`/admin/comments/list?postSlug=${encodeURIComponent('/posts/')}`, {
+			headers: authed(),
+		});
+		expect(prefix.body.data.comments).toEqual([]);
+	});
+
+	it('postSlug 两端空白被裁剪', async () => {
+		await seedComment({ author: 'A', post_slug: '/posts/a' });
+		const res = await api('/admin/comments/list?postSlug=%20%2Fposts%2Fa%20', { headers: authed() });
+		expect(res.body.data.comments.map((c: any) => c.author)).toEqual(['A']);
+	});
+
+	it('postSlug 与 status 是 AND 关系', async () => {
+		await seedComment({ author: 'A1', post_slug: '/posts/a', status: 'approved' });
+		await seedComment({ author: 'A2', post_slug: '/posts/a', status: 'pending' });
+		await seedComment({ author: 'B1', post_slug: '/posts/b', status: 'approved' });
+
+		const res = await api('/admin/comments/list?postSlug=%2Fposts%2Fa&status=approved', {
+			headers: authed(),
+		});
+		expect(res.body.data.comments.map((c: any) => c.author)).toEqual(['A1']);
+		expect(res.body.data.pagination.totalPage).toBe(1);
+	});
+
+	it('postSlug 为空或纯空白时不做筛选', async () => {
+		await seedComment({ author: 'A', post_slug: '/posts/a' });
+		await seedComment({ author: 'B', post_slug: '/posts/b' });
+
+		for (const query of ['', '?postSlug=', '?postSlug=%20%20']) {
+			const res = await api(`/admin/comments/list${query}`, { headers: authed() });
+			expect(res.body.data.comments).toHaveLength(2);
+			expect(res.body.data.pagination.totalPage).toBe(1);
+		}
+	});
+
+	it('postSlug 无匹配时返回空列表与 totalPage 0', async () => {
+		await seedComment({ post_slug: '/posts/a' });
+		const res = await api('/admin/comments/list?postSlug=%2Fposts%2Fzzz', { headers: authed() });
+		expect(res.status).toBe(200);
+		expect(res.body.data.comments).toEqual([]);
+		expect(res.body.data.pagination).toEqual({ page: 1, limit: 10, totalPage: 0 });
+	});
+
+	it('postSlug 过滤后分页仍按过滤后的总数计算且保持倒序', async () => {
+		for (let i = 0; i < 12; i++) {
+			await seedComment({ author: `T${i}`, post_slug: '/posts/target', pub_date: 1700000000000 + i * 1000 });
+		}
+		await seedComment({ author: 'Other', post_slug: '/posts/other', pub_date: 1800000000000 });
+
+		const second = await api('/admin/comments/list?postSlug=%2Fposts%2Ftarget&page=2', {
+			headers: authed(),
+		});
+		expect(second.body.data.comments.map((c: any) => c.author)).toEqual(['T1', 'T0']);
+		expect(second.body.data.pagination).toEqual({ page: 2, limit: 10, totalPage: 2 });
+	});
 });
 
 describe('PUT /admin/comments/status', () => {

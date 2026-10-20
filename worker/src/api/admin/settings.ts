@@ -4,13 +4,39 @@ import { getAllSettings, getSetting, setSetting } from '../../utils/settings';
 import { sendTestEmail } from '../../utils/email';
 import { isValidIpBlacklistJson } from '../../utils/security';
 import { validateSpamSettings } from '../../utils/spam';
-import { validateEmojiCdnUrl, validateEmojiEnabled, normalizeEmojiEnabled } from '../../utils/emoji';
+import {
+  validateEmojiCdnUrl,
+  validateEmojiCdnUrls,
+  validateEmojiEnabled,
+  normalizeEmojiEnabled,
+} from '../../utils/emoji';
+import {
+  ADMIN_EMAILS_KEY,
+  NOTIFY_EMAIL_KEY,
+  getAdminConfig,
+  validateAdminSettingsBody,
+} from '../../utils/adminEmails';
+import {
+  LINK_DORMANT_DAYS_KEY,
+  LINK_SWITCH_KEYS,
+  normalizeSwitch,
+  parseDormantDays,
+  validateLinkSecuritySettings,
+} from '../../utils/linkSecurity';
+
+import {
+  MAIL_LOG_RETENTION_KEY,
+  resolveMailLogRetentionDays,
+  validateMailLogRetentionDays,
+} from '../../utils/mailLog';
 
 // 敏感字段：读取时始终置空。comment_verify_secret 由系统自动生成，不对外开放读写
 const SENSITIVE_KEYS = new Set(["admin_password", "email_password", "admin_comment_key", "comment_verify_secret"]);
 
 const ALLOWED_SETTINGS = new Set([
   "site_name", "admin_email", "admin_name",
+  // 多管理员邮箱：列表（admin_emails）+ 通知收件人（notify_email），旧键 admin_email 保留
+  "admin_emails", "notify_email",
   "smtp_host", "smtp_port", "email_user", "email_password", "email_secure",
   "allow_origin", "email_enabled",
   "reply_template", "notification_template",
@@ -32,6 +58,8 @@ const ALLOWED_SETTINGS = new Set([
   "admin_comment_key_enabled",
   "email_verify_enabled",
   "verify_base_url",
+  // 外发邮件日志（面板「邮件管理」）的保留天数：0 = 永久保留
+  "mail_log_retention_days",
   "comment_verify_enabled",
   "comment_verify_difficulty",
   "comment_verify_instr_enabled",
@@ -42,18 +70,26 @@ const ALLOWED_SETTINGS = new Set([
   "comment_verify_retention_days",
   "comment_verify_log_challenge",
   "trust_proxy",
-  // 表情设置：启用开关 + OwO 格式的表情来源（见 doc/emoji.md）
+  // 表情设置：启用开关 + OwO 格式的表情来源（多地址数组 + 兼容的旧单地址键，见 doc/emoji.md）
   "emoji_enabled",
   "emoji_cdn_url",
+  "emoji_cdn_urls",
+  // 链接安全审查：休眠链接 + 历史链接批量更新 + 休眠提醒邮件（见 doc/link_security.md）
+  "link_security_enabled",
+  "link_dormant_days",
+  "link_sync_enabled",
+  "link_dormant_notice_enabled",
 ]);
 
 const SETTINGS_GROUPS: Record<string, string[]> = {
-  basic: ["site_name", "admin_email", "comment_auto_approve", "comment_spam_keywords", "comment_spam_max_links", "comment_spam_min_length", "comment_spam_duplicate_window", "blogger_badge_enabled", "blogger_badge_text", "placeholder_name", "placeholder_email", "placeholder_content", "placeholder_url"],
-  email: ["smtp_host", "smtp_port", "email_user", "email_password", "email_secure", "email_enabled", "email_verify_enabled", "verify_base_url", "reply_template", "notification_template"],
+  basic: ["site_name", "admin_email", "admin_emails", "notify_email", "comment_auto_approve", "comment_spam_keywords", "comment_spam_max_links", "comment_spam_min_length", "comment_spam_duplicate_window", "blogger_badge_enabled", "blogger_badge_text", "placeholder_name", "placeholder_email", "placeholder_content", "placeholder_url"],
+  email: ["smtp_host", "smtp_port", "email_user", "email_password", "email_secure", "email_enabled", "email_verify_enabled", "verify_base_url", "mail_log_retention_days", "reply_template", "notification_template"],
   security: ["allow_origin", "admin_comment_key", "admin_comment_key_enabled", "ip_blacklist", "email_blacklist", "comment_verify_enabled", "comment_verify_difficulty", "comment_verify_instr_enabled", "comment_verify_block_automated", "comment_verify_domain_enabled", "comment_verify_retention_days", "comment_verify_log_challenge", "trust_proxy"],
   account: ["admin_name"],
-  // 表情设置：启用开关 + OwO 格式的表情来源地址
-  emoji: ["emoji_cdn_url", "emoji_enabled"],
+  // 表情设置：启用开关 + OwO 格式的表情来源地址（数组 + 兼容用的旧单地址）
+  emoji: ["emoji_cdn_url", "emoji_cdn_urls", "emoji_enabled"],
+  // 链接安全审查：休眠链接 + 历史链接批量更新 + 休眠提醒邮件
+  link: ["link_security_enabled", "link_dormant_days", "link_sync_enabled", "link_dormant_notice_enabled"],
 };
 
 export const getSettings = async (c: Context<{ Bindings: Bindings }>) => {
@@ -122,6 +158,35 @@ export const updateSettings = async (c: Context<{ Bindings: Bindings }>) => {
       return c.json({ code: 400, message: cdnError }, 400);
     }
   }
+  let emojiCdnUrlsJson: string | undefined;
+  if ("emoji_cdn_urls" in body) {
+    const result = validateEmojiCdnUrls(body.emoji_cdn_urls);
+    if (result.error) {
+      return c.json({ code: 400, message: result.error }, 400);
+    }
+    emojiCdnUrlsJson = JSON.stringify(result.urls);
+  }
+
+  // 链接安全审查（口径见 doc/link_security.md）：开关只接受 true/false，天数必须是 1–3650 的整数
+  const linkError = validateLinkSecuritySettings(body);
+  if (linkError) {
+    return c.json({ code: 400, message: linkError }, 400);
+  }
+
+  // 多管理员邮箱（口径见 doc/admin_emails.md）：notify_email 必须在列表里
+  const adminConfig = await getAdminConfig(c.env);
+  const adminWrite = validateAdminSettingsBody(body, adminConfig.admins);
+  if (adminWrite.error) {
+    return c.json({ code: 400, message: adminWrite.error }, 400);
+  }
+
+  // 邮件日志保留天数（面板「邮件通知设置 → 邮件记录」）：0–3650 的整数，0 = 永久保留
+  if ("mail_log_retention_days" in body) {
+    const retentionError = validateMailLogRetentionDays(body.mail_log_retention_days);
+    if (retentionError) {
+      return c.json({ code: 400, message: retentionError }, 400);
+    }
+  }
 
   const smtpChanged = "smtp_host" in body || "smtp_port" in body || "email_user" in body || "email_password" in body;
 
@@ -138,6 +203,39 @@ export const updateSettings = async (c: Context<{ Bindings: Bindings }>) => {
         await setSetting(c.env, key, String(value).trim());
         continue;
       }
+      if (key === "emoji_cdn_urls") {
+        await setSetting(c.env, key, emojiCdnUrlsJson ?? '[]');
+        continue;
+      }
+      if (key === ADMIN_EMAILS_KEY) {
+        await setSetting(c.env, key, adminWrite.adminEmailsJson ?? '[]');
+        continue;
+      }
+      if (key === NOTIFY_EMAIL_KEY) {
+        await setSetting(c.env, key, adminWrite.notifyEmail ?? '');
+        continue;
+      }
+      if (LINK_SWITCH_KEYS.includes(key as (typeof LINK_SWITCH_KEYS)[number])) {
+        // 开关 fail-closed：写入时存归一化后的 "true" / "false" / ""
+        await setSetting(c.env, key, normalizeSwitch(value));
+        continue;
+      }
+      if (key === LINK_DORMANT_DAYS_KEY) {
+        // 存**规范化后的十进制**（" 30 " / "0030" → "30"），与 Node/Go 一致
+        await setSetting(c.env, key, String(parseDormantDays(value)));
+        continue;
+      }
+      // 邮件日志保留天数：同样存规范化后的十进制（0 = 永久保留）
+      if (key === MAIL_LOG_RETENTION_KEY) {
+        await setSetting(c.env, key, String(resolveMailLogRetentionDays(value)));
+        continue;
+      }
+      // 旧键 admin_email：原样存储（不 trim、不做大小写归一），与 Node/Go 及 1.7.0 的写入语义一致；
+      // 读取时统一走 normalizeEmail（trim + 小写）判定，所以两侧空格不影响任何行为
+      if (key === "admin_email") {
+        await setSetting(c.env, key, String(value));
+        continue;
+      }
       await setSetting(c.env, key, String(value));
     }
   }
@@ -152,13 +250,14 @@ export const updateSettings = async (c: Context<{ Bindings: Bindings }>) => {
 };
 
 export const testEmail = async (c: Context<{ Bindings: Bindings }>) => {
-  const adminEmail = await getSetting(c.env, "admin_email");
-  if (!adminEmail) {
+  // 收件人 = 解析后的 notify_email（未配置时回落到管理员列表第一个，见 doc/admin_emails.md 第 6 节）
+  const notifyEmail = (await getAdminConfig(c.env)).notify;
+  if (!notifyEmail) {
     return c.json({ code: 400, message: 'Admin email is not configured. ' }, 400);
   }
 
   try {
-    await sendTestEmail(c.env, adminEmail);
+    await sendTestEmail(c.env, notifyEmail);
     return c.json({ code: 200, message: 'A test email has been sent' });
   } catch (e: any) {
     return c.json({ code: 400, message: '邮件发送失败，请检查 SMTP 配置' }, 400);

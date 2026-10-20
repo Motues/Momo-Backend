@@ -8,6 +8,11 @@ import { canPostComment, checkContent, countCodePoints, MAX_POST_SLUG, sanitizeP
 import { checkCommentSpam } from "../../utils/spam";
 import { checkRequestSource, isSourceDenied } from "../../utils/origin";
 import { getSetting } from "../../utils/settings";
+import { resolveBaseUrl } from "../../utils/baseUrl";
+import { getAdminEmailList, isAdminEmail as matchesAdminEmail } from "../../utils/adminEmails";
+import { resolveEmojiConfigs } from "../../utils/emoji";
+import { loadEmailEmojiMap, renderEmailContent } from "../../utils/emailEmoji";
+import { offerLinkSync } from "../../utils/linkSync";
 import { isVerifyEnabled, checkVerifyDomain, verifyTicket } from "../../utils/verify";
 import { parseMarkdown } from "../../utils/markdown";
 import { getClientIP } from "../../utils/ip";
@@ -18,6 +23,14 @@ const MAX_CONTENT = 2000;
 const MAX_AUTHOR = 100;
 const MAX_EMAIL = 254;
 const MAX_URL = 500;
+
+/**
+ * 站点对外基础地址（不带尾部斜杠）：统一从 utils/baseUrl.ts 取，
+ * 邮箱验证 / 链接同步确认 / 休眠链接提醒三封邮件共用同一口径。
+ */
+async function resolveRequestBaseUrl(c: Context): Promise<string> {
+  return resolveBaseUrl({ origin: c.req.header("Origin"), host: c.req.header("Host") });
+}
 
 
 export default async (c: Context): Promise<Response> => {
@@ -109,13 +122,13 @@ export default async (c: Context): Promise<Response> => {
       );
     }
 
-    // 管理员身份判定（只依赖 admin_email）：
+    // 管理员身份判定（只依赖管理员邮箱列表，见 doc/admin_emails.md 第 5 节）：
     // 必须早于限流与黑名单检查，因为管理员邮箱不受 60 秒评论冷却限制。
-    const adminEmail = (await getSetting("admin_email")) || "";
-    const isAdminEmail = !!adminEmail && data.email === adminEmail;
+    const adminEmails = await getAdminEmailList();
+    const isAdmin = matchesAdminEmail(data.email, adminEmails);
 
     // 检查评论时间（管理员邮箱不限流）
-    if (!isAdminEmail && !(await canPostComment(ip))) {
+    if (!isAdmin && !(await canPostComment(ip))) {
       return c.json({ code: 429, message: "Time limit exceeded" }, 429);
     }
 
@@ -129,12 +142,12 @@ export default async (c: Context): Promise<Response> => {
       return c.json({ code: 403, message: "Your email has been blocked" }, 403);
     }
 
-    // 管理员评论密钥验证（adminEmail 已在上方读取）
+    // 管理员评论密钥验证（管理员列表已在上方读取）
     const adminCommentKey = (await getSetting("admin_comment_key")) || "";
     const adminCommentKeyEnabled =
       (await getSetting("admin_comment_key_enabled")) || "false";
     let isAdminVerified = false;
-    if (isAdminEmail && adminCommentKey && adminCommentKeyEnabled === "true") {
+    if (isAdmin && adminCommentKey && adminCommentKeyEnabled === "true") {
       if (data.admin_key === adminCommentKey) {
         isAdminVerified = true;
       } else {
@@ -229,13 +242,8 @@ export default async (c: Context): Promise<Response> => {
           await saveVerificationToken(data.email, token, expiresAt, data.post_slug, postTitle);
 
           // 优先使用手动配置的验证地址，否则从请求头推断
-          let baseUrl = await getSetting("verify_base_url");
-          if (!baseUrl) {
-            const origin = c.req.header("Origin") || c.req.header("Host") || "";
-            const protocol = origin.includes("localhost") || origin.includes("127.0.0.1") ? "http" : "https";
-            baseUrl = origin.startsWith("http") ? origin : `${protocol}://${origin}`;
-          }
-          const verifyUrl = `${baseUrl.replace(/\/+$/, "")}/api/verify-email/verify?token=${encodeURIComponent(token)}&email=${encodeURIComponent(data.email)}`;
+          const baseUrl = await resolveRequestBaseUrl(c);
+          const verifyUrl = `${baseUrl}/api/verify-email/verify?token=${encodeURIComponent(token)}&email=${encodeURIComponent(data.email)}`;
 
           // 异步发送验证邮件
           sendVerificationEmail({
@@ -254,6 +262,16 @@ export default async (c: Context): Promise<Response> => {
     // 发送邮件通知（不影响评论结果）
     try {
       if (await isEmailServiceAvailable()) {
+        // 通知邮件发的是**渲染后的 HTML**（Markdown 图片/链接 + 表情包小图），
+        // 表情短代码由发信路径按配置来源拉取后水合，见 doc/mail.md
+        const emojiConfig = resolveEmojiConfigs(
+          await getSetting("emoji_cdn_urls"),
+          await getSetting("emoji_cdn_url"),
+          await getSetting("emoji_enabled")
+        );
+        const emojiImages =
+          emojiConfig.enabled === "false" ? null : await loadEmailEmojiMap(emojiConfig.urls);
+
         if (data.parent_id) {
           LogService.info("Reply comment", { Name: comment.author, Email: comment.email });
           const parentComment = await CommentService.getCommentById(data.parent_id);
@@ -263,8 +281,18 @@ export default async (c: Context): Promise<Response> => {
               toName: parentComment.author,
               postTitle: postTitle,
               parentComment: parentComment.content_text,
+              parentCommentHtml: renderEmailContent(
+                parentComment.content_html,
+                parentComment.content_text,
+                emojiImages
+              ),
               replyAuthor: author,
               replyContent: content,
+              replyContentHtml: renderEmailContent(
+                comment.content_html,
+                comment.content_text,
+                emojiImages
+              ),
               postUrl: postUrl,
             });
           }
@@ -275,11 +303,29 @@ export default async (c: Context): Promise<Response> => {
             postUrl: postUrl,
             commentAuthor: author,
             commentContent: content,
+            commentContentHtml: renderEmailContent(
+              comment.content_html,
+              comment.content_text,
+              emojiImages
+            ),
           });
         }
       }
     } catch (e) {
       LogService.error("邮件发送失败（不影响评论提交）:", e);
+    }
+
+    // 历史链接批量更新：如果这位评论者（同邮箱、已验证）提交了新的个人网址，
+    // 发一封确认邮件，确认后才把他所有历史评论的旧网址改成新网址。
+    // 任何失败都不影响评论提交（见 doc/link_security.md 第 3 节）。
+    if (url) {
+      await offerLinkSync({
+        email: data.email,
+        author,
+        newUrl: url,
+        postTitle,
+        baseUrl: await resolveRequestBaseUrl(c),
+      });
     }
 
     return c.json({

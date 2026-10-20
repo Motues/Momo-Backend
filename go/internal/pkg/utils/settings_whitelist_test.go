@@ -21,6 +21,8 @@ var canonicalSettingKeys = []string{
 	"admin_comment_key",
 	"admin_comment_key_enabled",
 	"admin_email",
+	// 多管理员邮箱与通知收件人（与 Node/Worker 同步，见 doc/admin_emails.md）
+	"admin_emails",
 	"admin_name",
 	"allow_origin",
 	"blogger_badge_enabled",
@@ -43,11 +45,20 @@ var canonicalSettingKeys = []string{
 	"email_secure",
 	"email_user",
 	"email_verify_enabled",
-	// 表情设置：是否启用 + OwO 来源地址（与 Node/Worker 同步，见 doc/emoji.md）
+	// 表情设置：是否启用 + OwO 来源地址数组（+ 兼容用的旧单地址键，见 doc/emoji.md）
 	"emoji_cdn_url",
+	"emoji_cdn_urls",
 	"emoji_enabled",
 	"ip_blacklist",
+	// 链接安全审查：休眠链接 + 历史链接批量更新 + 休眠提醒邮件（见 doc/link_security.md）
+	"link_dormant_days",
+	"link_dormant_notice_enabled",
+	"link_security_enabled",
+	"link_sync_enabled",
+	// 外发邮件日志保留天数（面板「邮件管理」的数据保留期）
+	"mail_log_retention_days",
 	"notification_template",
+	"notify_email",
 	"placeholder_content",
 	"placeholder_email",
 	"placeholder_name",

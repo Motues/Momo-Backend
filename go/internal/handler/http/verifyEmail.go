@@ -50,13 +50,22 @@ func (h *CommentHandler) VerifyEmail(c *gin.Context) {
 }
 
 func verificationResultPage(success bool, message string) string {
+	title := "验证成功"
+	if !success {
+		title = "验证失败"
+	}
+	return emailActionResultPage(success, title, "邮箱验证", message)
+}
+
+// emailActionResultPage 邮箱链接类端点（邮箱验证 / 链接同步）共用的纯 HTML 结果页。
+//
+// title 是状态标题（如“验证成功”），documentTitle 是页面标题后缀（如“邮箱验证”）。
+func emailActionResultPage(success bool, title, documentTitle, message string) string {
 	icon := "&#10003;"
 	color := "#28a745"
-	title := "验证成功"
 	if !success {
 		icon = "&#10007;"
 		color = "#dc3545"
-		title = "验证失败"
 	}
 
 	return fmt.Sprintf(`<!DOCTYPE html>
@@ -64,7 +73,7 @@ func verificationResultPage(success bool, message string) string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>%s - 邮箱验证</title>
+  <title>%s - %s</title>
   <style>
     body {
       margin: 0;
@@ -115,5 +124,5 @@ func verificationResultPage(success bool, message string) string {
     <div class="footer">此页面由系统自动生成</div>
   </div>
 </body>
-</html>`, title, color, icon, title, message)
+</html>`, title, documentTitle, color, icon, title, message)
 }

@@ -42,6 +42,12 @@ func RegisterRoutes(r *gin.Engine, h *CommentHandler) {
 		api.POST("/comments", h.PostComment)
 		api.GET("/comments", h.GetComments)
 		api.GET("/verify-email/verify", h.VerifyEmail)
+		// 历史链接批量更新的确认端点（邮件链接即凭据，不需要登录）
+		api.GET("/link-sync/confirm", h.ConfirmLinkSync)
+		// 休眠链接提醒页与两个自助动作（邮件令牌即凭据，不需要登录）
+		api.GET("/link-dormant/notice", h.GetDormantNoticePage)
+		api.POST("/link-dormant/confirm", h.ConfirmDormantNotice)
+		api.POST("/link-dormant/update", h.UpdateDormantNotice)
 
 		// 无感验证（Turnstile 风格）
 		api.POST("/verify/challenge", h.VerifyChallenge)
@@ -70,6 +76,11 @@ func RegisterRoutes(r *gin.Engine, h *CommentHandler) {
 			auth.GET("/verify/records", h.GetVerifyRecords)
 			auth.GET("/stats/users", h.GetUserList)
 			auth.GET("/stats/users/comments", h.GetUserComments)
+			// 邮件发送日志（最底层发送函数写入，见任务规范第 3、9 节）
+			auth.GET("/mails", h.ListMails)
+			// 休眠链接的人工确认（TrustedLink，见 doc/link_security.md 第 4 节）
+			auth.POST("/links/trust", h.TrustLink)
+			auth.DELETE("/links/trust", h.RevokeLinkTrust)
 			auth.POST("/users/blacklist", h.AddUserToBlacklist)
 			auth.DELETE("/users/blacklist", h.RemoveUserFromBlacklist)
 			auth.GET("/data/export/settings", h.ExportSettings)

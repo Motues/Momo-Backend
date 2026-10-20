@@ -340,10 +340,16 @@ describe('Comments —— 后端下发的展示配置', () => {
 		expect(container.querySelector('.blogger-badge')).toBeNull();
 	});
 
-	it('admin_comment_key_configured="true" 且邮箱哈希匹配时显示管理员密钥输入框', async () => {
+	it('admin_comment_key_configured="true" 且邮箱哈希命中哈希数组时显示管理员密钥输入框', async () => {
 		const hash = await sha256HexOf('admin@example.com');
 		fetchMock(async () =>
-			jsonResponse(listBody([], { admin_comment_key_configured: 'true', admin_email_hash: hash }))
+			jsonResponse(
+				listBody([], {
+					admin_comment_key_configured: 'true',
+					admin_email_hashes: ['deadbeef', hash],
+					admin_email_hash: 'deadbeef',
+				})
+			)
 		);
 		const { container } = renderComments();
 		await waitFor(() => expect(container.textContent).toContain('0 条评论'));
@@ -352,10 +358,46 @@ describe('Comments —— 后端下发的展示配置', () => {
 		await waitFor(() => expect(container.querySelector('#admin-key')).toBeTruthy());
 	});
 
+	it('邮箱不在哈希数组里时不显示密钥输入框', async () => {
+		const hash = await sha256HexOf('other@example.com');
+		fetchMock(async () =>
+			jsonResponse(listBody([], { admin_comment_key_configured: 'true', admin_email_hashes: [hash] }))
+		);
+		const { container } = renderComments();
+		await waitFor(() => expect(container.textContent).toContain('0 条评论'));
+		await fireEvent.input(container.querySelector('#email'), { target: { value: 'admin@example.com' } });
+		await new Promise((r) => setTimeout(r, 20));
+		expect(container.querySelector('#admin-key')).toBeNull();
+	});
+
+	it('admin_email_hashes 缺失时回落到旧的单哈希 admin_email_hash（旧后端兼容）', async () => {
+		const hash = await sha256HexOf('admin@example.com');
+		fetchMock(async () =>
+			jsonResponse(listBody([], { admin_comment_key_configured: 'true', admin_email_hash: hash }))
+		);
+		const { container } = renderComments();
+		await waitFor(() => expect(container.textContent).toContain('0 条评论'));
+		await fireEvent.input(container.querySelector('#email'), { target: { value: 'admin@example.com' } });
+		await waitFor(() => expect(container.querySelector('#admin-key')).toBeTruthy());
+	});
+
+	it('admin_email_hashes 为空数组时同样回落到旧的单哈希', async () => {
+		const hash = await sha256HexOf('admin@example.com');
+		fetchMock(async () =>
+			jsonResponse(
+				listBody([], { admin_comment_key_configured: 'true', admin_email_hashes: [], admin_email_hash: hash })
+			)
+		);
+		const { container } = renderComments();
+		await waitFor(() => expect(container.textContent).toContain('0 条评论'));
+		await fireEvent.input(container.querySelector('#email'), { target: { value: 'admin@example.com' } });
+		await waitFor(() => expect(container.querySelector('#admin-key')).toBeTruthy());
+	});
+
 	it('admin_comment_key_configured="false" 时不显示管理员密钥输入框', async () => {
 		const hash = await sha256HexOf('admin@example.com');
 		fetchMock(async () =>
-			jsonResponse(listBody([], { admin_comment_key_configured: 'false', admin_email_hash: hash }))
+			jsonResponse(listBody([], { admin_comment_key_configured: 'false', admin_email_hashes: [hash] }))
 		);
 		const { container } = renderComments();
 		await waitFor(() => expect(container.textContent).toContain('0 条评论'));
@@ -367,7 +409,7 @@ describe('Comments —— 后端下发的展示配置', () => {
 	it('emoji_enabled="false" 时不渲染表情按钮，也不请求任何表情地址', async () => {
 		const fetch = fetchMock(async () =>
 			jsonResponse(
-				listBody([makeComment()], { emoji_enabled: 'false', emoji_cdn_url: 'https://cdn.example.com/owo.json' })
+				listBody([makeComment()], { emoji_enabled: 'false', emoji_cdn_urls: ['https://cdn.example.com/owo.json'] })
 			)
 		);
 		const { container } = renderComments();
@@ -385,16 +427,28 @@ describe('Comments —— 后端下发的展示配置', () => {
 		expect(container.querySelector('[data-test="emoji-trigger"]')).toBeNull();
 	});
 
-	it('emoji_cdn_url 为空时不渲染表情按钮（关闭与空地址等价）', async () => {
-		fetchMock(async () => jsonResponse(listBody([], { emoji_enabled: 'true', emoji_cdn_url: '' })));
+	it('emoji_cdn_urls 为空数组时不渲染表情按钮（关闭与空地址等价）', async () => {
+		fetchMock(async () => jsonResponse(listBody([], { emoji_enabled: 'true', emoji_cdn_urls: [] })));
 		const { container } = renderComments();
 		await waitFor(() => expect(container.textContent).toContain('0 条评论'));
 		expect(container.querySelector('[data-test="emoji-trigger"]')).toBeNull();
 	});
 
-	it('emoji_enabled 缺失（默认启用）且有地址时渲染表情按钮，但首屏不拉取该地址', async () => {
+	it('emoji_cdn_urls 缺失时回落到旧的单地址 emoji_cdn_url（旧后端兼容）', async () => {
 		const fetch = fetchMock(async () =>
-			jsonResponse(listBody([], { emoji_cdn_url: 'https://cdn.example.com/owo.json' }))
+			jsonResponse(listBody([], { emoji_enabled: 'true', emoji_cdn_url: 'https://cdn.example.com/owo.json' }))
+		);
+		const { container } = renderComments();
+		await waitFor(() => expect(container.textContent).toContain('0 条评论'));
+
+		expect(container.querySelector('[data-test="emoji-trigger"]')).toBeTruthy();
+		// 首屏零第三方请求：旧键同样只在首次打开面板时才拉
+		expect(fetch.calls.length).toBe(1);
+	});
+
+	it('emoji_enabled 缺失（默认启用）且有地址数组时渲染表情按钮，但首屏不拉取该地址', async () => {
+		const fetch = fetchMock(async () =>
+			jsonResponse(listBody([], { emoji_cdn_urls: ['https://cdn.example.com/owo.json'] }))
 		);
 		const { container } = renderComments();
 		await waitFor(() => expect(container.textContent).toContain('0 条评论'));
@@ -407,18 +461,73 @@ describe('Comments —— 后端下发的展示配置', () => {
 
 	it('emoji_enabled 只认字符串 "false"：布尔 false 视为启用（记录现状）', async () => {
 		fetchMock(async () =>
-			jsonResponse(listBody([], { emoji_enabled: false, emoji_cdn_url: 'https://cdn.example.com/owo.json' }))
+			jsonResponse(listBody([], { emoji_enabled: false, emoji_cdn_urls: ['https://cdn.example.com/owo.json'] }))
 		);
 		const { container } = renderComments();
 		await waitFor(() => expect(container.textContent).toContain('0 条评论'));
 		expect(container.querySelector('[data-test="emoji-trigger"]')).toBeTruthy();
 	});
 
+	it('emoji_cdn_urls 多来源原样传给面板：首屏零请求，打开面板时按顺序并发拉取', async () => {
+		const cdnA = 'https://a.example.com/owo.json';
+		const cdnB = 'https://b.example.com/owo.json';
+		const listUrl = `${API_URL}/api/comments?post_slug=${encodeURIComponent(POST_SLUG)}&nested=true&page=1&limit=20`;
+		const fetch = fetchMock(async (url) => {
+			if (url === listUrl) return jsonResponse(listBody([], { emoji_cdn_urls: [cdnA, cdnB] }));
+			return jsonResponse({ 标签: { type: 'emoticon', container: [{ icon: 'OωO' }] } });
+		});
+		const { container } = renderComments();
+		await waitFor(() => expect(container.querySelector('[data-test="emoji-trigger"]')).toBeTruthy());
+		// 首屏只有评论列表那一次请求（文章页零第三方请求）
+		expect(fetch.calls.map((c) => c.url)).toEqual([listUrl]);
+
+		await fireEvent.click(container.querySelector('[data-test="emoji-trigger"]'));
+		await waitFor(() => expect(fetch.calls.length).toBe(3));
+		expect(fetch.calls.slice(1).map((c) => c.url)).toEqual([cdnA, cdnB]);
+	});
+
+	it('emoji_cdn_urls 的脏项（非字符串/空白）被丢弃并 trim', async () => {
+		const cdnA = 'https://a.example.com/owo.json';
+		const listUrl = `${API_URL}/api/comments?post_slug=${encodeURIComponent(POST_SLUG)}&nested=true&page=1&limit=20`;
+		const fetch = fetchMock(async (url) => {
+			if (url === listUrl) {
+				return jsonResponse(
+					listBody([], { emoji_cdn_urls: ['', 7, `  ${cdnA}  `], emoji_cdn_url: 'https://legacy.example.com/owo.json' })
+				);
+			}
+			return jsonResponse({ 标签: { type: 'emoticon', container: [{ icon: 'OωO' }] } });
+		});
+		const { container } = renderComments();
+		await waitFor(() => expect(container.querySelector('[data-test="emoji-trigger"]')).toBeTruthy());
+
+		await fireEvent.click(container.querySelector('[data-test="emoji-trigger"]'));
+		await waitFor(() => expect(fetch.calls.length).toBe(2));
+		expect(fetch.calls[1].url).toBe(cdnA);
+	});
+
+	it('emoji_cdn_urls 全是空项时同样回落到旧的单地址', async () => {
+		const listUrl = `${API_URL}/api/comments?post_slug=${encodeURIComponent(POST_SLUG)}&nested=true&page=1&limit=20`;
+		const fetch = fetchMock(async (url) => {
+			if (url === listUrl) {
+				return jsonResponse(
+					listBody([], { emoji_cdn_urls: ['', '   '], emoji_cdn_url: 'https://legacy.example.com/owo.json' })
+				);
+			}
+			return jsonResponse({ 标签: { type: 'emoticon', container: [{ icon: 'OωO' }] } });
+		});
+		const { container } = renderComments();
+		await waitFor(() => expect(container.querySelector('[data-test="emoji-trigger"]')).toBeTruthy());
+
+		await fireEvent.click(container.querySelector('[data-test="emoji-trigger"]'));
+		await waitFor(() => expect(fetch.calls.length).toBe(2));
+		expect(fetch.calls[1].url).toBe('https://legacy.example.com/owo.json');
+	});
+
 	it('本地已有新鲜缓存时首屏同步水合评论正文里的短代码（打开面板之前，零请求）', async () => {
 		const cdn = 'https://cdn.example.com/owo.json';
 		const png = 'https://cdn.example.com/emoji/doge.png';
 		localStorage.setItem(
-			`${EMOJI_CACHE_PREFIX}${cdn}`,
+			`${EMOJI_CACHE_PREFIX}${JSON.stringify([cdn])}`,
 			JSON.stringify({
 				savedAt: Date.now(),
 				packs: { Bilibili: { type: 'image', container: [{ icon: `<img src="${png}">`, text: 'doge' }] } },
@@ -426,7 +535,7 @@ describe('Comments —— 后端下发的展示配置', () => {
 		);
 		const fetch = fetchMock(async () =>
 			jsonResponse(
-				listBody([makeComment({ contentHtml: '<p>看这个 :doge: 表情</p>' })], { emoji_cdn_url: cdn })
+				listBody([makeComment({ contentHtml: '<p>看这个 :doge: 表情</p>' })], { emoji_cdn_urls: [cdn] })
 			)
 		);
 		const { container } = renderComments({ postSlug: POST_SLUG });
@@ -441,14 +550,14 @@ describe('Comments —— 后端下发的展示配置', () => {
 	it('缓存过期时首屏不水合（短代码保持纯文本），也没有额外请求', async () => {
 		const cdn = 'https://cdn.example.com/owo.json';
 		localStorage.setItem(
-			`${EMOJI_CACHE_PREFIX}${cdn}`,
+			`${EMOJI_CACHE_PREFIX}${JSON.stringify([cdn])}`,
 			JSON.stringify({
 				savedAt: Date.now() - 8 * 24 * 60 * 60 * 1000,
 				packs: { Bilibili: { type: 'image', container: [{ icon: `<img src="https://cdn.example.com/a.png">`, text: 'doge' }] } },
 			})
 		);
 		const fetch = fetchMock(async () =>
-			jsonResponse(listBody([makeComment({ contentHtml: '<p>看这个 :doge: 表情</p>' })], { emoji_cdn_url: cdn }))
+			jsonResponse(listBody([makeComment({ contentHtml: '<p>看这个 :doge: 表情</p>' })], { emoji_cdn_urls: [cdn] }))
 		);
 		const { container } = renderComments();
 

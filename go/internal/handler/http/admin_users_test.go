@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,30 @@ import (
 	"momo-backend-go/internal/model"
 	"momo-backend-go/internal/pkg/utils"
 )
+
+// nameCountItem 客户端分布的一项（deviceDistribution / browserDistribution / osDistribution）
+type nameCountItem struct {
+	Name  string `json:"name"`
+	Count int64  `json:"count"`
+}
+
+// topPostItem 热门文章的一项
+type topPostItem struct {
+	PostSlug        string `json:"postSlug"`
+	Count           int64  `json:"count"`
+	LastCommentDate string `json:"lastCommentDate"`
+}
+
+// latestCommentItem 最新评论动态的一项
+type latestCommentItem struct {
+	ID          int64  `json:"id"`
+	Author      string `json:"author"`
+	Email       string `json:"email"`
+	PostSlug    string `json:"postSlug"`
+	ContentText string `json:"contentText"`
+	Status      string `json:"status"`
+	PubDate     string `json:"pubDate"`
+}
 
 type statsOverviewPayload struct {
 	Code    int    `json:"code"`
@@ -33,12 +58,34 @@ type statsOverviewPayload struct {
 			Count           int64  `json:"count"`
 			LastCommentDate string `json:"lastCommentDate"`
 		} `json:"topCommenters"`
+
+		// —— 扩展字段 ——
+		WindowComments     int64  `json:"windowComments"`
+		PrevWindowComments int64  `json:"prevWindowComments"`
+		CommentsDelta      *int64 `json:"commentsDelta"`
+		WindowUsers        int64  `json:"windowUsers"`
+		PrevWindowUsers    int64  `json:"prevWindowUsers"`
+		UsersDelta         *int64 `json:"usersDelta"`
+		TodayComments      int64  `json:"todayComments"`
+		Last7DaysComments  int64  `json:"last7DaysComments"`
+
+		TopPosts []topPostItem `json:"topPosts"`
+
+		DeviceDistribution  []nameCountItem `json:"deviceDistribution"`
+		BrowserDistribution []nameCountItem `json:"browserDistribution"`
+		OSDistribution      []nameCountItem `json:"osDistribution"`
+
+		LatestComments []latestCommentItem `json:"latestComments"`
 	} `json:"data"`
 }
 
 type userStatsItem struct {
 	Author           string `json:"author"`
 	Email            string `json:"email"`
+	URL              string `json:"url"`
+	URLDormant       bool   `json:"urlDormant"`
+	URLTrustedUntil  string `json:"urlTrustedUntil"`
+	URLTrustedSource string `json:"urlTrustedSource"`
 	CommentCount     int64  `json:"commentCount"`
 	ApprovedCount    int64  `json:"approvedCount"`
 	PendingCount     int64  `json:"pendingCount"`
@@ -129,6 +176,35 @@ func TestGetStatsOverviewEndpoint(t *testing.T) {
 	if payload.Data.TopCommenters[0].Author != "alice" || payload.Data.TopCommenters[0].Count != 4 {
 		t.Errorf("热门评论者首位应为 alice(4)，实际 %+v", payload.Data.TopCommenters[0])
 	}
+
+	// 扩展字段：这批评论没有写 browser / os / device（全是 SQL 的 NULL），
+	// 归一化后应分别合并成 未知 / 未知 / 桌面（NULL 与空串走同一分支）
+	if len(payload.Data.BrowserDistribution) != 1 || payload.Data.BrowserDistribution[0].Name != "未知" ||
+		payload.Data.BrowserDistribution[0].Count != 5 {
+		t.Errorf("全 NULL 的 browser 应合并成 未知(5)，实际 %+v", payload.Data.BrowserDistribution)
+	}
+	if len(payload.Data.OSDistribution) != 1 || payload.Data.OSDistribution[0].Name != "未知" ||
+		payload.Data.OSDistribution[0].Count != 5 {
+		t.Errorf("全 NULL 的 os 应合并成 未知(5)，实际 %+v", payload.Data.OSDistribution)
+	}
+	if len(payload.Data.DeviceDistribution) != 1 || payload.Data.DeviceDistribution[0].Name != "桌面" ||
+		payload.Data.DeviceDistribution[0].Count != 5 {
+		t.Errorf("全 NULL 的 device 应合并成 桌面(5)，实际 %+v", payload.Data.DeviceDistribution)
+	}
+	if len(payload.Data.TopPosts) != 1 || payload.Data.TopPosts[0].PostSlug != "/p" || payload.Data.TopPosts[0].Count != 5 {
+		t.Errorf("topPosts 应为 /p(5)，实际 %+v", payload.Data.TopPosts)
+	}
+	// 这些评论的 pub_date 在 2023-11（seedUserComments 的固定时间戳），落在所有窗口之外
+	if payload.Data.WindowComments != 0 || payload.Data.TodayComments != 0 || payload.Data.Last7DaysComments != 0 {
+		t.Errorf("陈旧数据的窗口指标应为 0，实际 %+v", payload.Data)
+	}
+	if payload.Data.CommentsDelta != nil || payload.Data.UsersDelta != nil {
+		t.Errorf("上一窗口为 0 时两个 delta 都应为 null，实际 %v / %v",
+			payload.Data.CommentsDelta, payload.Data.UsersDelta)
+	}
+	if len(payload.Data.LatestComments) != 5 {
+		t.Errorf("latestComments 应返回全部 5 条，实际 %d", len(payload.Data.LatestComments))
+	}
 }
 
 func TestGetStatsOverviewRangeParameter(t *testing.T) {
@@ -168,6 +244,22 @@ func TestGetStatsOverviewRangeParameter(t *testing.T) {
 					t.Errorf("分桶日期 %q 不符合 %s", dc.Date, tc.dateRegex)
 				}
 			}
+
+			// 扩展字段与 range 无关地恒存在：列表必须是 []（非 null），
+			// 且这批旧数据落在所有窗口之外时两个 delta 都应为 null
+			if payload.Data.TopPosts == nil || payload.Data.DeviceDistribution == nil ||
+				payload.Data.BrowserDistribution == nil || payload.Data.OSDistribution == nil ||
+				payload.Data.LatestComments == nil {
+				t.Errorf("range=%q 的列表字段应为 []，不能是 null", tc.rangeVal)
+			}
+			if payload.Data.CommentsDelta != nil || payload.Data.UsersDelta != nil {
+				t.Errorf("range=%q 时上一窗口为空，两个 delta 都应为 null，实际 %v / %v",
+					tc.rangeVal, payload.Data.CommentsDelta, payload.Data.UsersDelta)
+			}
+			if payload.Data.TodayComments != 0 || payload.Data.Last7DaysComments != 0 {
+				t.Errorf("range=%q 时今日 / 近 7 日不应受 range 影响（旧数据应为 0），实际 %d / %d",
+					tc.rangeVal, payload.Data.TodayComments, payload.Data.Last7DaysComments)
+			}
 		})
 	}
 }
@@ -179,9 +271,20 @@ func TestGetStatsOverviewEmptyDatabase(t *testing.T) {
 	w := callWithToken(t, "GET", "/admin/stats/overview", "", token)
 	requireStatus(t, w, 200)
 
-	// 空库时 topCommenters 必须是 []，不能为 null
-	if !strings.Contains(w.Body.String(), `"topCommenters":[]`) {
-		t.Errorf("空库时 topCommenters 应为空数组，实际 %s", w.Body.String())
+	// 空库时所有列表都必须是 []，两个 delta 必须是 null（不是 0）
+	for _, want := range []string{
+		`"topCommenters":[]`,
+		`"topPosts":[]`,
+		`"deviceDistribution":[]`,
+		`"browserDistribution":[]`,
+		`"osDistribution":[]`,
+		`"latestComments":[]`,
+		`"commentsDelta":null`,
+		`"usersDelta":null`,
+	} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Errorf("空库响应应包含 %s，实际 %s", want, w.Body.String())
+		}
 	}
 
 	var payload statsOverviewPayload
@@ -191,6 +294,148 @@ func TestGetStatsOverviewEmptyDatabase(t *testing.T) {
 	}
 	if len(payload.Data.TopCommenters) != 0 {
 		t.Errorf("空库时 topCommenters 应为空，实际 %d 条", len(payload.Data.TopCommenters))
+	}
+	if len(payload.Data.TopPosts) != 0 || len(payload.Data.DeviceDistribution) != 0 ||
+		len(payload.Data.BrowserDistribution) != 0 || len(payload.Data.OSDistribution) != 0 ||
+		len(payload.Data.LatestComments) != 0 {
+		t.Errorf("空库时扩展列表都应为空，实际 %+v", payload.Data)
+	}
+	if payload.Data.CommentsDelta != nil || payload.Data.UsersDelta != nil {
+		t.Errorf("空库时两个 delta 都应为 null，实际 %v / %v",
+			payload.Data.CommentsDelta, payload.Data.UsersDelta)
+	}
+}
+
+// TestGetStatsOverviewExtendedFields 扩展字段：窗口指标 / 热门文章 / 客户端分布 / 最新评论
+//
+// 时间锚点用「今天 UTC 00:00」构造，窗口与今日 / 近 7 日的边界都是自然日
+func TestGetStatsOverviewExtendedFields(t *testing.T) {
+	resetState(t)
+
+	now := time.Now().UTC()
+	startOfToday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).UnixMilli()
+	const day = int64(86400000)
+
+	// clientComment 构造一条评论（browser / os / device 传 nil 即 SQL 的 NULL）
+	clientComment := func(slug, author, email, content string, pub int64, status string, browser, osName, device *string) *model.Comment {
+		return &model.Comment{
+			PostSlug:    slug,
+			Author:      author,
+			Email:       email,
+			ContentText: content,
+			ContentHTML: "<p>" + content + "</p>",
+			Status:      status,
+			PubDate:     pub,
+			Browser:     browser,
+			OS:          osName,
+			Device:      device,
+		}
+	}
+
+	seedComment(t, clientComment("/hot", "alice", "a@x.com", "今天第一条", startOfToday+1000, "approved",
+		strPtr("Chrome 145.0.0.0"), strPtr("Windows 10"), strPtr("Desktop")))
+	seedComment(t, clientComment("/hot", "alice", "a@x.com", "今天第二条", startOfToday+2000, "pending",
+		strPtr("Chrome 120"), strPtr("Windows 10.0"), strPtr("Desktop")))
+	seedComment(t, clientComment("/hot", "bob", "b@x.com", "昨天", startOfToday-day+3600_000, "approved",
+		strPtr("Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko)"), strPtr(""), nil))
+	seedComment(t, clientComment("/cold", "carol", "c@x.com", "八天前", startOfToday-7*day, "approved",
+		strPtr("Safari 17.0"), strPtr("macOS 10.15.7"), strPtr("iPad")))
+
+	token := adminToken(t)
+
+	// range=7：窗口 = 今天前 6 天起；上一窗口 = 再往前 7 天
+	w := callWithToken(t, "GET", "/admin/stats/overview?range=7", "", token)
+	requireStatus(t, w, 200)
+
+	var payload statsOverviewPayload
+	decodeInto(t, w, &payload)
+	data := payload.Data
+
+	if data.WindowComments != 3 || data.PrevWindowComments != 1 {
+		t.Errorf("窗口评论数期望 3/1，实际 %d/%d", data.WindowComments, data.PrevWindowComments)
+	}
+	if data.WindowUsers != 2 || data.PrevWindowUsers != 1 {
+		t.Errorf("窗口活跃评论者期望 2/1，实际 %d/%d", data.WindowUsers, data.PrevWindowUsers)
+	}
+	if data.CommentsDelta == nil || *data.CommentsDelta != 200 {
+		t.Errorf("commentsDelta 期望 200，实际 %v", data.CommentsDelta)
+	}
+	if data.UsersDelta == nil || *data.UsersDelta != 100 {
+		t.Errorf("usersDelta 期望 100，实际 %v", data.UsersDelta)
+	}
+	if data.TodayComments != 2 {
+		t.Errorf("todayComments 期望 2，实际 %d", data.TodayComments)
+	}
+	if data.Last7DaysComments != 3 {
+		t.Errorf("last7DaysComments 期望 3，实际 %d", data.Last7DaysComments)
+	}
+
+	// 热门文章：/hot 3 条 > /cold 1 条
+	if len(data.TopPosts) != 2 {
+		t.Fatalf("topPosts 期望 2 条，实际 %d: %+v", len(data.TopPosts), data.TopPosts)
+	}
+	if data.TopPosts[0].PostSlug != "/hot" || data.TopPosts[0].Count != 3 || data.TopPosts[1].PostSlug != "/cold" {
+		t.Errorf("topPosts 不正确: %+v", data.TopPosts)
+	}
+	wantHotDate := time.UnixMilli(startOfToday+2000).UTC().Format("2006-01-02T15:04:05.000Z")
+	if data.TopPosts[0].LastCommentDate != wantHotDate {
+		t.Errorf("topPosts[0].lastCommentDate 期望 %q，实际 %q", wantHotDate, data.TopPosts[0].LastCommentDate)
+	}
+
+	// 客户端分布：版本合并 + 原始 UA / 空值 / NULL 归入未知或桌面
+	wantBrowser := []nameCountItem{{Name: "Chrome", Count: 2}, {Name: "Safari", Count: 1}, {Name: "未知", Count: 1}}
+	if !reflect.DeepEqual(data.BrowserDistribution, wantBrowser) {
+		t.Errorf("browserDistribution 期望 %+v，实际 %+v", wantBrowser, data.BrowserDistribution)
+	}
+	wantOS := []nameCountItem{{Name: "Windows", Count: 2}, {Name: "macOS", Count: 1}, {Name: "未知", Count: 1}}
+	if !reflect.DeepEqual(data.OSDistribution, wantOS) {
+		t.Errorf("osDistribution 期望 %+v，实际 %+v", wantOS, data.OSDistribution)
+	}
+	wantDevice := []nameCountItem{{Name: "桌面", Count: 3}, {Name: "平板", Count: 1}}
+	if !reflect.DeepEqual(data.DeviceDistribution, wantDevice) {
+		t.Errorf("deviceDistribution 期望 %+v，实际 %+v", wantDevice, data.DeviceDistribution)
+	}
+
+	// 最新评论：pub_date DESC, id DESC（今天第二条 → 今天第一条 → 昨天 → 八天前）
+	if len(data.LatestComments) != 4 {
+		t.Fatalf("latestComments 期望 4 条，实际 %d: %+v", len(data.LatestComments), data.LatestComments)
+	}
+	latest := data.LatestComments[0]
+	if latest.Author != "alice" || latest.Email != "a@x.com" || latest.PostSlug != "/hot" ||
+		latest.ContentText != "今天第二条" || latest.Status != "pending" {
+		t.Errorf("latestComments[0] 字段不正确: %+v", latest)
+	}
+	wantPub := time.UnixMilli(startOfToday+2000).UTC().Format("2006-01-02T15:04:05.000Z")
+	if latest.PubDate != wantPub {
+		t.Errorf("latestComments[0].pubDate 期望 %q，实际 %q", wantPub, latest.PubDate)
+	}
+	if data.LatestComments[3].ContentText != "八天前" {
+		t.Errorf("latestComments 应按时间降序，最后一条实际 %+v", data.LatestComments[3])
+	}
+
+	// range=all：窗口 = 最近 12 个自然月，四条评论全在窗口内，上一窗口为空 → 两个 delta 都是 null
+	w = callWithToken(t, "GET", "/admin/stats/overview?range=all", "", token)
+	requireStatus(t, w, 200)
+	payload = statsOverviewPayload{}
+	decodeInto(t, w, &payload)
+
+	if payload.Data.WindowComments != 4 {
+		t.Errorf("range=all 时 windowComments 期望 4（等于月度分桶之和），实际 %d", payload.Data.WindowComments)
+	}
+	var sum int64
+	for _, dc := range payload.Data.RecentComments {
+		sum += dc.Count
+	}
+	if sum != payload.Data.WindowComments {
+		t.Errorf("range=all 时 windowComments(%d) 应等于月度分桶之和(%d)", payload.Data.WindowComments, sum)
+	}
+	if payload.Data.PrevWindowComments != 0 || payload.Data.CommentsDelta != nil || payload.Data.UsersDelta != nil {
+		t.Errorf("range=all 时上一窗口为空，两个 delta 都应为 null，实际 %d / %v / %v",
+			payload.Data.PrevWindowComments, payload.Data.CommentsDelta, payload.Data.UsersDelta)
+	}
+	if payload.Data.TodayComments != 2 || payload.Data.Last7DaysComments != 3 {
+		t.Errorf("今日 / 近 7 日不应随 range 改变，实际 %d / %d",
+			payload.Data.TodayComments, payload.Data.Last7DaysComments)
 	}
 }
 
@@ -448,6 +693,237 @@ func TestGetUserListEndpointEmpty(t *testing.T) {
 	if payload.Data.Pagination.TotalPage != 0 {
 		t.Errorf("空库时 totalPage 应为 0，实际 %d", payload.Data.Pagination.TotalPage)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// GET /admin/stats/users — 网站链接是否休眠（url + urlDormant）
+// ---------------------------------------------------------------------------
+
+// userLinkDay 一天的毫秒数（与 utils.DayMillis 同义，测试里用于构造相对时间）
+const userLinkDay = int64(86400000)
+
+// fetchUserList 拉取用户列表，同时返回原始响应体（用于断言字段一定存在）
+func fetchUserList(t *testing.T, token string) (userListPayload, string) {
+	t.Helper()
+	w := callWithToken(t, "GET", "/admin/stats/users?limit=100", "", token)
+	requireStatus(t, w, 200)
+
+	var payload userListPayload
+	decodeInto(t, w, &payload)
+	return payload, w.Body.String()
+}
+
+// usersByEmail 按**归一化邮箱**取出列表里的全部行
+// （用户列表按 author+email 分组，同一邮箱可能对应多行——换昵称后就会多一行）
+func usersByEmail(payload userListPayload, email string) []userStatsItem {
+	want := utils.NormalizeEmail(email)
+	var out []userStatsItem
+	for _, u := range payload.Data.Users {
+		if utils.NormalizeEmail(u.Email) == want {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+// requireSingleUser 断言该邮箱恰好一行并返回它
+func requireSingleUser(t *testing.T, payload userListPayload, email string) userStatsItem {
+	t.Helper()
+	users := usersByEmail(payload, email)
+	if len(users) != 1 {
+		t.Fatalf("邮箱 %s 应恰好对应 1 行，实际 %d 行", email, len(users))
+	}
+	return users[0]
+}
+
+/*
+用户列表的「网站链接是否休眠」列（`url` + `urlDormant`）。
+
+身份口径与公开评论区的 urlDormant 完全一致（见 doc/link_security.md 第 2 节）：按归一化邮箱
+识别同一个人、跨文章统计最后一条评论、严格大于 N 天、rejected / deleted 不计入「来过」、
+网址取「最近一次非空」。用例与 Node 侧 admin.stats 用例一一对应。
+*/
+func TestGetUserListEndpointLinkDormant(t *testing.T) {
+	// 固定「现在」，让休眠边界可以精确构造（withFixedNow 定义在 link_security_test.go）
+	now := int64(1_800_000_000_000)
+	day := userLinkDay
+
+	t.Run("从来没有留过网址：url 为空串、urlDormant 为 false", func(t *testing.T) {
+		resetState(t)
+		withFixedNow(t, now)
+		seedLinkComment(t, "甲", "a@x.com", "", "approved", now-90*day)
+		setSetting(t, "link_security_enabled", "true")
+		token := adminToken(t)
+
+		u := requireSingleUser(t, mustUserList(t, token), "a@x.com")
+		if u.URL != "" {
+			t.Errorf("从未留过网址时 url 应为空串，实际 %q", u.URL)
+		}
+		if u.URLDormant {
+			t.Errorf("从未留过网址时 urlDormant 应为 false")
+		}
+	})
+
+	t.Run("功能关闭：不标记休眠，但仍然下发用户留过的网址", func(t *testing.T) {
+		resetState(t)
+		withFixedNow(t, now)
+		// 不写 link_security_enabled：默认关闭
+		seedLinkComment(t, "甲", "a@x.com", "https://a.example.com", "approved", now-90*day)
+		token := adminToken(t)
+
+		payload, body := fetchUserList(t, token)
+		u := requireSingleUser(t, payload, "a@x.com")
+		if u.URL != "https://a.example.com" {
+			t.Errorf("功能关闭时 url 仍应下发，实际 %q", u.URL)
+		}
+		if u.URLDormant {
+			t.Errorf("功能关闭时 urlDormant 应为 false")
+		}
+		// 两个字段必须恒定存在（后台表格直接读），哪怕是 false / 空串
+		if !strings.Contains(body, `"url":`) || !strings.Contains(body, `"urlDormant":false`) {
+			t.Errorf("响应应始终包含 url 与 urlDormant 字段，实际 %s", body)
+		}
+	})
+
+	t.Run("超过 N 天没来评论：标记为休眠", func(t *testing.T) {
+		resetState(t)
+		withFixedNow(t, now)
+		setSetting(t, "link_security_enabled", "true")
+		setSetting(t, "link_dormant_days", "30")
+		seedLinkComment(t, "甲", "a@x.com", "https://a.example.com", "approved", now-31*day)
+		token := adminToken(t)
+
+		u := requireSingleUser(t, mustUserList(t, token), "a@x.com")
+		if u.URL != "https://a.example.com" {
+			t.Errorf("url 期望 https://a.example.com，实际 %q", u.URL)
+		}
+		if !u.URLDormant {
+			t.Errorf("31 天没来（N=30）应标记休眠")
+		}
+	})
+
+	t.Run("刚好 N 天/差一分钟都不算休眠（严格大于）", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			pub  int64
+		}{
+			{"刚好 30 天", now - 30*day},
+			{"30 天差一分钟", now - 30*day + 60000},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				resetState(t)
+				withFixedNow(t, now)
+				setSetting(t, "link_security_enabled", "true")
+				setSetting(t, "link_dormant_days", "30")
+				seedLinkComment(t, "甲", "a@x.com", "https://a.example.com", "approved", tc.pub)
+				token := adminToken(t)
+
+				if u := requireSingleUser(t, mustUserList(t, token), "a@x.com"); u.URLDormant {
+					t.Errorf("严格大于 N 天才休眠，实际被标记（pub=%d）", tc.pub)
+				}
+			})
+		}
+	})
+
+	t.Run("以最新链接为准：较晚的评论带新网址时取新网址", func(t *testing.T) {
+		resetState(t)
+		withFixedNow(t, now)
+		setSetting(t, "link_security_enabled", "true")
+		setSetting(t, "link_dormant_days", "30")
+		seedLinkComment(t, "甲", "a@x.com", "https://old.example.com", "approved", now-60*day)
+		seedLinkComment(t, "甲", "a@x.com", "https://new.example.com", "approved", now-31*day)
+		token := adminToken(t)
+
+		u := requireSingleUser(t, mustUserList(t, token), "a@x.com")
+		if u.URL != "https://new.example.com" {
+			t.Errorf("url 应取最新一条非空网址，实际 %q", u.URL)
+		}
+		if !u.URLDormant {
+			t.Errorf("最后一条评论在 31 天前（N=30）应标记休眠")
+		}
+	})
+
+	t.Run("较晚的评论没有网址时，保留最近一次非空网址", func(t *testing.T) {
+		resetState(t)
+		withFixedNow(t, now)
+		setSetting(t, "link_security_enabled", "true")
+		seedLinkComment(t, "甲", "a@x.com", "https://old.example.com", "approved", now-60*day)
+		seedLinkComment(t, "甲", "a@x.com", "", "approved", now-60000)
+		token := adminToken(t)
+
+		u := requireSingleUser(t, mustUserList(t, token), "a@x.com")
+		if u.URL != "https://old.example.com" {
+			t.Errorf("较晚的空网址不应清掉旧网址，实际 %q", u.URL)
+		}
+		// 刚刚评论过 → 不休眠
+		if u.URLDormant {
+			t.Errorf("一分钟前刚评论过，不应标记休眠")
+		}
+	})
+
+	t.Run("身份按邮箱归一化：换昵称后再次评论同样解除休眠", func(t *testing.T) {
+		resetState(t)
+		withFixedNow(t, now)
+		setSetting(t, "link_security_enabled", "true")
+		setSetting(t, "link_dormant_days", "30")
+		seedLinkComment(t, "甲", "A@X.com", "https://a.example.com", "approved", now-90*day)
+		seedLinkComment(t, "甲（改名）", " a@x.com ", "https://a.example.com", "approved", now-day)
+		token := adminToken(t)
+
+		payload, _ := fetchUserList(t, token)
+		// DB 里是两行（author+email 都不同），但两行必须下发同一个链接状态
+		rows := usersByEmail(payload, "a@x.com")
+		if len(rows) != 2 {
+			t.Fatalf("换昵称应产生 2 行，实际 %d 行", len(rows))
+		}
+		for _, u := range rows {
+			if u.URLDormant {
+				t.Errorf("该邮箱一天前刚评论过，行 %q 不应标记休眠", u.Author)
+			}
+			if u.URL != "https://a.example.com" {
+				t.Errorf("行 %q 的 url 期望共享值 https://a.example.com，实际 %q", u.Author, u.URL)
+			}
+		}
+	})
+
+	t.Run("rejected / deleted 的评论不算「来过」", func(t *testing.T) {
+		resetState(t)
+		withFixedNow(t, now)
+		setSetting(t, "link_security_enabled", "true")
+		setSetting(t, "link_dormant_days", "30")
+		seedLinkComment(t, "甲", "a@x.com", "https://a.example.com", "approved", now-90*day)
+		seedLinkComment(t, "甲", "a@x.com", "https://a.example.com", "deleted", now-60000)
+		token := adminToken(t)
+
+		if u := requireSingleUser(t, mustUserList(t, token), "a@x.com"); !u.URLDormant {
+			t.Errorf("最近的评论是 deleted，不算法「来过」，应标记休眠")
+		}
+	})
+
+	t.Run("天数脏值按默认 30 天处理", func(t *testing.T) {
+		resetState(t)
+		withFixedNow(t, now)
+		setSetting(t, "link_security_enabled", "true")
+		setSetting(t, "link_dormant_days", "abc")
+		seedLinkComment(t, "甲", "a@x.com", "https://a.example.com", "approved", now-31*day)
+		seedLinkComment(t, "乙", "b@x.com", "https://b.example.com", "approved", now-10*day)
+		token := adminToken(t)
+
+		payload, _ := fetchUserList(t, token)
+		if u := requireSingleUser(t, payload, "a@x.com"); !u.URLDormant {
+			t.Errorf("脏天数回退 30，31 天前应标记休眠")
+		}
+		if u := requireSingleUser(t, payload, "b@x.com"); u.URLDormant {
+			t.Errorf("脏天数回退 30，10 天前不应标记休眠")
+		}
+	})
+}
+
+// mustUserList 是「断言字段齐全」的快捷方式：链接休眠用例只关心 url / urlDormant
+func mustUserList(t *testing.T, token string) userListPayload {
+	t.Helper()
+	payload, _ := fetchUserList(t, token)
+	return payload
 }
 
 // ---------------------------------------------------------------------------
