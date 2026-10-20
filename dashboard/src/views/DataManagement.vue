@@ -14,17 +14,17 @@
       <!-- 导出评论数据 -->
       <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
         <h2 class="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
-          <i class="fa-solid fa-download text-gray-500"></i> 导出数据
+          <i class="fa-solid fa-download text-emerald-500"></i> 导出数据
         </h2>
         <p class="text-sm text-gray-500 mb-5">将数据导出为 JSON 文件，可用于备份或迁移。出于安全考虑，SMTP 密码与博主密钥等敏感字段会被置空，导入后需手工补填。</p>
         <div class="flex flex-wrap gap-4">
           <button @click="exportComments" :disabled="exportingComments"
-            class="flex items-center gap-2 px-5 py-2.5 bg-sky-500 text-white rounded-lg hover:bg-sky-600 disabled:opacity-50 transition-colors text-sm font-medium">
+            class="flex items-center gap-2 px-5 py-2.5 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 disabled:opacity-50 transition-colors text-sm font-medium">
             <i class="fa-solid" :class="exportingComments ? 'fa-spinner fa-spin' : 'fa-comments'"></i>
             {{ exportingComments ? '导出中...' : '导出评论数据' }}
           </button>
           <button @click="exportSettings" :disabled="exportingSettings"
-            class="flex items-center gap-2 px-5 py-2.5 bg-sky-500 text-white rounded-lg hover:bg-sky-600 disabled:opacity-50 transition-colors text-sm font-medium">
+            class="flex items-center gap-2 px-5 py-2.5 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 disabled:opacity-50 transition-colors text-sm font-medium">
             <i class="fa-solid" :class="exportingSettings ? 'fa-spinner fa-spin' : 'fa-gear'"></i>
             {{ exportingSettings ? '导出中...' : '导出系统设置' }}
           </button>
@@ -34,7 +34,7 @@
       <!-- 导入评论数据 -->
       <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
         <h2 class="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
-          <i class="fa-solid fa-upload text-gray-500"></i> 导入数据
+          <i class="fa-solid fa-upload text-emerald-500"></i> 导入数据
         </h2>
         <p class="text-sm text-gray-500 mb-5">导入之前导出的 JSON 文件。导入操作会新增数据，不会覆盖已有数据。</p>
 

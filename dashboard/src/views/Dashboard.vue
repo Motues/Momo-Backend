@@ -9,8 +9,8 @@
     </div>
 
     <template v-else>
-      <!-- Status filter tabs -->
-      <div class="flex items-center space-x-2 mb-4">
+      <!-- Status filter tabs + 文章筛选（从数据统计页「热门文章 / 最新动态」跳转而来） -->
+      <div class="flex flex-wrap items-center gap-2 mb-4">
         <button v-for="tab in statusTabs" :key="tab.value"
           @click="switchFilter(tab.value)"
           :class="['px-3 py-1.5 text-xs font-medium rounded-lg transition-all',
@@ -19,6 +19,14 @@
               : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50']">
           {{ tab.label }}
         </button>
+        <span v-if="currentSlug"
+          class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-blue-50 border border-blue-100 text-blue-700 text-xs">
+          <i class="fa-solid fa-file-lines"></i>
+          <span class="font-mono truncate max-w-[240px]" :title="currentSlug">{{ currentSlug }}</span>
+          <button @click="clearSlugFilter" class="text-blue-500 hover:text-blue-700" title="清除文章筛选">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </span>
       </div>
 
       <CommentList
@@ -47,6 +55,8 @@ const tableData = ref([]);
 const pagination = ref({ page: 1, limit: 10, totalPage: 1 });
 const apiUrl = ref(localStorage.getItem('apiUrl') || window.location.origin);
 const currentStatus = ref('');
+/** 按文章标识精确筛选（数据统计页跳转带上 `?slug=`），空串表示不筛选 */
+const currentSlug = ref('');
 
 const statusTabs = [
   { label: '全部', value: '' },
@@ -61,6 +71,9 @@ const fetchComments = async (page = 1) => {
     const params = { page };
     if (currentStatus.value) {
       params.status = currentStatus.value;
+    }
+    if (currentSlug.value) {
+      params.postSlug = currentSlug.value;
     }
     const res = await request.get('/admin/comments/list', { params });
     if (res.data) {
@@ -77,6 +90,14 @@ const fetchComments = async (page = 1) => {
 const switchFilter = (status) => {
   currentStatus.value = status;
   pagination.value.page = 1;
+  fetchComments(1);
+};
+
+/** 清除文章筛选：地址栏与列表一起回到「全部文章」 */
+const clearSlugFilter = () => {
+  currentSlug.value = '';
+  const query = currentStatus.value ? { status: currentStatus.value } : {};
+  router.replace({ path: '/comments', query });
   fetchComments(1);
 };
 
@@ -112,6 +133,11 @@ onMounted(() => {
   const statusParam = route.query.status;
   if (statusParam && ['approved', 'pending', 'deleted'].includes(statusParam)) {
     currentStatus.value = statusParam;
+  }
+  // 数据统计页「热门文章 / 最新动态」点击后带过来的文章标识
+  const slugParam = route.query.slug;
+  if (typeof slugParam === 'string' && slugParam.trim()) {
+    currentSlug.value = slugParam.trim();
   }
   fetchComments(1);
 });

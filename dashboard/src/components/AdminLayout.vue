@@ -46,6 +46,12 @@
           <i class="fa-solid fa-fingerprint w-5 mr-3"></i>
           <span class="font-medium">认证记录</span>
         </router-link>
+        <router-link to="/mails" @click="closeMobileMenu"
+          :class="['flex items-center px-3 py-2.5 rounded-lg group transition-colors',
+            isActive('/mails') ? 'bg-blue-50 text-blue-600' : 'text-gray-600 hover:bg-gray-100']">
+          <i class="fa-solid fa-envelope-open-text w-5 mr-3"></i>
+          <span class="font-medium">邮件管理</span>
+        </router-link>
         <router-link to="/settings" @click="closeMobileMenu"
           :class="['flex items-center px-3 py-2.5 rounded-lg group transition-colors',
             isActive('/settings') ? 'bg-blue-50 text-blue-600' : 'text-gray-600 hover:bg-gray-100']">
@@ -144,10 +150,12 @@ const pageTitle = computed(() => {
     '/users': '用户列表',
     '/user-comments': '用户评论',
     '/verify-records': '认证记录',
+    '/mails': '邮件管理',
     '/settings': '系统设置',
     '/settings/basic': '基本设置',
     '/settings/email': '邮件通知',
-    '/settings/security': '安全设置',
+    '/settings/security': '访问控制',
+    '/settings/verify': '人机验证',
     '/settings/account': '账户安全',
     '/settings/data': '数据管理',
     '/settings/emoji': '表情设置',

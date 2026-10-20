@@ -14,12 +14,11 @@ vi.mock('../src/utils/request.js', () => ({ default: requestMock }));
 vi.mock('../src/utils/toast.js', () => ({ default: toastMock }));
 
 import SecuritySettings from '../src/views/SecuritySettings.vue';
-import { createTestRouter, AdminLayoutStub, pickSelectOption } from './support/harness.js';
+import { createTestRouter, AdminLayoutStub } from './support/harness.js';
 
 const ORIGIN_INPUT = 'input[placeholder="https://example.com"]';
 const IP_INPUT = 'input[placeholder="192.168.1.1 或 10.0.0.0/8"]';
 const EMAIL_INPUT = 'input[placeholder="spam@example.com"]';
-const KEY_INPUT = 'input[placeholder="输入管理员评论密钥"]';
 
 let router;
 let pushSpy;
@@ -41,6 +40,8 @@ const mountSettings = async (getResponse = { code: 200, data: {} }) => {
 const layout = () => wrapper.findComponent({ name: 'AdminLayout' });
 const saveButton = () => wrapper.findAll('button').find((button) => /保存设置|保存中/.test(button.text()));
 const lastPayload = () => requestMock.put.mock.calls.at(-1)[1];
+const headings = () =>
+	wrapper.findAll('section').map((section) => section.find('h2').text().replace(/\s+/g, ''));
 
 /** 按 h2 标题定位区块（正文里也可能出现同样的关键词，例如「客户端 IP 识别」正文也提到 IP 黑名单） */
 const sectionByHeading = (title) =>
@@ -53,18 +54,6 @@ const checkboxByLabel = (labelText) => {
 	const section = wrapper.findAll('section').find((s) => s.text().includes(labelText));
 	return section.find('input[type="checkbox"]');
 };
-
-/**
- * 人机验证 section 里的复选框，按 DOM 顺序：
- *   [0] 启用无感验证  [1] 启用环境质询（第二层）  [2] 命中自动化特征时拒绝  [3] 来源域名绑定  [4] 记录签发事件
- * 后四个只在前面开启后才存在，所以每次都要重新查询。
- * 不能用 checkboxByLabel：它只取 section 里的第一个复选框。
- */
-const verifyToggles = () =>
-	wrapper
-		.findAll('section')
-		.find((s) => s.text().includes('启用无感验证'))
-		.findAll('input[type="checkbox"]');
 
 const addInSection = async (sectionTitle, inputSelector, value) => {
 	await wrapper.find(inputSelector).setValue(value);
@@ -90,20 +79,55 @@ afterEach(() => {
 	errorSpy.mockRestore();
 });
 
-describe('SecuritySettings - 加载与默认值', () => {
+describe('SecuritySettings（访问控制）- 页面结构', () => {
+	it('H1 显示「访问控制」', async () => {
+		await mountSettings();
+		expect(wrapper.find('h1').text()).toBe('访问控制');
+	});
+
+	it('只保留四个区块：CORS / 客户端 IP 识别 / IP 黑名单 / 邮箱黑名单', async () => {
+		await mountSettings();
+		expect(headings()).toEqual([
+			'跨域设置(CORS)',
+			'客户端IP识别',
+			'IP黑名单',
+			'邮箱黑名单',
+		]);
+	});
+
+	it('管理员评论密钥区块已迁出（不再渲染）', async () => {
+		await mountSettings();
+		expect(wrapper.text()).not.toContain('管理员评论密钥');
+		expect(wrapper.text()).not.toContain('启用评论密钥');
+		expect(wrapper.find('input[placeholder="输入管理员评论密钥"]').exists()).toBe(false);
+	});
+
+	it('人机验证区块已迁出（不再渲染）', async () => {
+		await mountSettings();
+		expect(wrapper.text()).not.toContain('启用无感验证');
+		expect(wrapper.text()).not.toContain('认证记录保留天数');
+		expect(wrapper.find('[role="combobox"]').exists()).toBe(false);
+	});
+
+	it('刷新仍指向 /settings/security（文件名与路由保持兼容）', async () => {
+		await mountSettings();
+		expect(router.currentRoute.value.path).toBe('/settings/security');
+		// 真实路由表里的 name 由 router.test.js 校验，这里只确认页面落在原路径上
+		expect(wrapper.find('h1').text()).toBe('访问控制');
+	});
+});
+
+describe('SecuritySettings（访问控制）- 加载与默认值', () => {
 	it('挂载时以 type=security 拉取设置', async () => {
 		await mountSettings();
 		expect(requestMock.get).toHaveBeenCalledWith('/admin/settings', { params: { type: 'security' } });
 	});
 
-	it('默认值：各列表为空、开关关闭、验证强度为中', async () => {
+	it('默认值：各列表为空、开关关闭', async () => {
 		await mountSettings();
 		expect(wrapper.vm.ipBlacklist).toEqual([]);
 		expect(wrapper.vm.emailBlacklist).toEqual([]);
 		expect(wrapper.vm.originList).toEqual([]);
-		expect(wrapper.vm.adminCommentKeyEnabled).toBe(false);
-		expect(wrapper.vm.commentVerifyEnabled).toBe(false);
-		expect(wrapper.vm.commentVerifyDifficulty).toBe('1000000');
 		expect(wrapper.vm.trustProxy).toBe(false);
 	});
 
@@ -157,13 +181,9 @@ describe('SecuritySettings - 加载与默认值', () => {
 		expect(wrapper.vm.originList).toEqual([]);
 	});
 
-	it.each([
-		['admin_comment_key_enabled', 'adminCommentKeyEnabled'],
-		['comment_verify_enabled', 'commentVerifyEnabled'],
-		['trust_proxy', 'trustProxy'],
-	])('字符串 "true" 会被解析成布尔值（%s）', async (field, model) => {
-		await mountSettings({ code: 200, data: { [field]: 'true' } });
-		expect(wrapper.vm[model]).toBe(true);
+	it('字符串 "true" 会被解析成布尔值（trust_proxy）', async () => {
+		await mountSettings({ code: 200, data: { trust_proxy: 'true' } });
+		expect(wrapper.vm.trustProxy).toBe(true);
 	});
 
 	it('字符串 "false" 解析为 false', async () => {
@@ -174,16 +194,6 @@ describe('SecuritySettings - 加载与默认值', () => {
 	it('缺失字段时开关保持 false', async () => {
 		await mountSettings({ code: 200, data: { trust_proxy: undefined } });
 		expect(wrapper.vm.trustProxy).toBe(false);
-	});
-
-	it('加载管理员评论密钥', async () => {
-		await mountSettings({ code: 200, data: { admin_comment_key: 'k-123' } });
-		expect(wrapper.vm.adminCommentKey).toBe('k-123');
-	});
-
-	it('加载验证强度', async () => {
-		await mountSettings({ code: 200, data: { comment_verify_difficulty: '4000000' } });
-		expect(wrapper.vm.commentVerifyDifficulty).toBe('4000000');
 	});
 
 	it('加载后 isDirty 为 false', async () => {
@@ -198,7 +208,7 @@ describe('SecuritySettings - 加载与默认值', () => {
 	});
 });
 
-describe('SecuritySettings - 反向代理开关提示', () => {
+describe('SecuritySettings（访问控制）- 反向代理开关提示', () => {
 	it.each([
 		['env', 'TRUST_PROXY 强制指定'],
 		['config', 'config.yaml'],
@@ -227,7 +237,7 @@ describe('SecuritySettings - 反向代理开关提示', () => {
 	});
 });
 
-describe('SecuritySettings - 列表维护', () => {
+describe('SecuritySettings（访问控制）- 列表维护', () => {
 	it('添加跨域来源后进入列表', async () => {
 		await mountSettings();
 		await addOrigin('https://a.com');
@@ -337,203 +347,7 @@ describe('SecuritySettings - 列表维护', () => {
 	});
 });
 
-describe('SecuritySettings - 管理员密钥与人机验证', () => {
-	it('默认不展示密钥输入框', async () => {
-		await mountSettings();
-		expect(wrapper.find(KEY_INPUT).exists()).toBe(false);
-	});
-
-	it('启用密钥后展示输入框', async () => {
-		await mountSettings();
-		await checkboxByLabel('启用评论密钥').setValue(true);
-		expect(wrapper.vm.adminCommentKeyEnabled).toBe(true);
-		expect(wrapper.find(KEY_INPUT).exists()).toBe(true);
-	});
-
-	it('默认不展示验证强度下拉框', async () => {
-		await mountSettings();
-		expect(wrapper.find('[role="combobox"]').exists()).toBe(false);
-	});
-
-	it('启用无感验证后展示强度下拉框', async () => {
-		await mountSettings();
-		await checkboxByLabel('启用无感验证').setValue(true);
-		expect(wrapper.find('[role="combobox"]').exists()).toBe(true);
-		expect(wrapper.vm.commentVerifyEnabled).toBe(true);
-	});
-
-	it('验证强度可选高并写入模型', async () => {
-		await mountSettings();
-		await checkboxByLabel('启用无感验证').setValue(true);
-		await pickSelectOption(wrapper, '高（约 400 万次计算');
-		expect(wrapper.vm.commentVerifyDifficulty).toBe('4000000');
-	});
-
-	it('第二层两个开关默认关闭，且未启用无感验证时不展示', async () => {
-		await mountSettings();
-		expect(wrapper.vm.commentVerifyInstrEnabled).toBe(false);
-		expect(wrapper.vm.commentVerifyBlockAutomated).toBe(false);
-		// 未启用无感验证时该区块只有「启用无感验证」一个复选框
-		expect(verifyToggles().length).toBe(1);
-	});
-
-	it('开启第二层后可用「命中自动化特征时拒绝」，保存时写为 true', async () => {
-		await mountSettings();
-		await verifyToggles()[0].setValue(true);
-		await verifyToggles()[1].setValue(true);
-		expect(wrapper.vm.commentVerifyInstrEnabled).toBe(true);
-		// 开启无感验证后：启用无感验证 / 第二层 / 命中即拒绝 / 来源域名绑定 / 记录签发事件
-		expect(verifyToggles().length).toBe(5);
-
-		await verifyToggles()[2].setValue(true);
-		expect(wrapper.vm.commentVerifyBlockAutomated).toBe(true);
-
-		await saveButton().trigger('click');
-		await flushPromises();
-		expect(lastPayload().comment_verify_instr_enabled).toBe('true');
-		expect(lastPayload().comment_verify_block_automated).toBe('true');
-	});
-
-	it('加载时回填第二层开关', async () => {
-		await mountSettings({
-			code: 200,
-			data: {
-				comment_verify_enabled: 'true',
-				comment_verify_instr_enabled: 'true',
-				comment_verify_block_automated: 'true',
-			},
-		});
-		expect(wrapper.vm.commentVerifyInstrEnabled).toBe(true);
-		expect(wrapper.vm.commentVerifyBlockAutomated).toBe(true);
-	});
-});
-
-describe('SecuritySettings - 认证记录保留策略', () => {
-	it('默认记录签发事件、保留 30 天', async () => {
-		await mountSettings();
-		expect(wrapper.vm.commentVerifyLogChallenge).toBe(true);
-		expect(wrapper.vm.commentVerifyRetentionDays).toBe(30);
-	});
-
-	it('未启用无感验证时不展示保留策略', async () => {
-		await mountSettings();
-		expect(wrapper.text()).not.toContain('认证记录保留天数');
-	});
-
-	it('启用后展示保留策略，且开关文案随状态变化', async () => {
-		await mountSettings({ code: 200, data: { comment_verify_enabled: 'true' } });
-		expect(wrapper.text()).toContain('认证记录保留天数');
-		expect(wrapper.text()).toContain('已记录');
-
-		// 未开启第二层时该区块有四个复选框：启用无感验证 / 环境质询 / 来源域名绑定 / 记录签发事件
-		expect(verifyToggles()).toHaveLength(4);
-		await verifyToggles()[3].setValue(false);
-		expect(wrapper.vm.commentVerifyLogChallenge).toBe(false);
-		expect(wrapper.text()).toContain('仅结果');
-	});
-
-	it('加载时回填保留天数与签发事件开关', async () => {
-		await mountSettings({
-			code: 200,
-			data: {
-				comment_verify_enabled: 'true',
-				comment_verify_retention_days: '7',
-				comment_verify_log_challenge: 'false',
-			},
-		});
-		expect(wrapper.vm.commentVerifyRetentionDays).toBe(7);
-		expect(wrapper.vm.commentVerifyLogChallenge).toBe(false);
-	});
-
-	it('保留天数：默认 30、0 为永久保留、非法与超限都归一化', async () => {
-		await mountSettings({ code: 200, data: { comment_verify_enabled: 'true' } });
-
-		await saveButton().trigger('click');
-		await flushPromises();
-		expect(lastPayload().comment_verify_retention_days).toBe('30');
-		expect(lastPayload().comment_verify_log_challenge).toBe('true');
-
-		wrapper.vm.commentVerifyRetentionDays = 0;
-		await saveButton().trigger('click');
-		await flushPromises();
-		expect(lastPayload().comment_verify_retention_days).toBe('0');
-
-		wrapper.vm.commentVerifyRetentionDays = 'abc';
-		await saveButton().trigger('click');
-		await flushPromises();
-		expect(lastPayload().comment_verify_retention_days).toBe('30');
-
-		wrapper.vm.commentVerifyRetentionDays = 99999;
-		await saveButton().trigger('click');
-		await flushPromises();
-		expect(lastPayload().comment_verify_retention_days).toBe('3650');
-	});
-});
-
-describe('SecuritySettings - 来源域名绑定', () => {
-	it('默认关闭，且未启用无感验证时不展示', async () => {
-		await mountSettings();
-		expect(wrapper.vm.commentVerifyDomainEnabled).toBe(false);
-		// 未启用无感验证时该区块只有「启用无感验证」一个复选框
-		expect(verifyToggles().length).toBe(1);
-	});
-
-	it('加载时回填开关状态', async () => {
-		await mountSettings({
-			code: 200,
-			data: { comment_verify_enabled: 'true', comment_verify_domain_enabled: 'true' },
-		});
-		expect(wrapper.vm.commentVerifyDomainEnabled).toBe(true);
-	});
-
-	it('开启后保存写为 true', async () => {
-		await mountSettings({ code: 200, data: { comment_verify_enabled: 'true' } });
-		// 未开启第二层时：[0] 启用无感验证 [1] 环境质询 [2] 来源域名绑定 [3] 记录签发事件
-		await verifyToggles()[2].setValue(true);
-		expect(wrapper.vm.commentVerifyDomainEnabled).toBe(true);
-
-		await saveButton().trigger('click');
-		await flushPromises();
-		expect(lastPayload().comment_verify_domain_enabled).toBe('true');
-	});
-
-	it('白名单为空或含 * 时给出 fail-closed 告警', async () => {
-		// 空白名单
-		await mountSettings({
-			code: 200,
-			data: { comment_verify_enabled: 'true', comment_verify_domain_enabled: 'true' },
-		});
-		expect(wrapper.vm.domainWhitelistUsable).toBe(false);
-		expect(wrapper.text()).toContain('拒绝所有');
-
-		// 只有 * 也算不可用
-		wrapper.vm.originList = ['*'];
-		await flushPromises();
-		expect(wrapper.vm.domainWhitelistUsable).toBe(false);
-		expect(wrapper.text()).toContain('拒绝所有');
-	});
-
-	it('白名单可用时展示生效中的域名，不再告警', async () => {
-		await mountSettings({
-			code: 200,
-			data: {
-				comment_verify_enabled: 'true',
-				comment_verify_domain_enabled: 'true',
-				allow_origin: 'https://blog.example.com',
-			},
-		});
-		expect(wrapper.vm.domainWhitelistUsable).toBe(true);
-		expect(wrapper.text()).not.toContain('拒绝所有');
-		expect(wrapper.text()).toContain('生效中的白名单');
-	});
-
-	it('关闭域名绑定时不展示告警（即使白名单为空）', async () => {
-		await mountSettings({ code: 200, data: { comment_verify_enabled: 'true' } });
-		expect(wrapper.text()).not.toContain('拒绝所有');
-	});
-});
-
-describe('SecuritySettings - 保存载荷', () => {
+describe('SecuritySettings（访问控制）- 保存载荷', () => {
 	it('保存请求为 PUT /admin/settings', async () => {
 		await mountSettings();
 		await saveButton().trigger('click');
@@ -542,25 +356,32 @@ describe('SecuritySettings - 保存载荷', () => {
 		expect(requestMock.put.mock.calls[0][0]).toBe('/admin/settings');
 	});
 
-	it('提交的键集合固定为 13 项（含用于清除密钥的空 admin_comment_key）', async () => {
+	it('payload 只含 4 个键，且不含 admin_comment_key* / comment_verify_*', async () => {
 		await mountSettings();
 		await saveButton().trigger('click');
 		await flushPromises();
 		expect(Object.keys(lastPayload()).sort()).toEqual([
-			'admin_comment_key',
-			'admin_comment_key_enabled',
 			'allow_origin',
-			'comment_verify_block_automated',
-			'comment_verify_difficulty',
-			'comment_verify_domain_enabled',
-			'comment_verify_enabled',
-			'comment_verify_instr_enabled',
-			'comment_verify_log_challenge',
-			'comment_verify_retention_days',
 			'email_blacklist',
 			'ip_blacklist',
 			'trust_proxy',
 		]);
+	});
+
+	it('保存载荷里没有任何管理员密钥或人机验证键', async () => {
+		await mountSettings({
+			code: 200,
+			data: {
+				admin_comment_key_enabled: 'true',
+				comment_verify_enabled: 'true',
+				comment_verify_domain_enabled: 'true',
+			},
+		});
+		await saveButton().trigger('click');
+		await flushPromises();
+		const payload = lastPayload();
+		expect(Object.keys(payload).some((key) => key.startsWith('admin_comment_key'))).toBe(false);
+		expect(Object.keys(payload).some((key) => key.startsWith('comment_verify_'))).toBe(false);
 	});
 
 	it('allow_origin 用逗号拼接', async () => {
@@ -581,37 +402,9 @@ describe('SecuritySettings - 保存载荷', () => {
 	it('开关以字符串形式提交', async () => {
 		await mountSettings();
 		await checkboxByLabel('信任反向代理下发的 IP 头').setValue(true);
-		await checkboxByLabel('启用无感验证').setValue(true);
 		await saveButton().trigger('click');
 		await flushPromises();
 		expect(lastPayload().trust_proxy).toBe('true');
-		expect(lastPayload().comment_verify_enabled).toBe('true');
-		expect(lastPayload().admin_comment_key_enabled).toBe('false');
-	});
-
-	it('启用密钥并填写内容时提交密钥', async () => {
-		await mountSettings();
-		await checkboxByLabel('启用评论密钥').setValue(true);
-		await wrapper.find(KEY_INPUT).setValue('my-key');
-		await saveButton().trigger('click');
-		await flushPromises();
-		expect(lastPayload().admin_comment_key).toBe('my-key');
-	});
-
-	it('启用密钥但未填写内容时不提交密钥字段', async () => {
-		await mountSettings();
-		await checkboxByLabel('启用评论密钥').setValue(true);
-		await saveButton().trigger('click');
-		await flushPromises();
-		expect(Object.keys(lastPayload())).not.toContain('admin_comment_key');
-	});
-
-	it('关闭密钥开关时提交空密钥以清除', async () => {
-		await mountSettings({ code: 200, data: { admin_comment_key: 'old', admin_comment_key_enabled: 'true' } });
-		await checkboxByLabel('启用评论密钥').setValue(false);
-		await saveButton().trigger('click');
-		await flushPromises();
-		expect(lastPayload().admin_comment_key).toBe('');
 	});
 
 	it('保存成功后提示并复位 isDirty', async () => {
@@ -620,7 +413,7 @@ describe('SecuritySettings - 保存载荷', () => {
 		expect(wrapper.vm.isDirty).toBe(true);
 		await saveButton().trigger('click');
 		await flushPromises();
-		expect(toastMock.success).toHaveBeenCalledWith('安全设置已保存');
+		expect(toastMock.success).toHaveBeenCalledWith('访问控制已保存');
 		expect(wrapper.vm.isDirty).toBe(false);
 		expect(wrapper.text()).toContain('保存成功');
 	});
@@ -652,7 +445,7 @@ describe('SecuritySettings - 保存载荷', () => {
 		requestMock.put.mockRejectedValue({});
 		await saveButton().trigger('click');
 		await flushPromises();
-		expect(toastMock.error).toHaveBeenCalledWith('安全设置保存失败');
+		expect(toastMock.error).toHaveBeenCalledWith('访问控制保存失败');
 	});
 
 	it('业务 code 非 200 时不提示成功', async () => {
@@ -664,7 +457,7 @@ describe('SecuritySettings - 保存载荷', () => {
 	});
 });
 
-describe('SecuritySettings - 布局交互', () => {
+describe('SecuritySettings（访问控制）- 布局交互', () => {
 	it('refresh 事件重新拉取设置', async () => {
 		await mountSettings();
 		layout().vm.$emit('refresh');

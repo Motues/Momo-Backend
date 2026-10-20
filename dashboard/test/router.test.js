@@ -9,6 +9,7 @@ const EXPECTED_ROUTES = [
 	{ path: '/users', name: 'Users', file: 'Users.vue', auth: true },
 	{ path: '/user-comments', name: 'UserComments', file: 'UserComments.vue', auth: true },
 	{ path: '/verify-records', name: 'VerifyRecords', file: 'VerifyRecords.vue', auth: true },
+	{ path: '/mails', name: 'MailManagement', file: 'MailManagement.vue', auth: true },
 	{ path: '/settings', name: 'Settings', file: 'Settings.vue', auth: true },
 	{ path: '/settings/basic', name: 'BasicSettings', file: 'BasicSettings.vue', auth: true },
 	{ path: '/settings/email', name: 'EmailSettings', file: 'EmailSettings.vue', auth: true },
@@ -16,6 +17,8 @@ const EXPECTED_ROUTES = [
 	{ path: '/settings/account', name: 'AccountSettings', file: 'AccountSettings.vue', auth: true },
 	{ path: '/settings/data', name: 'DataManagement', file: 'DataManagement.vue', auth: true },
 	{ path: '/settings/emoji', name: 'EmojiSettings', file: 'EmojiSettings.vue', auth: true },
+	{ path: '/settings/link', name: 'LinkSecuritySettings', file: 'LinkSecuritySettings.vue', auth: true },
+	{ path: '/settings/verify', name: 'VerifySettings', file: 'VerifySettings.vue', auth: true },
 ];
 
 const findRecord = (path) => router.getRoutes().find((record) => record.path === path);
@@ -109,6 +112,18 @@ describe('鉴权守卫', () => {
 	it('未登录访问 /settings/security 会跳到登录页', async () => {
 		await router.push('/settings/security');
 		expect(router.currentRoute.value.path).toBe('/login');
+	});
+
+	it('未登录访问 /settings/verify 会跳到登录页', async () => {
+		await router.push('/settings/verify');
+		expect(router.currentRoute.value.path).toBe('/login');
+	});
+
+	it('已登录可以访问 /settings/verify', async () => {
+		localStorage.setItem('token', 'tk');
+		await router.push('/settings/verify');
+		expect(router.currentRoute.value.path).toBe('/settings/verify');
+		expect(router.currentRoute.value.name).toBe('VerifySettings');
 	});
 
 	it('未登录仍可停留在 /login', async () => {

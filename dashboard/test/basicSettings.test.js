@@ -14,11 +14,10 @@ vi.mock('../src/utils/request.js', () => ({ default: requestMock }));
 vi.mock('../src/utils/toast.js', () => ({ default: toastMock }));
 
 import BasicSettings from '../src/views/BasicSettings.vue';
-import { createTestRouter, AdminLayoutStub } from './support/harness.js';
+import { createTestRouter, AdminLayoutStub, pickSelectOption } from './support/harness.js';
 
 const DEFAULT_FORM = {
 	site_name: '',
-	admin_email: '',
 	comment_auto_approve: 'true',
 	// 审核自动化规则：默认全部为 0（不启用），与后端默认值一致
 	comment_spam_max_links: '0',
@@ -33,14 +32,32 @@ const DEFAULT_FORM = {
 	placeholder_url: '',
 };
 
+/** 管理员邮箱相关的键单独维护，保存时随 payload 一起提交 */
+const DEFAULT_EMAIL_FIELDS = { admin_emails: '[]', notify_email: '', admin_email: '' };
+/**
+ * 管理员评论密钥：开关始终提交；「开启 + 输入了内容」提交新密钥；
+ * 「关闭」提交空串（清除已保存的密钥）；「开启 + 留空」不提交该键（= 不修改）
+ */
+const DEFAULT_KEY_FIELDS = { admin_comment_key_enabled: 'false', admin_comment_key: '' };
+const DEFAULT_PAYLOAD = { ...DEFAULT_FORM, ...DEFAULT_EMAIL_FIELDS, ...DEFAULT_KEY_FIELDS };
+
 let router;
 let pushSpy;
 let wrapper;
 let errorSpy;
 
-const mountSettings = async (getResponse = { code: 200, data: {} }) => {
-	if (typeof getResponse === 'function') requestMock.get.mockImplementation(getResponse);
-	else requestMock.get.mockResolvedValue(getResponse);
+/**
+ * 页面会发两次 GET：一次 type=basic（主表单），一次 type=security（管理员评论密钥）。
+ * 第二个参数用于单独控制 security 的返回。
+ */
+const mountSettings = async (
+	getResponse = { code: 200, data: {} },
+	securityResponse = { code: 200, data: {} }
+) => {
+	requestMock.get.mockImplementation((_url, config) => {
+		const response = config?.params?.type === 'security' ? securityResponse : getResponse;
+		return typeof response === 'function' ? response() : Promise.resolve(response);
+	});
 	router = await createTestRouter('/settings/basic');
 	pushSpy = vi.spyOn(router, 'push');
 	wrapper = mount(BasicSettings, {
@@ -79,12 +96,19 @@ describe('BasicSettings - 加载', () => {
 		expect(requestMock.get).toHaveBeenCalledWith('/admin/settings', { params: { type: 'basic' } });
 	});
 
+	it('挂载时额外以 type=security 拉取管理员评论密钥', async () => {
+		await mountSettings();
+		expect(requestMock.get).toHaveBeenCalledWith('/admin/settings', { params: { type: 'security' } });
+		expect(requestMock.get).toHaveBeenCalledTimes(2);
+	});
+
 	it('加载成功后填充电表单模型', async () => {
 		await mountSettings({
 			code: 200,
 			data: {
 				site_name: '我的博客',
-				admin_email: 'admin@example.com',
+				admin_emails: '["admin@example.com","boss@example.com"]',
+				notify_email: 'boss@example.com',
 				comment_auto_approve: 'false',
 				blogger_badge_enabled: 'true',
 				blogger_badge_text: '博主',
@@ -92,17 +116,18 @@ describe('BasicSettings - 加载', () => {
 			},
 		});
 		expect(wrapper.vm.form.site_name).toBe('我的博客');
-		expect(wrapper.vm.form.admin_email).toBe('admin@example.com');
+		expect(wrapper.vm.adminEmails).toEqual(['admin@example.com', 'boss@example.com']);
+		expect(wrapper.vm.notifyEmail).toBe('boss@example.com');
 		expect(wrapper.vm.form.comment_auto_approve).toBe('false');
 		expect(wrapper.vm.form.blogger_badge_enabled).toBe('true');
 		expect(wrapper.vm.form.placeholder_name).toBe('昵称');
 	});
 
 	it('加载的数据会渲染到输入框', async () => {
-		await mountSettings({ code: 200, data: { site_name: '我的博客', admin_email: 'a@b.com' } });
+		await mountSettings({ code: 200, data: { site_name: '我的博客' } });
 		const textInputs = wrapper.findAll('input[type="text"]');
 		expect(textInputs[0].element.value).toBe('我的博客');
-		expect(wrapper.find('input[type="email"]').element.value).toBe('a@b.com');
+		expect(wrapper.get('[data-test="admin-email-input"]').element.value).toBe('');
 	});
 
 	it('默认值：评论自动通过为 "true"', async () => {
@@ -117,8 +142,14 @@ describe('BasicSettings - 加载', () => {
 
 	it('默认值：占位符与文本字段均为空字符串', async () => {
 		await mountSettings({ code: 200, data: {} });
-		['site_name', 'admin_email', 'blogger_badge_text', 'placeholder_name', 'placeholder_email', 'placeholder_content', 'placeholder_url']
+		['site_name', 'blogger_badge_text', 'placeholder_name', 'placeholder_email', 'placeholder_content', 'placeholder_url']
 			.forEach((key) => expect(wrapper.vm.form[key]).toBe(''));
+	});
+
+	it('默认值：管理员邮箱列表为空、通知邮箱为空', async () => {
+		await mountSettings({ code: 200, data: {} });
+		expect(wrapper.vm.adminEmails).toEqual([]);
+		expect(wrapper.vm.notifyEmail).toBe('');
 	});
 
 	it('加载后 isDirty 为 false', async () => {
@@ -185,11 +216,11 @@ describe('BasicSettings - 保存', () => {
 		expect(requestMock.put.mock.calls[0][0]).toBe('/admin/settings');
 	});
 
-	it('保存时提交全部表单字段', async () => {
+	it('保存时提交全部表单字段（含管理员邮箱三项）', async () => {
 		await mountSettings();
 		await saveButton().trigger('click');
 		await flushPromises();
-		expect(requestMock.put.mock.calls[0][1]).toEqual(DEFAULT_FORM);
+		expect(requestMock.put.mock.calls[0][1]).toEqual(DEFAULT_PAYLOAD);
 	});
 
 	it('保存时提交用户修改后的值', async () => {
@@ -398,6 +429,263 @@ describe('BasicSettings - 审核自动化规则', () => {
 	});
 });
 
+describe('BasicSettings - 管理员邮箱列表', () => {
+	const emailInput = () => wrapper.get('[data-test="admin-email-input"]');
+	const addButton = () => wrapper.get('[data-test="admin-email-add"]');
+	const emailError = () => wrapper.find('[data-test="admin-email-error"]');
+	const chips = () => wrapper.findAll('[data-test="admin-email-remove"]');
+	const notifyTrigger = () => wrapper.get('[data-test="notify-email"] button');
+
+	const addEmail = async (value) => {
+		await emailInput().setValue(value);
+		await addButton().trigger('click');
+	};
+
+	it('加载 admin_emails 并以标签渲染，通知邮箱默认取列表第一个', async () => {
+		await mountSettings({
+			code: 200,
+			data: { admin_emails: '["a@example.com","b@example.com"]' },
+		});
+		expect(wrapper.vm.adminEmails).toEqual(['a@example.com', 'b@example.com']);
+		expect(wrapper.vm.notifyEmail).toBe('a@example.com');
+		expect(chips()).toHaveLength(2);
+		expect(wrapper.text()).toContain('a@example.com');
+	});
+
+	it('admin_emails 为空时回落旧键 admin_email', async () => {
+		await mountSettings({ code: 200, data: { admin_emails: '[]', admin_email: '  Admin@Example.com  ' } });
+		expect(wrapper.vm.adminEmails).toEqual(['admin@example.com']);
+		expect(wrapper.vm.notifyEmail).toBe('admin@example.com');
+	});
+
+	it('admin_emails 是脏值时回落旧键；旧键也非法时视为没有管理员', async () => {
+		await mountSettings({ code: 200, data: { admin_emails: '{oops', admin_email: 'admin@example.com' } });
+		expect(wrapper.vm.adminEmails).toEqual(['admin@example.com']);
+
+		wrapper.unmount();
+		await mountSettings({ code: 200, data: { admin_emails: '{"a":1}', admin_email: 'not-an-email' } });
+		expect(wrapper.vm.adminEmails).toEqual([]);
+		expect(wrapper.vm.notifyEmail).toBe('');
+	});
+
+	it('读取路径丢弃非法项与重复项，并截断到前 10 个', async () => {
+		const many = Array.from({ length: 12 }, (_, index) => `u${index}@example.com`);
+		await mountSettings({
+			code: 200,
+			data: { admin_emails: JSON.stringify(['A@Example.com', 'a@example.com', 'bad', 7, ...many]) },
+		});
+		expect(wrapper.vm.adminEmails).toHaveLength(10);
+		expect(wrapper.vm.adminEmails[0]).toBe('a@example.com');
+	});
+
+	it('按回车添加与点「添加」等价，输入会被 trim + 转小写', async () => {
+		await mountSettings();
+		await emailInput().setValue('  Admin@Example.com  ');
+		await emailInput().trigger('keydown.enter');
+		expect(wrapper.vm.adminEmails).toEqual(['admin@example.com']);
+		expect(emailInput().element.value).toBe('');
+		expect(wrapper.vm.isDirty).toBe(true);
+	});
+
+	it('重复邮箱（不区分大小写）被拒绝并内联提示', async () => {
+		await mountSettings({ code: 200, data: { admin_emails: '["a@example.com"]' } });
+		await addEmail('A@EXAMPLE.COM');
+
+		expect(wrapper.vm.adminEmails).toEqual(['a@example.com']);
+		expect(emailError().text()).toBe('该邮箱已在列表中');
+	});
+
+	it('非法邮箱被拒绝并内联提示', async () => {
+		await mountSettings();
+		await addEmail('not-an-email');
+
+		expect(wrapper.vm.adminEmails).toEqual([]);
+		expect(emailError().text()).toBe('请输入合法的邮箱地址');
+	});
+
+	it('最多 10 个管理员邮箱', async () => {
+		const ten = Array.from({ length: 10 }, (_, index) => `u${index}@example.com`);
+		await mountSettings({ code: 200, data: { admin_emails: JSON.stringify(ten) } });
+		await addEmail('extra@example.com');
+
+		expect(wrapper.vm.adminEmails).toHaveLength(10);
+		expect(emailError().text()).toBe('最多 10 个管理员邮箱');
+	});
+
+	it('输入变化会清掉上一次的错误提示', async () => {
+		await mountSettings();
+		await addEmail('bad');
+		expect(emailError().exists()).toBe(true);
+		await emailInput().setValue('a@example.com');
+		expect(emailError().exists()).toBe(false);
+	});
+
+	it('删除某个邮箱后通知邮箱回落到列表第一个', async () => {
+		await mountSettings({ code: 200, data: { admin_emails: '["a@example.com","b@example.com"]' } });
+		await wrapper.vm.$nextTick();
+		await pickSelectOption(wrapper, 'b@example.com');
+		expect(wrapper.vm.notifyEmail).toBe('b@example.com');
+
+		await chips()[1].trigger('click');
+		expect(wrapper.vm.adminEmails).toEqual(['a@example.com']);
+		expect(wrapper.vm.notifyEmail).toBe('a@example.com');
+	});
+
+	it('列表为空时通知邮箱选择器禁用并给出提示', async () => {
+		await mountSettings({ code: 200, data: {} });
+		expect(notifyTrigger().attributes('disabled')).toBeDefined();
+		expect(wrapper.get('[data-test="notify-hint"]').text()).toContain('列表为空');
+
+		await addEmail('a@example.com');
+		expect(notifyTrigger().attributes('disabled')).toBeUndefined();
+		expect(wrapper.vm.notifyEmail).toBe('a@example.com');
+	});
+
+	it('保存时提交 admin_emails / notify_email / 旧键 admin_email', async () => {
+		await mountSettings({ code: 200, data: { admin_emails: '["a@example.com","b@example.com"]' } });
+		await pickSelectOption(wrapper, 'b@example.com');
+		await saveButton().trigger('click');
+		await flushPromises();
+
+		const payload = requestMock.put.mock.calls[0][1];
+		expect(payload.admin_emails).toBe('["a@example.com","b@example.com"]');
+		expect(payload.notify_email).toBe('b@example.com');
+		expect(payload.admin_email).toBe('b@example.com');
+	});
+
+	it('未选择通知邮箱时提交列表第一个（旧键同值）', async () => {
+		await mountSettings({ code: 200, data: { admin_emails: '["a@example.com","b@example.com"]' } });
+		await saveButton().trigger('click');
+		await flushPromises();
+
+		const payload = requestMock.put.mock.calls[0][1];
+		expect(payload.notify_email).toBe('a@example.com');
+		expect(payload.admin_email).toBe('a@example.com');
+	});
+
+	it('列表为空时提交空字符串（清空通知邮箱，不报错）', async () => {
+		await mountSettings({ code: 200, data: {} });
+		await saveButton().trigger('click');
+		await flushPromises();
+
+		const payload = requestMock.put.mock.calls[0][1];
+		expect(payload.admin_emails).toBe('[]');
+		expect(payload.notify_email).toBe('');
+		expect(payload.admin_email).toBe('');
+	});
+
+	it('新增邮箱会标记为未保存，保存成功后复位', async () => {
+		await mountSettings();
+		expect(wrapper.vm.isDirty).toBe(false);
+		await addEmail('a@example.com');
+		expect(wrapper.vm.isDirty).toBe(true);
+
+		await saveButton().trigger('click');
+		await flushPromises();
+		expect(wrapper.vm.isDirty).toBe(false);
+	});
+
+	it('切换通知邮箱会标记为未保存', async () => {
+		await mountSettings({ code: 200, data: { admin_emails: '["a@example.com","b@example.com"]' } });
+		await pickSelectOption(wrapper, 'b@example.com');
+		expect(wrapper.vm.isDirty).toBe(true);
+	});
+});
+
+describe('BasicSettings - 管理员评论密钥', () => {
+	const keySwitch = () => wrapper.get('[data-test="admin-comment-key-enabled"]');
+	const keyInput = () => wrapper.find('[data-test="admin-comment-key"]');
+
+	it('默认开关关闭，且不渲染密钥输入框', async () => {
+		await mountSettings();
+		expect(wrapper.vm.adminCommentKeyEnabled).toBe(false);
+		expect(wrapper.vm.adminCommentKey).toBe('');
+		expect(keyInput().exists()).toBe(false);
+		expect(wrapper.text()).toContain('管理员评论密钥');
+		expect(wrapper.text()).toContain('已禁用');
+	});
+
+	it('加载 security 组时回填开关与密钥（敏感键始终返回空串）', async () => {
+		await mountSettings({ code: 200, data: {} }, {
+			code: 200,
+			data: { admin_comment_key: '', admin_comment_key_enabled: 'true' },
+		});
+		expect(wrapper.vm.adminCommentKeyEnabled).toBe(true);
+		expect(wrapper.vm.adminCommentKey).toBe('');
+		expect(keyInput().exists()).toBe(true);
+		expect(keyInput().element.value).toBe('');
+	});
+
+	it('启用开关后出现密钥输入框', async () => {
+		await mountSettings();
+		await keySwitch().setValue(true);
+		expect(wrapper.vm.adminCommentKeyEnabled).toBe(true);
+		expect(keyInput().exists()).toBe(true);
+		expect(wrapper.text()).toContain('已启用');
+	});
+
+	it('输入密钥后标记为未保存，保存成功后复位', async () => {
+		await mountSettings({ code: 200, data: {} }, { code: 200, data: { admin_comment_key_enabled: 'true' } });
+		expect(wrapper.vm.isDirty).toBe(false);
+		await keyInput().setValue('my-key');
+		expect(wrapper.vm.isDirty).toBe(true);
+
+		await saveButton().trigger('click');
+		await flushPromises();
+		expect(wrapper.vm.isDirty).toBe(false);
+	});
+
+	it('开关关闭时提交空串（清除已保存的密钥）与 false', async () => {
+		await mountSettings();
+		await saveButton().trigger('click');
+		await flushPromises();
+
+		const payload = requestMock.put.mock.calls[0][1];
+		expect(payload.admin_comment_key).toBe('');
+		expect(payload.admin_comment_key_enabled).toBe('false');
+	});
+
+	it('开关开启但密钥留空：不提交 admin_comment_key（留空 = 不修改）', async () => {
+		await mountSettings({ code: 200, data: {} }, { code: 200, data: { admin_comment_key_enabled: 'true' } });
+		await saveButton().trigger('click');
+		await flushPromises();
+
+		const payload = requestMock.put.mock.calls[0][1];
+		expect(Object.keys(payload)).not.toContain('admin_comment_key');
+		expect(payload.admin_comment_key_enabled).toBe('true');
+	});
+
+	it('输入密钥后提交 admin_comment_key，开关为 true', async () => {
+		await mountSettings();
+		await keySwitch().setValue(true);
+		await keyInput().setValue('my-key');
+		await saveButton().trigger('click');
+		await flushPromises();
+
+		const payload = requestMock.put.mock.calls[0][1];
+		expect(payload.admin_comment_key).toBe('my-key');
+		expect(payload.admin_comment_key_enabled).toBe('true');
+	});
+
+	it('关闭开关时提交空串清除密钥（与历史行为一致）', async () => {
+		await mountSettings({ code: 200, data: {} }, { code: 200, data: { admin_comment_key_enabled: 'true' } });
+		await keySwitch().setValue(false);
+		await saveButton().trigger('click');
+		await flushPromises();
+
+		const payload = requestMock.put.mock.calls[0][1];
+		expect(payload.admin_comment_key_enabled).toBe('false');
+		expect(payload.admin_comment_key).toBe('');
+	});
+
+	it('切换开关会更新文案', async () => {
+		await mountSettings();
+		expect(wrapper.text()).toContain('已禁用');
+		await keySwitch().setValue(true);
+		expect(wrapper.text()).toContain('已启用');
+	});
+});
+
 describe('BasicSettings - 布局交互', () => {
 	it('baseUrl 取自 localStorage 的 apiUrl', async () => {
 		localStorage.setItem('apiUrl', 'https://api.example.com');
@@ -412,10 +700,10 @@ describe('BasicSettings - 布局交互', () => {
 
 	it('refresh 事件会重新拉取设置', async () => {
 		await mountSettings();
-		expect(requestMock.get).toHaveBeenCalledTimes(1);
+		expect(requestMock.get).toHaveBeenCalledTimes(2);
 		layout().vm.$emit('refresh');
 		await flushPromises();
-		expect(requestMock.get).toHaveBeenCalledTimes(2);
+		expect(requestMock.get).toHaveBeenCalledTimes(4);
 	});
 
 	it('logout 事件清除 token 并跳转登录页', async () => {

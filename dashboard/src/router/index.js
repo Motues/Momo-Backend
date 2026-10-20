@@ -37,6 +37,13 @@ const routes = [
     meta: { requiresAuth: true }
   },
   {
+    // 邮件管理：外发邮件日志（邮件验证 / 链接同步 / 休眠提醒 / 通知 / 测试）
+    path: '/mails',
+    name: 'MailManagement',
+    component: () => import('../views/MailManagement.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
     path: '/settings',
     name: 'Settings',
     component: () => import('../views/Settings.vue'),
@@ -80,6 +87,19 @@ const routes = [
     path: '/settings/emoji',
     name: 'EmojiSettings',
     component: () => import('../views/EmojiSettings.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    path: '/settings/link',
+    name: 'LinkSecuritySettings',
+    component: () => import('../views/LinkSecuritySettings.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
+    // 人机验证：与「访问控制」共用后端 security 设置组，面板拆成两页
+    path: '/settings/verify',
+    name: 'VerifySettings',
+    component: () => import('../views/VerifySettings.vue'),
     meta: { requiresAuth: true }
   }
 ]

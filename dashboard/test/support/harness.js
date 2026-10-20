@@ -23,6 +23,8 @@ export const DASHBOARD_ROUTES = [
 	{ path: '/users', name: 'users', component: { template: '<div />' } },
 	{ path: '/user-comments', name: 'userComments', component: { template: '<div />' } },
 	{ path: '/verify-records', name: 'verifyRecords', component: { template: '<div />' } },
+	// 邮件管理页：侧边栏入口与路由都会用到
+	{ path: '/mails', name: 'mails', component: { template: '<div />' } },
 	{ path: '/settings', name: 'settings', component: { template: '<div />' } },
 	{ path: '/settings/basic', name: 'basic', component: { template: '<div />' } },
 	{ path: '/settings/email', name: 'email', component: { template: '<div />' } },
@@ -31,6 +33,10 @@ export const DASHBOARD_ROUTES = [
 	{ path: '/settings/data', name: 'data', component: { template: '<div />' } },
 	// 表情设置页：Settings.vue 的入口卡片与 EmojiSettings 自身的回退链接都会用到
 	{ path: '/settings/emoji', name: 'emoji', component: { template: '<div />' } },
+	// 链接安全页：Settings.vue 的入口卡片、LinkSecuritySettings 自身的回退链接与「前往邮箱设置」都会用到
+	{ path: '/settings/link', name: 'link', component: { template: '<div />' } },
+	// 人机验证页：Settings.vue 的入口卡片与 VerifySettings 自身的回退链接都会用到
+	{ path: '/settings/verify', name: 'verify', component: { template: '<div />' } },
 ];
 
 /** 创建内存路由并跳到指定路径 */

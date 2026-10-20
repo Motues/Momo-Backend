@@ -89,6 +89,9 @@ const ACCENTS = {
   blue: { ring: 'focus:ring-blue-500', text: 'text-blue-600', soft: 'bg-blue-50/70' },
   emerald: { ring: 'focus:ring-emerald-500', text: 'text-emerald-600', soft: 'bg-emerald-50/70' },
   purple: { ring: 'focus:ring-purple-500', text: 'text-purple-600', soft: 'bg-purple-50/70' },
+  // 各设置页「一个栏目一个色调」用到的强调色（邮件通知 teal / 人机验证 indigo）
+  teal: { ring: 'focus:ring-teal-500', text: 'text-teal-600', soft: 'bg-teal-50/70' },
+  indigo: { ring: 'focus:ring-indigo-500', text: 'text-indigo-600', soft: 'bg-indigo-50/70' },
 };
 
 const accent = computed(() => ACCENTS[props.accent] || ACCENTS.blue);

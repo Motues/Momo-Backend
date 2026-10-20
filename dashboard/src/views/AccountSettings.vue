@@ -13,7 +13,7 @@
 
       <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
         <h2 class="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
-          <i class="fa-solid fa-shield-halved text-blue-500"></i> 修改凭据
+          <i class="fa-solid fa-shield-halved text-amber-500"></i> 修改凭据
         </h2>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
           <div>
@@ -26,14 +26,14 @@
             <label class="block text-sm font-medium text-gray-700 mb-1">新用户名</label>
             <input v-model="passwordForm.new_name" type="text" placeholder="留空则不修改"
               @input="validateForm"
-              :class="['w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm transition-colors',
+              :class="['w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent text-sm transition-colors',
                 passwordForm.new_name && v.newName === 'valid' ? 'border-green-400 bg-green-50/30' : v.newName === 'valid' ? '' : v.newName === 'invalid' ? 'border-red-300 bg-red-50/30' : 'border-gray-300']" />
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">新密码</label>
             <input v-model="passwordForm.new_password" type="password" placeholder="留空则不修改" minlength="4"
               @input="validateForm"
-              :class="['w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm transition-colors',
+              :class="['w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent text-sm transition-colors',
                 v.newPassword === 'valid' ? 'border-green-400 bg-green-50/30' : v.newPassword === 'invalid' ? 'border-red-300 bg-red-50/30' : 'border-gray-300']" />
             <p v-if="v.newPassword === 'invalid'" class="mt-1 text-xs text-red-500 flex items-center gap-1">
               <i class="fa-solid fa-circle-exclamation"></i> 密码长度不能少于 4 位
@@ -43,7 +43,7 @@
             <label class="block text-sm font-medium text-gray-700 mb-1">确认新密码</label>
             <input v-model="passwordForm.confirm_password" type="password" placeholder="再次输入新密码"
               @input="validateForm"
-              :class="['w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm transition-colors',
+              :class="['w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent text-sm transition-colors',
                 v.confirmPassword === 'valid' ? 'border-green-400 bg-green-50/30' : v.confirmPassword === 'invalid' ? 'border-red-300 bg-red-50/30' : 'border-gray-300']" />
             <p v-if="v.confirmPassword === 'invalid'" class="mt-1 text-xs text-red-500 flex items-center gap-1">
               <i class="fa-solid fa-circle-exclamation"></i> 两次输入的密码不一致
@@ -53,7 +53,7 @@
             <label class="block text-sm font-medium text-gray-700 mb-1">当前密码 <span class="text-red-500">*</span></label>
             <input v-model="passwordForm.old_password" type="password" placeholder="输入当前密码以确认修改"
               @input="validateForm"
-              :class="['w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm transition-colors',
+              :class="['w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent text-sm transition-colors',
                 v.oldPassword === 'valid' ? 'border-green-400 bg-green-50/30' : v.oldPassword === 'invalid' ? 'border-red-300 bg-red-50/30' : 'border-gray-300']" />
             <p v-if="v.oldPassword === 'invalid'" class="mt-1 text-xs text-red-500 flex items-center gap-1">
               <i class="fa-solid fa-circle-exclamation"></i> 请输入当前密码

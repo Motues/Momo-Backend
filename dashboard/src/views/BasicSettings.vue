@@ -29,10 +29,48 @@
             <input v-model="form.site_name" type="text"
               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm" />
           </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">管理员邮箱</label>
-            <input v-model="form.admin_email" type="email"
-              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm" />
+        </div>
+
+        <!-- 管理员邮箱列表 -->
+        <div class="mt-5 pt-5 border-t border-gray-100">
+          <label class="block text-sm font-medium text-gray-700 mb-1">管理员邮箱</label>
+          <p class="text-xs text-gray-400 mb-2">
+            命中列表的邮箱即视为博主（免评论冷却、可显示博主标识、可用管理员密钥），最多 {{ ADMIN_EMAIL_MAX }} 个，不区分大小写。
+          </p>
+          <div class="flex flex-wrap gap-2 mb-2 min-h-[28px]" data-test="admin-email-list">
+            <span v-for="(email, index) in adminEmails" :key="email"
+              class="inline-flex items-center gap-1 px-3 py-1 bg-blue-50 border border-blue-200 text-blue-700 rounded-full text-sm">
+              {{ email }}
+              <button @click="removeAdminEmail(index)" class="hover:text-red-500 transition-colors leading-none"
+                data-test="admin-email-remove">
+                <i class="fa-solid fa-xmark"></i>
+              </button>
+            </span>
+            <span v-if="adminEmails.length === 0" class="text-xs text-gray-400 leading-[28px]">未设置管理员邮箱</span>
+          </div>
+          <div class="flex gap-2">
+            <input v-model="newEmail" type="email" placeholder="例如：admin@example.com" @keydown.enter.prevent="addEmail"
+              class="flex-1 md:max-w-md px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              data-test="admin-email-input" />
+            <button @click="addEmail" :disabled="!newEmail.trim()"
+              class="px-4 py-2 bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-50 transition-colors text-sm font-medium whitespace-nowrap"
+              data-test="admin-email-add">
+              添加邮箱
+            </button>
+          </div>
+          <p v-if="emailInputError" class="mt-1 text-xs text-red-500" data-test="admin-email-error">{{ emailInputError }}</p>
+          <p class="text-xs text-gray-400 mt-1">按回车或点「添加」加入列表；重复邮箱（不区分大小写）与非法邮箱会被拒绝。</p>
+
+          <!-- 通知邮箱 -->
+          <div class="mt-4">
+            <label class="block text-sm font-medium text-gray-700 mb-1">邮件通知邮箱</label>
+            <SelectMenu v-model="notifyEmail" class="w-full md:max-w-md" :options="notifyOptions"
+              :disabled="adminEmails.length === 0" placeholder="暂无管理员邮箱" title="通知邮箱"
+              data-test="notify-email" />
+            <p class="text-xs text-gray-400 mt-1" data-test="notify-hint">
+              <template v-if="adminEmails.length === 0">管理员邮箱列表为空，无法选择通知邮箱。</template>
+              <template v-else>新评论通知与「发送测试邮件」都发到这个邮箱，未选择时默认用列表第一个。</template>
+            </p>
           </div>
         </div>
       </section>
@@ -160,6 +198,39 @@
         </div>
       </section>
 
+      <!-- 管理员评论密钥（配置属于后端 security 组，展示在这里） -->
+      <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <h2 class="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+          <i class="fa-solid fa-lock text-blue-500"></i> 管理员评论密钥
+        </h2>
+        <p class="text-sm text-gray-500 mb-4">
+          设置密钥后，博主使用管理员邮箱在前台发表评论时需输入此密钥验证身份，验证通过的评论将直接通过审核。
+        </p>
+        <div class="space-y-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium text-gray-700">启用评论密钥</p>
+              <p class="text-xs text-gray-400 mt-1">开启后前台发表管理员评论时需要输入密钥验证</p>
+            </div>
+            <label class="relative shrink-0 ms-4 inline-flex items-center cursor-pointer">
+              <input type="checkbox" v-model="adminCommentKeyEnabled" class="sr-only peer"
+                data-test="admin-comment-key-enabled">
+              <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+              <span class="ms-3 text-sm font-medium whitespace-nowrap text-gray-700">
+                {{ adminCommentKeyEnabled ? '已启用' : '已禁用' }}
+              </span>
+            </label>
+          </div>
+          <div v-if="adminCommentKeyEnabled">
+            <label class="block text-sm font-medium text-gray-700 mb-1">评论密钥</label>
+            <input v-model="adminCommentKey" type="password" placeholder="输入管理员评论密钥"
+              data-test="admin-comment-key"
+              class="w-full max-w-md px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm" />
+            <p class="text-xs text-gray-400 mt-1">留空表示不修改（读取接口不会回显已保存的密钥）；关闭开关会清除已保存的密钥，重新开启需重新填写</p>
+          </div>
+        </div>
+      </section>
+
       <!-- 自定义占位符 -->
       <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
         <h2 class="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
@@ -194,11 +265,21 @@
 </template>
 
 <script setup>
-import { ref, reactive, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, onBeforeRouteLeave } from 'vue-router'
 import request from '../utils/request'
 import toast from '../utils/toast'
 import AdminLayout from '../components/AdminLayout.vue'
+import SelectMenu from '../components/SelectMenu.vue'
+import {
+  ADMIN_EMAIL_MAX,
+  ADMIN_EMAIL_TOO_MANY,
+  addAdminEmail,
+  isValidEmail,
+  normalizeEmail,
+  parseAdminEmails,
+  resolveNotifyEmail,
+} from '../utils/emails'
 
 const router = useRouter()
 const apiUrl = ref(localStorage.getItem('apiUrl') || window.location.origin)
@@ -211,7 +292,6 @@ let initialSnapshot = ''
 
 const form = reactive({
   site_name: '',
-  admin_email: '',
   comment_auto_approve: 'true',
   // 审核自动化规则：默认全部为 0（不启用），与后端默认值一致 ——
   // 开启「评论自动通过」后不会凭空拦下评论，由管理员按需填写阈值
@@ -231,6 +311,19 @@ const form = reactive({
 const spamKeywords = ref([])
 const newKeyword = ref('')
 
+// 管理员邮箱列表与通知邮箱：同样单独维护，保存时 admin_emails 序列化为 JSON 字符串
+const adminEmails = ref([])
+const notifyEmail = ref('')
+const newEmail = ref('')
+const emailInputError = ref('')
+
+// 管理员评论密钥：配置仍存在后端 security 组（GET type=security 读取），
+// 属于敏感键 —— 读取接口始终返回空串，因此输入框保持为空并提示「留空表示不修改」
+const adminCommentKey = ref('')
+const adminCommentKeyEnabled = ref(false)
+
+const notifyOptions = computed(() => adminEmails.value.map((email) => ({ label: email, value: email })))
+
 const addKeyword = () => {
   const val = newKeyword.value.trim()
   if (val && !spamKeywords.value.includes(val)) {
@@ -243,6 +336,32 @@ const removeKeyword = (index) => {
   spamKeywords.value.splice(index, 1)
 }
 
+const addEmail = () => {
+  if (normalizeEmail(newEmail.value) === '') {
+    emailInputError.value = ''
+    return
+  }
+  const { list, error } = addAdminEmail(adminEmails.value, newEmail.value)
+  emailInputError.value = error
+  if (error) return
+  adminEmails.value = list
+  newEmail.value = ''
+}
+
+const removeAdminEmail = (index) => {
+  adminEmails.value.splice(index, 1)
+  emailInputError.value = ''
+}
+
+// 列表一变就把通知邮箱对齐到列表内：不在列表里（含被删掉）时回落到第一个
+watch(adminEmails, (list) => {
+  if (!list.includes(notifyEmail.value)) notifyEmail.value = list[0] || ''
+}, { deep: true })
+
+watch(newEmail, () => {
+  emailInputError.value = ''
+})
+
 /** 数值归一化：非法输入退回默认值，超出后端上限按上限夹取（后端也会校验） */
 const normalizeNumber = (value, fallback, max) => {
   const parsed = parseInt(value, 10)
@@ -250,9 +369,16 @@ const normalizeNumber = (value, fallback, max) => {
   return String(Math.min(parsed, max))
 }
 
-const takeSnapshot = () => JSON.stringify({ ...form, comment_spam_keywords: [...spamKeywords.value] })
+const takeSnapshot = () => JSON.stringify({
+  ...form,
+  comment_spam_keywords: [...spamKeywords.value],
+  admin_emails: [...adminEmails.value],
+  notify_email: notifyEmail.value,
+  admin_comment_key: adminCommentKey.value,
+  admin_comment_key_enabled: adminCommentKeyEnabled.value,
+})
 
-watch([form, spamKeywords], () => {
+watch([form, spamKeywords, adminEmails, notifyEmail, adminCommentKey, adminCommentKeyEnabled], () => {
   isDirty.value = takeSnapshot() !== initialSnapshot
 }, { deep: true })
 
@@ -277,7 +403,9 @@ const loadSettings = async () => {
   try {
     const res = await request.get('/admin/settings', { params: { type: 'basic' } })
     if (res.code === 200 && res.data) {
-      Object.assign(form, res.data)
+      // 管理员邮箱列表与通知邮箱单独接管：不把原始 JSON 字符串留在 form 里
+      const { admin_emails, notify_email, admin_email, ...rest } = res.data
+      Object.assign(form, rest)
       // 规则阈值：未配置时显示后端默认值（全部为 0 = 不启用），避免「页面显示空」而实际仍在按默认值拦截
       if (res.data.comment_spam_max_links === undefined) form.comment_spam_max_links = '0'
       if (res.data.comment_spam_min_length === undefined) form.comment_spam_min_length = '0'
@@ -288,9 +416,25 @@ const loadSettings = async () => {
       } catch {
         spamKeywords.value = []
       }
+      // admin_emails 为空时回落旧键 admin_email（doc/admin_emails.md 第 4 节）
+      adminEmails.value = parseAdminEmails(admin_emails, admin_email)
+      notifyEmail.value = resolveNotifyEmail(notify_email, adminEmails.value)
+      newEmail.value = ''
+      emailInputError.value = ''
     }
   } catch (e) {
     console.error('Failed to load settings:', e)
+  }
+  try {
+    // 管理员评论密钥属于后端 security 组：额外拉一次，只读这两个键
+    const secRes = await request.get('/admin/settings', { params: { type: 'security' } })
+    if (secRes.code === 200 && secRes.data) {
+      // 敏感键：GET 始终返回 ""，所以这里等于把输入框清空（留空表示不修改）
+      adminCommentKey.value = secRes.data.admin_comment_key || ''
+      adminCommentKeyEnabled.value = secRes.data.admin_comment_key_enabled === 'true'
+    }
+  } catch (e) {
+    console.error('Failed to load security settings:', e)
   }
   initialSnapshot = takeSnapshot()
   isDirty.value = false
@@ -301,6 +445,24 @@ onMounted(() => {
 })
 
 const saveSettings = async () => {
+  // 管理员邮箱：列表非空时至少要有一个合法邮箱；通知邮箱必须命中列表（doc/admin_emails.md 第 7 节）
+  if (adminEmails.value.length > 0 && !adminEmails.value.some(isValidEmail)) {
+    toast.error('请至少填写一个合法的管理员邮箱')
+    return
+  }
+  if (adminEmails.value.length > ADMIN_EMAIL_MAX) {
+    toast.error(ADMIN_EMAIL_TOO_MANY)
+    return
+  }
+  let selected = normalizeEmail(notifyEmail.value)
+  if (adminEmails.value.length === 0) {
+    selected = ''
+  } else if (!adminEmails.value.includes(selected)) {
+    toast.error('通知邮箱必须在管理员邮箱列表中')
+    return
+  }
+  notifyEmail.value = selected
+
   loading.value = true
   saved.value = false
   try {
@@ -311,6 +473,20 @@ const saveSettings = async () => {
       comment_spam_min_length: normalizeNumber(form.comment_spam_min_length, 0, 2000),
       comment_spam_duplicate_window: normalizeNumber(form.comment_spam_duplicate_window, 0, 10080),
       comment_spam_keywords: JSON.stringify(spamKeywords.value),
+      // v3：数组为准；同时写旧键 admin_email（= 通知邮箱）以便旧版本后端/旧快照读到的行为不变
+      admin_emails: JSON.stringify(adminEmails.value),
+      notify_email: selected,
+      admin_email: selected || adminEmails.value[0] || '',
+      // 管理员评论密钥（后端 security 组）：
+      //  - 开关始终提交；
+      //  - 密钥是敏感键（读取接口不回显），因此「开启 + 输入了内容」才提交新值；
+      //  - **关闭开关时提交空串**，与历史行为一致（关闭即清除已保存的密钥，重新开启需重新填写）
+      admin_comment_key_enabled: adminCommentKeyEnabled.value ? 'true' : 'false',
+    }
+    if (adminCommentKeyEnabled.value && adminCommentKey.value) {
+      payload.admin_comment_key = adminCommentKey.value
+    } else if (!adminCommentKeyEnabled.value) {
+      payload.admin_comment_key = ''
     }
     // 把归一化后的阈值写回表单：页面显示与实际落库保持一致
     // （后端也会夹取超限值、把非法值退回默认值）
