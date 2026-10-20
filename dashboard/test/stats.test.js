@@ -23,6 +23,9 @@ import DonutChart from '../src/components/charts/DonutChart.vue';
 import LineAreaChart from '../src/components/charts/LineAreaChart.vue';
 import { createTestRouter, AdminLayoutStub } from './support/harness.js';
 
+const STATS_URL = '/admin/stats/overview';
+const VERIFY_URL = '/admin/verify/overview';
+
 const DEFAULT_DATA = {
 	totalComments: 12,
 	totalUsers: 5,
@@ -35,6 +38,68 @@ const DEFAULT_DATA = {
 	topCommenters: [
 		{ author: '张三', email: 'z@example.com', count: 7, lastCommentDate: '2024-05-06T07:08:09.000Z' },
 	],
+	// —— 数据统计页新增字段 ——
+	windowComments: 9,
+	prevWindowComments: 6,
+	commentsDelta: 50,
+	windowUsers: 4,
+	prevWindowUsers: 3,
+	usersDelta: 33,
+	todayComments: 2,
+	last7DaysComments: 5,
+	topPosts: [
+		{ postSlug: '/posts/hello', count: 8, lastCommentDate: '2024-05-06T07:08:09.000Z' },
+		{ postSlug: '/posts/second', count: 4, lastCommentDate: null },
+	],
+	deviceDistribution: [
+		{ name: '桌面', count: 9 },
+		{ name: '移动', count: 3 },
+	],
+	browserDistribution: [
+		{ name: 'Chrome', count: 11 },
+		{ name: '未知', count: 1 },
+	],
+	osDistribution: [{ name: 'Windows', count: 12 }],
+	latestComments: [
+		{
+			id: 2,
+			author: '李四',
+			email: 'l@example.com',
+			postSlug: '/posts/hello',
+			contentText: '写得很好',
+			status: 'pending',
+			pubDate: '2024-05-07T08:00:00.000Z',
+		},
+		{
+			id: 1,
+			author: '张三',
+			email: 'z@example.com',
+			postSlug: '/posts/second',
+			contentText: '收藏了',
+			status: 'approved',
+			pubDate: '2024-05-06T07:08:09.000Z',
+		},
+	],
+};
+
+const DEFAULT_VERIFY = {
+	range: { days: 30, offset: 0, from: '', to: '', bucket: 'day' },
+	summary: {
+		challenges: 240,
+		challengesDelta: 20,
+		verified: 220,
+		verifiedDelta: 11,
+		failed: 14,
+		failedDelta: -85,
+		avgDurationMs: 5000,
+		avgDurationDelta: -12,
+		passRate: 93.9,
+	},
+	trend: [],
+	geoSupported: false,
+	topCountries: [],
+	topNetworks: [],
+	topReasons: [],
 };
 
 /** 组件内 SVG 的定位器：图表已改为自绘 SVG，不再有 echarts 实例 */
@@ -51,12 +116,19 @@ const hoverPlot = async (wrapper, clientX) => {
 	await wrapper.find(LINE_SVG).trigger('mousemove', { clientX, clientY: 120 });
 };
 
+/** 只统计概览接口的调用（首页还会拉一次人机验证概览） */
+const statsCalls = () => requestMock.get.mock.calls.filter(([url]) => String(url).startsWith(STATS_URL));
+
 let router;
 let pushSpy;
 let wrapper;
 
-const mountStats = async (data = DEFAULT_DATA) => {
-	requestMock.get.mockResolvedValue({ code: 200, data });
+const mountStats = async (data = DEFAULT_DATA, verifyData = DEFAULT_VERIFY) => {
+	requestMock.get.mockImplementation((url) =>
+		String(url).startsWith(VERIFY_URL)
+			? Promise.resolve({ code: 200, data: verifyData })
+			: Promise.resolve({ code: 200, data }),
+	);
 	router = await createTestRouter('/');
 	pushSpy = vi.spyOn(router, 'push');
 	wrapper = mount(Stats, {
@@ -66,7 +138,10 @@ const mountStats = async (data = DEFAULT_DATA) => {
 	return wrapper;
 };
 
-const cardByText = (text) => wrapper.findAll('div.cursor-pointer').find((card) => card.text().includes(text));
+/** 顶部核心指标卡（.stat-card）；其余卡片也含这些文案，必须按类名定位 */
+const cardByText = (text) => wrapper.findAll('.stat-card').find((card) => card.text().includes(text));
+const recentCards = () => wrapper.findAll('.recent-card');
+const distributionPanels = () => wrapper.findAll('.distribution-panel');
 
 beforeEach(() => {
 	localStorage.clear();
@@ -81,9 +156,10 @@ afterEach(() => {
 });
 
 describe('Stats - 数据加载', () => {
-	it('挂载时以默认 7 天范围请求概览接口', async () => {
+	it('挂载时以默认 7 天范围请求概览接口，并同时拉取人机验证概览', async () => {
 		await mountStats();
 		expect(requestMock.get).toHaveBeenCalledWith('/admin/stats/overview?range=7');
+		expect(requestMock.get).toHaveBeenCalledWith('/admin/verify/overview?days=30');
 	});
 
 	it('加载中显示加载动画、不显示统计卡片', async () => {
@@ -136,6 +212,13 @@ describe('Stats - 数据加载', () => {
 		expect(wrapper.text()).toContain('暂无数据');
 	});
 
+	it('新增字段缺失时回落为空数组而不是渲染成 undefined', async () => {
+		await mountStats({ totalComments: 1 });
+		expect(wrapper.findAll('.post-row')).toHaveLength(0);
+		expect(wrapper.findAll('.latest-row')).toHaveLength(0);
+		expect(wrapper.findAll('.distribution-row')).toHaveLength(0);
+	});
+
 	it('响应没有 data 字段时保留默认零值', async () => {
 		requestMock.get.mockResolvedValue({ code: 500, message: 'err' });
 		router = await createTestRouter('/');
@@ -159,13 +242,127 @@ describe('Stats - 数据加载', () => {
 	});
 });
 
-describe('Stats - 热门评论者表格', () => {
+describe('Stats - 核心指标卡', () => {
+	it('评论总数卡片带通过率（已通过 ÷ 已判定）', async () => {
+		await mountStats();
+		expect(cardByText('评论总数').text()).toContain('通过率 66.7%');
+	});
+
+	it('用户卡/文章卡分别显示人均与篇均评论数', async () => {
+		await mountStats();
+		expect(cardByText('评论用户').text()).toContain('人均 2.4 条评论');
+		expect(cardByText('文章数').text()).toContain('篇均 4.0 条评论');
+	});
+
+	it('没有任何已判定评论时通过率显示「—」', async () => {
+		await mountStats({ ...DEFAULT_DATA, statusDistribution: { approved: 0, pending: 0, deleted: 0 } });
+		expect(cardByText('评论总数').text()).toContain('通过率 —');
+	});
+
+	it('没有文章/用户数据时人均与篇均显示「—」', async () => {
+		await mountStats({ totalComments: 0, totalUsers: 0, totalPosts: 0 });
+		expect(cardByText('评论用户').text()).toContain('人均 — 条评论');
+		expect(cardByText('文章数').text()).toContain('篇均 — 条评论');
+	});
+});
+
+describe('Stats - 近况指标与环比', () => {
+	it('渲染今日 / 近 7 天 / 本周期新增 / 本周期活跃用户四项', async () => {
+		await mountStats();
+		const cards = recentCards();
+		expect(cards).toHaveLength(4);
+		expect(cards[0].text()).toContain('今日新增');
+		expect(cards[0].text()).toContain('2');
+		expect(cards[1].text()).toContain('近 7 天新增');
+		expect(cards[1].text()).toContain('日均 0.7 条');
+		expect(cards[2].text()).toContain('本周期新增');
+		expect(cards[2].text()).toContain('9');
+		expect(cards[3].text()).toContain('本周期活跃用户');
+		expect(cards[3].text()).toContain('4');
+	});
+
+	it('本周期新增带环比涨幅与上一周期对照', async () => {
+		await mountStats();
+		const card = recentCards()[2];
+		expect(card.text()).toContain('50%');
+		expect(card.text()).toContain('近 7 天 · 上一周期 6 条');
+		expect(card.find('.fa-arrow-up').exists()).toBe(true);
+	});
+
+	it('环比为负时显示下降箭头', async () => {
+		await mountStats({ ...DEFAULT_DATA, commentsDelta: -25 });
+		const card = recentCards()[2];
+		expect(card.text()).toContain('25%');
+		expect(card.find('.fa-arrow-down').exists()).toBe(true);
+	});
+
+	it('上一周期无数据时显示「暂无可比数据」', async () => {
+		await mountStats({ ...DEFAULT_DATA, commentsDelta: null, usersDelta: null });
+		expect(recentCards()[2].text()).toContain('暂无可比数据');
+		expect(recentCards()[3].text()).toContain('暂无可比数据');
+	});
+
+	it('切换范围后卡片标题里的周期文案随之变化', async () => {
+		await mountStats();
+		await wrapper.findAll('button').find((b) => b.text() === '1个月').trigger('click');
+		await flushPromises();
+		expect(recentCards()[2].text()).toContain('近 30 天');
+	});
+});
+
+describe('Stats - 待审核提醒', () => {
+	it('有待审核评论时置顶提醒并显示占比', async () => {
+		await mountStats();
+		const alert = wrapper.find('.pending-alert');
+		expect(alert.exists()).toBe(true);
+		expect(alert.text()).toContain('有 2 条评论等待审核');
+		expect(alert.text()).toContain('16.7%');
+	});
+
+	it('点击「立即处理」跳转待审核列表', async () => {
+		await mountStats();
+		await wrapper.find('.pending-alert button').trigger('click');
+		expect(pushSpy).toHaveBeenCalledWith('/comments?status=pending');
+	});
+
+	it('没有待审核评论时不显示提醒条', async () => {
+		await mountStats({
+			...DEFAULT_DATA,
+			statusDistribution: { approved: 10, pending: 0, deleted: 2 },
+		});
+		expect(wrapper.find('.pending-alert').exists()).toBe(false);
+	});
+});
+
+describe('Stats - 热门文章', () => {
+	it('渲染文章标识、评论数与最后评论时间', async () => {
+		await mountStats();
+		const rows = wrapper.findAll('.post-row');
+		expect(rows).toHaveLength(2);
+		expect(rows[0].text()).toContain('/posts/hello');
+		expect(rows[0].text()).toContain('8');
+		expect(rows[0].text()).toContain('05/06 15:08');
+	});
+
+	it('缺少最后评论时间时展示 "-"', async () => {
+		await mountStats();
+		expect(wrapper.findAll('.post-row')[1].text()).toContain('-');
+	});
+
+	it('点击文章行跳转到评论管理页并带上文章标识筛选', async () => {
+		await mountStats();
+		await wrapper.findAll('.post-row')[0].trigger('click');
+		expect(pushSpy).toHaveBeenCalledWith({ path: '/comments', query: { slug: '/posts/hello' } });
+	});
+});
+
+describe('Stats - 热门评论者', () => {
 	it('渲染作者、邮箱与评论数', async () => {
 		await mountStats();
-		const text = wrapper.text();
-		expect(text).toContain('张三');
-		expect(text).toContain('z@example.com');
-		expect(text).toContain('7');
+		const row = wrapper.find('.commenter-row');
+		expect(row.text()).toContain('张三');
+		expect(row.text()).toContain('z@example.com');
+		expect(row.text()).toContain('7');
 	});
 
 	it('渲染序号从 1 开始', async () => {
@@ -176,8 +373,9 @@ describe('Stats - 热门评论者表格', () => {
 				{ author: 'B', email: 'b@x.com', count: 1, lastCommentDate: '2024-05-06T00:00:00.000Z' },
 			],
 		});
-		const firstCell = wrapper.findAll('tbody tr')[0].find('td');
-		expect(firstCell.text()).toBe('1');
+		const rows = wrapper.findAll('.commenter-row');
+		expect(rows[0].find('span').text()).toBe('1');
+		expect(rows[1].find('span').text()).toBe('2');
 	});
 
 	it('缺少最后评论时间时展示 "-"', async () => {
@@ -185,21 +383,113 @@ describe('Stats - 热门评论者表格', () => {
 			...DEFAULT_DATA,
 			topCommenters: [{ author: 'A', email: 'a@x.com', count: 1, lastCommentDate: null }],
 		});
-		expect(wrapper.find('tbody tr').text()).toContain('-');
+		expect(wrapper.find('.commenter-row').text()).toContain('-');
 	});
 
 	it('点击评论者行跳转到用户评论页并带查询参数', async () => {
 		await mountStats();
-		await wrapper.find('tbody tr').trigger('click');
+		await wrapper.find('.commenter-row').trigger('click');
 		expect(pushSpy).toHaveBeenCalledWith({
 			path: '/user-comments',
 			query: { author: '张三', email: 'z@example.com' },
 		});
 	});
+});
 
-	it('表格使用自适应列宽的 data-table 样式', async () => {
+describe('Stats - 最新评论动态', () => {
+	it('渲染作者、内容、状态与文章标识', async () => {
 		await mountStats();
-		expect(wrapper.find('table').classes()).toContain('data-table');
+		const rows = wrapper.findAll('.latest-row');
+		expect(rows).toHaveLength(2);
+		expect(rows[0].text()).toContain('李四');
+		expect(rows[0].text()).toContain('写得很好');
+		expect(rows[0].text()).toContain('待审核');
+		expect(rows[0].text()).toContain('/posts/hello');
+		expect(rows[1].text()).toContain('已通过');
+	});
+
+	it('点击动态跳转到该文章的评论列表', async () => {
+		await mountStats();
+		await wrapper.findAll('.latest-row')[1].trigger('click');
+		expect(pushSpy).toHaveBeenCalledWith({ path: '/comments', query: { slug: '/posts/second' } });
+	});
+});
+
+describe('Stats - 客户端分布', () => {
+	it('渲染设备 / 浏览器 / 操作系统三块分布与占比', async () => {
+		await mountStats();
+		const panels = distributionPanels();
+		expect(panels).toHaveLength(3);
+		expect(panels[0].text()).toContain('设备分布');
+		expect(panels[0].text()).toContain('桌面');
+		// 9 / 12 = 75%
+		expect(panels[0].text()).toContain('75%');
+		expect(panels[1].text()).toContain('浏览器分布');
+		expect(panels[1].text()).toContain('Chrome');
+		expect(panels[2].text()).toContain('操作系统分布');
+		expect(panels[2].text()).toContain('Windows');
+	});
+
+	it('Top 5 之外的长尾合并成「其他」', async () => {
+		await mountStats({ ...DEFAULT_DATA, browserDistribution: [{ name: 'Chrome', count: 8 }] });
+		const browserPanel = distributionPanels()[1];
+		expect(browserPanel.text()).toContain('其他');
+		// 12 - 8 = 4
+		expect(browserPanel.text()).toContain('4 · 33.3%');
+	});
+
+	it('没有长尾时不显示「其他」', async () => {
+		await mountStats({ ...DEFAULT_DATA, browserDistribution: [{ name: 'Chrome', count: 12 }] });
+		expect(distributionPanels()[1].text()).not.toContain('其他');
+	});
+
+	it('分布为空时显示暂无数据', async () => {
+		await mountStats({
+			...DEFAULT_DATA,
+			deviceDistribution: [],
+			browserDistribution: [],
+			osDistribution: [],
+		});
+		distributionPanels().forEach((panel) => expect(panel.text()).toContain('暂无数据'));
+	});
+
+	it('评论总数为 0 时占比按 0% 处理而不出现 NaN', async () => {
+		await mountStats({ ...DEFAULT_DATA, totalComments: 0 });
+		expect(wrapper.text()).not.toContain('NaN');
+	});
+});
+
+describe('Stats - 人机验证概览', () => {
+	it('渲染通过率、失败数与平均耗时', async () => {
+		await mountStats();
+		const text = wrapper.text();
+		expect(text).toContain('人机验证概览');
+		expect(text).toContain('93.9%');
+		expect(text).toContain('14');
+		expect(text).toContain('5.0 s');
+		expect(text).toContain('较上一周期 ↓ 85%');
+	});
+
+	it('接口失败时静默隐藏整块，且不影响其它统计', async () => {
+		requestMock.get.mockImplementation((url) =>
+			String(url).startsWith(VERIFY_URL)
+				? Promise.reject(new Error('boom'))
+				: Promise.resolve({ code: 200, data: DEFAULT_DATA }),
+		);
+		router = await createTestRouter('/');
+		wrapper = mount(Stats, {
+			global: { plugins: [router], stubs: { AdminLayout: AdminLayoutStub } },
+		});
+		await flushPromises();
+		expect(wrapper.text()).not.toContain('人机验证概览');
+		expect(wrapper.text()).toContain('评论总数');
+		expect(toastMock.error).not.toHaveBeenCalled();
+	});
+
+	it('后端未返回 summary 时不渲染指标但也不报错', async () => {
+		await mountStats(DEFAULT_DATA, { trend: [] });
+		expect(wrapper.text()).toContain('人机验证概览');
+		expect(wrapper.text()).toContain('近 30 天');
 	});
 });
 
@@ -273,6 +563,14 @@ describe('Stats - 趋势范围切换', () => {
 		await wrapper.findAll('button').find((b) => b.text() === '14天').trigger('click');
 		await flushPromises();
 		expect(toastMock.error).not.toHaveBeenCalled();
+	});
+
+	it('切换范围只重新请求概览接口，不重复请求人机验证概览', async () => {
+		await mountStats();
+		await wrapper.findAll('button').find((b) => b.text() === '14天').trigger('click');
+		await flushPromises();
+		const verifyCalls = requestMock.get.mock.calls.filter(([url]) => String(url).startsWith(VERIFY_URL));
+		expect(verifyCalls).toHaveLength(1);
 	});
 });
 
@@ -389,11 +687,14 @@ describe('Stats - 图表渲染', () => {
 });
 
 describe('Stats - 布局交互', () => {
-	it('刷新事件重新请求数据', async () => {
+	it('刷新事件同时重新请求概览与人机验证概览', async () => {
 		await mountStats();
+		expect(statsCalls()).toHaveLength(1);
 		wrapper.findComponent({ name: 'AdminLayout' }).vm.$emit('refresh');
 		await flushPromises();
-		expect(requestMock.get).toHaveBeenCalledTimes(2);
+		expect(statsCalls()).toHaveLength(2);
+		const verifyCalls = requestMock.get.mock.calls.filter(([url]) => String(url).startsWith(VERIFY_URL));
+		expect(verifyCalls).toHaveLength(2);
 	});
 
 	it('登出清除 token 并跳转登录页', async () => {

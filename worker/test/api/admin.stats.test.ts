@@ -3,7 +3,7 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { adminToken, api, bearer } from '../helpers/http';
-import { createSchema, seedComment, seedSettings, seedVerification, testEnv } from '../helpers/db';
+import { createSchema, seedComment, seedDormantNotice, seedSettings, seedTrustedLink, seedVerification, testEnv } from '../helpers/db';
 
 let token: string;
 
@@ -288,8 +288,354 @@ describe('GET /admin/stats/users', () => {
 	});
 });
 
-describe('GET /admin/stats/users/comments', () => {
-	it('缺少 author 或 email 返回 400', async () => {
+/**
+ * 用户列表的「网站链接是否休眠」列（新增 `url` + `urlDormant`，与 Node 版同口径）。
+ *
+ * 身份口径与公开评论区的 `urlDormant` 完全一致（见 doc/link_security.md 第 2 节）：
+ * 按归一化邮箱识别同一个人、跨文章统计最后一条评论、严格大于 N 天、
+ * `rejected` / `deleted` 不计入「来过」、网址取「最近一次非空」。
+ */
+describe('GET /admin/stats/users — 网站链接是否休眠', () => {
+	const DAY = 24 * 3600 * 1000;
+
+	const userOf = (body: any, email: string) =>
+		body.data.users.find((u: any) => u.email.trim().toLowerCase() === email);
+
+	it('从来没有留过网址：url 为空串、urlDormant 为 false', async () => {
+		await seedComment({ author: '甲', email: 'a@x.com', url: null, pub_date: Date.now() - 90 * DAY });
+		await seedSettings({ link_security_enabled: 'true' });
+
+		const res = await api('/admin/stats/users', { headers: authed() });
+		const user = userOf(res.body, 'a@x.com');
+		expect(user.url).toBe('');
+		expect(user.urlDormant).toBe(false);
+	});
+
+	it('功能关闭：不标记休眠，但仍然下发用户留过的网址', async () => {
+		await seedComment({
+			author: '甲',
+			email: 'a@x.com',
+			url: 'https://a.example.com',
+			pub_date: Date.now() - 90 * DAY,
+		});
+
+		const res = await api('/admin/stats/users', { headers: authed() });
+		const user = userOf(res.body, 'a@x.com');
+		expect(user.url).toBe('https://a.example.com');
+		expect(user.urlDormant).toBe(false);
+	});
+
+	it('超过 N 天没来评论：标记为休眠', async () => {
+		await seedSettings({ link_security_enabled: 'true', link_dormant_days: '30' });
+		await seedComment({
+			author: '甲',
+			email: 'a@x.com',
+			url: 'https://a.example.com',
+			pub_date: Date.now() - 31 * DAY,
+		});
+
+		const res = await api('/admin/stats/users', { headers: authed() });
+		const user = userOf(res.body, 'a@x.com');
+		expect(user.url).toBe('https://a.example.com');
+		expect(user.urlDormant).toBe(true);
+	});
+
+	it('刚好 N 天不算休眠（严格大于）', async () => {
+		await seedSettings({ link_security_enabled: 'true', link_dormant_days: '30' });
+		await seedComment({
+			author: '甲',
+			email: 'a@x.com',
+			url: 'https://a.example.com',
+			pub_date: Date.now() - 30 * DAY + 60000,
+		});
+
+		const res = await api('/admin/stats/users', { headers: authed() });
+		expect(userOf(res.body, 'a@x.com').urlDormant).toBe(false);
+	});
+
+	it('以最新链接为准：较晚的评论带新网址时取新网址', async () => {
+		await seedSettings({ link_security_enabled: 'true', link_dormant_days: '30' });
+		await seedComment({
+			author: '甲',
+			email: 'a@x.com',
+			url: 'https://old.example.com',
+			pub_date: Date.now() - 60 * DAY,
+		});
+		await seedComment({
+			author: '甲',
+			email: 'a@x.com',
+			url: 'https://new.example.com',
+			pub_date: Date.now() - 31 * DAY,
+		});
+
+		const res = await api('/admin/stats/users', { headers: authed() });
+		const user = userOf(res.body, 'a@x.com');
+		expect(user.url).toBe('https://new.example.com');
+		expect(user.urlDormant).toBe(true);
+	});
+
+	it('较晚的评论没有网址时，保留最近一次非空网址', async () => {
+		await seedSettings({ link_security_enabled: 'true' });
+		await seedComment({
+			author: '甲',
+			email: 'a@x.com',
+			url: 'https://old.example.com',
+			pub_date: Date.now() - 60 * DAY,
+		});
+		await seedComment({ author: '甲', email: 'a@x.com', url: null, pub_date: Date.now() - 60000 });
+
+		const res = await api('/admin/stats/users', { headers: authed() });
+		const user = userOf(res.body, 'a@x.com');
+		expect(user.url).toBe('https://old.example.com');
+		// 刚刚评论过 → 不休眠
+		expect(user.urlDormant).toBe(false);
+	});
+
+	it('身份按邮箱归一化：换昵称后再次评论同样解除休眠', async () => {
+		await seedSettings({ link_security_enabled: 'true', link_dormant_days: '30' });
+		await seedComment({
+			author: '甲',
+			email: 'A@X.com',
+			url: 'https://a.example.com',
+			pub_date: Date.now() - 90 * DAY,
+		});
+		await seedComment({
+			author: '甲（改名）',
+			email: ' a@x.com ',
+			url: 'https://a.example.com',
+			pub_date: Date.now() - DAY,
+		});
+
+		const res = await api('/admin/stats/users', { headers: authed() });
+		const renamed = userOf(res.body, 'a@x.com');
+		expect(renamed.urlDormant).toBe(false);
+		expect(renamed.url).toBe('https://a.example.com');
+	});
+
+	it('rejected / deleted 的评论不算「来过」', async () => {
+		await seedSettings({ link_security_enabled: 'true', link_dormant_days: '30' });
+		await seedComment({
+			author: '甲',
+			email: 'a@x.com',
+			url: 'https://a.example.com',
+			pub_date: Date.now() - 90 * DAY,
+			status: 'approved',
+		});
+		await seedComment({
+			author: '甲',
+			email: 'a@x.com',
+			url: 'https://a.example.com',
+			pub_date: Date.now() - 60000,
+			status: 'deleted',
+		});
+
+		const res = await api('/admin/stats/users', { headers: authed() });
+		expect(userOf(res.body, 'a@x.com').urlDormant).toBe(true);
+	});
+
+	it('天数脏值按默认 30 天处理', async () => {
+		await seedSettings({ link_security_enabled: 'true', link_dormant_days: 'abc' });
+		await seedComment({
+			author: '甲',
+			email: 'a@x.com',
+			url: 'https://a.example.com',
+			pub_date: Date.now() - 31 * DAY,
+		});
+		await seedComment({
+			author: '乙',
+			email: 'b@x.com',
+			url: 'https://b.example.com',
+			pub_date: Date.now() - 10 * DAY,
+		});
+
+		const res = await api('/admin/stats/users', { headers: authed() });
+		expect(userOf(res.body, 'a@x.com').urlDormant).toBe(true);
+		expect(userOf(res.body, 'b@x.com').urlDormant).toBe(false);
+	});
+});
+
+/**
+ * `linkStatus` 筛选（任务规范 §2 / §7）与 `urlTrustedSource`（§5）。
+ *
+ * 四个用户的形态：
+ *  - Alice（a@x.com）：90 天前评论 + 有链接 → 休眠；
+ *  - Bob（b@x.com）：90 天前评论 + 有链接 + 有效人工确认 → trusted（不休眠）；
+ *  - Carol（c@x.com）：90 天前评论、没有链接 → none；
+ *  - Dave（d@x.com）：刚刚评论 + 有链接 → normal。
+ */
+describe('GET /admin/stats/users — linkStatus 筛选与 urlTrustedSource', () => {
+	const DAY = 24 * 3600 * 1000;
+
+	const userOf = (body: any, email: string) =>
+		body.data.users.find((u: any) => u.email.trim().toLowerCase() === email);
+	const emailsOf = (body: any) =>
+		body.data.users.map((u: any) => String(u.email).trim().toLowerCase()).sort();
+
+	async function seedUsers() {
+		await seedSettings({ link_security_enabled: 'true', link_dormant_days: '30' });
+		await seedComment({
+			author: 'Alice',
+			email: 'a@x.com',
+			url: 'https://a.example.com',
+			pub_date: Date.now() - 90 * DAY,
+		});
+		await seedComment({
+			author: 'Bob',
+			email: 'b@x.com',
+			url: 'https://b.example.com',
+			pub_date: Date.now() - 90 * DAY,
+		});
+		await seedTrustedLink({ email: 'b@x.com', url: 'https://b.example.com' });
+		await seedComment({
+			author: 'Carol',
+			email: 'c@x.com',
+			url: null,
+			pub_date: Date.now() - 90 * DAY,
+		});
+		await seedComment({
+			author: 'Dave',
+			email: 'd@x.com',
+			url: 'https://d.example.com',
+			pub_date: Date.now() - 60000,
+		});
+	}
+
+	it('dormant：只返回有链接且被判定为休眠的用户', async () => {
+		await seedUsers();
+		const res = await api('/admin/stats/users?linkStatus=dormant', { headers: authed() });
+		expect(emailsOf(res.body)).toEqual(['a@x.com']);
+		expect(userOf(res.body, 'a@x.com').urlDormant).toBe(true);
+	});
+
+	it('trusted：只返回有未过期人工确认的用户', async () => {
+		await seedUsers();
+		const res = await api('/admin/stats/users?linkStatus=trusted', { headers: authed() });
+		expect(emailsOf(res.body)).toEqual(['b@x.com']);
+		expect(userOf(res.body, 'b@x.com').urlDormant).toBe(false);
+		expect(userOf(res.body, 'b@x.com').urlTrustedUntil).not.toBe('');
+	});
+
+	it('normal：有链接、既不休眠也没有处于人工确认中', async () => {
+		await seedUsers();
+		const res = await api('/admin/stats/users?linkStatus=normal', { headers: authed() });
+		expect(emailsOf(res.body)).toEqual(['d@x.com']);
+	});
+
+	it('none：没有留下过链接的用户', async () => {
+		await seedUsers();
+		const res = await api('/admin/stats/users?linkStatus=none', { headers: authed() });
+		expect(emailsOf(res.body)).toEqual(['c@x.com']);
+		expect(userOf(res.body, 'c@x.com').url).toBe('');
+	});
+
+	it('无法识别的取值按 all 处理（与 verified=maybe 的宽容口径一致）', async () => {
+		await seedUsers();
+		for (const value of ['maybe', '', '  ', 'DORMANT2', '1']) {
+			const res = await api(`/admin/stats/users?linkStatus=${encodeURIComponent(value)}`, {
+				headers: authed(),
+			});
+			expect(emailsOf(res.body), value).toEqual(['a@x.com', 'b@x.com', 'c@x.com', 'd@x.com']);
+		}
+		// 大小写不敏感
+		const upper = await api('/admin/stats/users?linkStatus=DORMANT', { headers: authed() });
+		expect(emailsOf(upper.body)).toEqual(['a@x.com']);
+	});
+
+	it('过滤发生在分页之前：totalPage 反映过滤后的集合（2 个休眠 / limit=1 → 2 页）', async () => {
+		await seedUsers();
+		// Alice 之外再造一个休眠用户，共 2 个休眠
+		await seedComment({
+			author: 'Eve',
+			email: 'e@x.com',
+			url: 'https://e.example.com',
+			pub_date: Date.now() - 90 * DAY,
+		});
+
+		const res = await api('/admin/stats/users?linkStatus=dormant&limit=1', { headers: authed() });
+		expect(res.body.data.users).toHaveLength(1);
+		expect(res.body.data.pagination).toMatchObject({ page: 1, limit: 1, totalPage: 2 });
+
+		const second = await api('/admin/stats/users?linkStatus=dormant&limit=1&page=2', {
+			headers: authed(),
+		});
+		expect(second.body.data.users).toHaveLength(1);
+		const both = [...emailsOf(res.body), ...emailsOf(second.body)].sort();
+		expect(both).toEqual(['a@x.com', 'e@x.com']);
+	});
+
+	it('与 search / verified 组合', async () => {
+		await seedUsers();
+		await seedVerification({ email: 'a@x.com', verified: 1 });
+
+		const bySearch = await api('/admin/stats/users?linkStatus=dormant&search=alice', {
+			headers: authed(),
+		});
+		expect(emailsOf(bySearch.body)).toEqual(['a@x.com']);
+
+		const noMatch = await api('/admin/stats/users?linkStatus=dormant&search=bob', {
+			headers: authed(),
+		});
+		expect(emailsOf(noMatch.body)).toEqual([]);
+		expect(noMatch.body.data.pagination.totalPage).toBe(0);
+
+		const verifiedTrue = await api('/admin/stats/users?linkStatus=dormant&verified=true', {
+			headers: authed(),
+		});
+		expect(emailsOf(verifiedTrue.body)).toEqual(['a@x.com']);
+
+		const verifiedFalse = await api('/admin/stats/users?linkStatus=dormant&verified=false', {
+			headers: authed(),
+		});
+		expect(emailsOf(verifiedFalse.body)).toEqual([]);
+	});
+
+	it('功能关闭时 dormant 为空集，none / normal / trusted 仍按各自语义工作', async () => {
+		await seedUsers();
+		await testEnv.MOMO_DB.prepare("UPDATE Settings SET value = 'false' WHERE key = 'link_security_enabled'").run();
+
+		const dormant = await api('/admin/stats/users?linkStatus=dormant', { headers: authed() });
+		expect(emailsOf(dormant.body)).toEqual([]);
+
+		// 关闭时 Alice 不再休眠 → 落到 normal（trusted 与开关无关）
+		const normal = await api('/admin/stats/users?linkStatus=normal', { headers: authed() });
+		expect(emailsOf(normal.body)).toEqual(['a@x.com', 'd@x.com']);
+
+		const none = await api('/admin/stats/users?linkStatus=none', { headers: authed() });
+		expect(emailsOf(none.body)).toEqual(['c@x.com']);
+
+		const trusted = await api('/admin/stats/users?linkStatus=trusted', { headers: authed() });
+		expect(emailsOf(trusted.body)).toEqual(['b@x.com']);
+	});
+
+	it('urlTrustedSource：管理员确认 → admin，无确认 → 空串', async () => {
+		await seedUsers();
+		const res = await api('/admin/stats/users', { headers: authed() });
+		expect(userOf(res.body, 'b@x.com').urlTrustedSource).toBe('admin');
+		expect(userOf(res.body, 'a@x.com').urlTrustedSource).toBe('');
+		expect(userOf(res.body, 'c@x.com').urlTrustedSource).toBe('');
+	});
+
+	it('urlTrustedSource：本人从提醒页确认 → self', async () => {
+		await seedUsers();
+		await seedDormantNotice({
+			email: 'a@x.com',
+			url: 'https://a.example.com',
+			last_comment_at: Date.now() - 90 * DAY,
+			token: 'tok-self',
+		});
+
+		const confirm = await api('/api/link-dormant/confirm?token=tok-self', { method: 'POST' });
+		expect(confirm.status).toBe(200);
+		expect(String(confirm.body)).toContain('确认成功！');
+
+		const res = await api('/admin/stats/users', { headers: authed() });
+		expect(userOf(res.body, 'a@x.com').urlTrustedSource).toBe('self');
+		expect(userOf(res.body, 'a@x.com').urlDormant).toBe(false);
+		expect(userOf(res.body, 'a@x.com').urlTrustedUntil).not.toBe('');
+	});
+});
+
+describe('GET /admin/stats/users/comments', () => {	it('缺少 author 或 email 返回 400', async () => {
 		expect((await api('/admin/stats/users/comments', { headers: authed() })).status).toBe(400);
 		expect((await api('/admin/stats/users/comments?author=A', { headers: authed() })).status).toBe(400);
 		expect((await api('/admin/stats/users/comments?email=a@example.com', { headers: authed() })).status).toBe(400);
@@ -342,5 +688,305 @@ describe('GET /admin/stats/users/comments', () => {
 		const res = await api('/admin/stats/users', { headers: authed() });
 		expect(res.body.data.users).toEqual([]);
 		expect(await testEnv.MOMO_DB.prepare('SELECT COUNT(*) as c FROM Comment').first()).toEqual({ c: 0 });
+	});
+});
+
+/**
+ * 数据统计页首页扩展（窗口指标 / 热门文章 / 客户端分布 / 最新评论）：
+ * 全部是**新增字段**，不改变既有字段的口径与格式。
+ * 归一化规则本身由 test/unit/vectors.stats-distribution-v1.test.ts 的固定向量钉死，
+ * 这里只验证接口层的聚合、排序、截断与序列化。
+ */
+describe('GET /admin/stats/overview — 新增字段：空库', () => {
+	it('空库时所有列表为 []（不是 null）、窗口指标为 0、环比为 null', async () => {
+		const res = await api('/admin/stats/overview', { headers: authed() });
+		expect(res.status).toBe(200);
+		const d = res.body.data;
+
+		expect(d.topPosts).toEqual([]);
+		expect(d.deviceDistribution).toEqual([]);
+		expect(d.browserDistribution).toEqual([]);
+		expect(d.osDistribution).toEqual([]);
+		expect(d.latestComments).toEqual([]);
+
+		expect(d.windowComments).toBe(0);
+		expect(d.prevWindowComments).toBe(0);
+		expect(d.commentsDelta).toBeNull();
+		expect(d.windowUsers).toBe(0);
+		expect(d.prevWindowUsers).toBe(0);
+		expect(d.usersDelta).toBeNull();
+		expect(d.todayComments).toBe(0);
+		expect(d.last7DaysComments).toBe(0);
+	});
+});
+
+describe('GET /admin/stats/overview — 热门文章 Top 5', () => {
+	it('按评论数倒序、并列按 post_slug 升序、最多 5 条，lastCommentDate 为 ISO', async () => {
+		// count：a=2 b=2 c=d=e=f=1；并列的 1 条组按 slug 升序取前三个
+		await seedComment({ post_slug: '/p/a', pub_date: 1730000000000 });
+		await seedComment({ post_slug: '/p/a', pub_date: 1730000000001 });
+		await seedComment({ post_slug: '/p/b', pub_date: 1730000000002 });
+		await seedComment({ post_slug: '/p/b', pub_date: 1730000000003 });
+		for (const slug of ['/p/c', '/p/d', '/p/e', '/p/f']) {
+			await seedComment({ post_slug: slug, pub_date: 1730000000004 });
+		}
+
+		const res = await api('/admin/stats/overview', { headers: authed() });
+		const topPosts = res.body.data.topPosts;
+		expect(topPosts.map((p: any) => p.postSlug)).toEqual(['/p/a', '/p/b', '/p/c', '/p/d', '/p/e']);
+		expect(topPosts[0]).toEqual({
+			postSlug: '/p/a',
+			count: 2,
+			lastCommentDate: new Date(1730000000001).toISOString(),
+		});
+		expect(topPosts[2]).toEqual({
+			postSlug: '/p/c',
+			count: 1,
+			lastCommentDate: new Date(1730000000004).toISOString(),
+		});
+	});
+});
+
+describe('GET /admin/stats/overview — 浏览器分布', () => {
+	it('归一化版本号 → 同名合并 → 数量降序/名称升序 → 截断 5 档', async () => {
+		const browsers = [
+			'Chrome 142.0.0.0',
+			'Chrome 145.0.0.0',
+			'  Chrome  ', // 两端空白，仍归入 Chrome
+			'Edge 147.0.0.0',
+			'Edge 147.0.0.0',
+			'Safari 17.0',
+			'Safari 17.0',
+			'Firefox 121.0',
+			'Mobile Chrome 122.0.0.0',
+			'Opera 9.80',
+			'Mobile Safari 17.0',
+		];
+		for (const browser of browsers) {
+			await seedComment({ browser });
+		}
+
+		const res = await api('/admin/stats/overview', { headers: authed() });
+		// Opera（1）与 Mobile Safari（1）因升序排在后面被截掉
+		expect(res.body.data.browserDistribution).toEqual([
+			{ name: 'Chrome', count: 3 },
+			{ name: 'Edge', count: 2 },
+			{ name: 'Safari', count: 2 },
+			{ name: 'Firefox', count: 1 },
+			{ name: 'Mobile Chrome', count: 1 },
+		]);
+	});
+});
+
+describe('GET /admin/stats/overview — 操作系统分布', () => {
+	it('归一化合并后按数量降序/名称升序取 5 档', async () => {
+		const systems = [
+			'Windows 10',
+			'Windows 10.0',
+			'Windows 11',
+			'macOS 10.15.7',
+			'iOS 17.7.2',
+			'Android 10',
+			'Android 12',
+			'HarmonyOS ', // 尾部空白
+			'Chrome OS 120.0.0.0',
+		];
+		for (const os of systems) {
+			await seedComment({ os });
+		}
+
+		const res = await api('/admin/stats/overview', { headers: authed() });
+		// macOS（1）被截掉：Chrome OS < HarmonyOS < iOS
+		expect(res.body.data.osDistribution).toEqual([
+			{ name: 'Windows', count: 3 },
+			{ name: 'Android', count: 2 },
+			{ name: 'Chrome OS', count: 1 },
+			{ name: 'HarmonyOS', count: 1 },
+			{ name: 'iOS', count: 1 },
+		]);
+	});
+});
+
+describe('GET /admin/stats/overview — 设备分布', () => {
+	it('空值算桌面、移动关键词优先于桌面关键词、机型码算移动、平板单列', async () => {
+		const devices: (string | null)[] = [
+			null, // ua-parser 对桌面端不下发 device
+			'',
+			'Desktop',
+			'iPhone',
+			'Windows Phone', // 同时含 windows 与 phone，必须判为移动
+			'ABR-AL60', // 只剩机型码
+			'iPad',
+			'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
+		];
+		for (const device of devices) {
+			await seedComment({ device });
+		}
+
+		const res = await api('/admin/stats/overview', { headers: authed() });
+		// 桌面(3) 与 移动(3) 并列：按名称升序 桌面(U+684C) < 移动(U+79FB)
+		expect(res.body.data.deviceDistribution).toEqual([
+			{ name: '桌面', count: 3 },
+			{ name: '移动', count: 3 },
+			{ name: '平板', count: 1 },
+			{ name: '未知', count: 1 },
+		]);
+	});
+
+	it('历史脏数据：整条原始 UA 三列都归入「未知」', async () => {
+		const ua =
+			'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
+		await seedComment({ browser: ua, os: ua, device: ua });
+		await seedComment({ browser: ua, os: ua, device: ua });
+
+		const res = await api('/admin/stats/overview', { headers: authed() });
+		expect(res.body.data.browserDistribution).toEqual([{ name: '未知', count: 2 }]);
+		expect(res.body.data.osDistribution).toEqual([{ name: '未知', count: 2 }]);
+		expect(res.body.data.deviceDistribution).toEqual([{ name: '未知', count: 2 }]);
+	});
+});
+
+describe('GET /admin/stats/overview — 时间窗口指标', () => {
+	const DAY = 24 * 3600 * 1000;
+
+	it('range=7：窗口与上一个等长窗口的评论数/活跃用户数与环比', async () => {
+		const now = Date.now();
+		// 当前窗口：今天起往前 7 天
+		await seedComment({ author: 'A', email: 'a@example.com', pub_date: now - DAY });
+		await seedComment({ author: 'B', email: 'b@example.com', pub_date: now - 2 * DAY });
+		// 上一个窗口：再往前 7 天
+		await seedComment({ author: 'C', email: 'c@example.com', pub_date: now - 8 * DAY });
+		// 两个窗口之外
+		await seedComment({ author: 'D', email: 'd@example.com', pub_date: now - 30 * DAY });
+
+		const res = await api('/admin/stats/overview?range=7', { headers: authed() });
+		const d = res.body.data;
+		expect(d.windowComments).toBe(2);
+		expect(d.prevWindowComments).toBe(1);
+		expect(d.commentsDelta).toBe(100);
+		expect(d.windowUsers).toBe(2);
+		expect(d.prevWindowUsers).toBe(1);
+		expect(d.usersDelta).toBe(100);
+	});
+
+	it('上一个窗口为 0 时环比为 null（不是 0 也不是 100）', async () => {
+		await seedComment({ pub_date: Date.now() - 24 * 3600 * 1000 });
+		const d = (await api('/admin/stats/overview?range=7', { headers: authed() })).body.data;
+		expect(d.windowComments).toBe(1);
+		expect(d.prevWindowComments).toBe(0);
+		expect(d.commentsDelta).toBeNull();
+		expect(d.windowUsers).toBe(1);
+		expect(d.prevWindowUsers).toBe(0);
+		expect(d.usersDelta).toBeNull();
+	});
+
+	it('环比按下取整（四舍五入）', async () => {
+		const now = Date.now();
+		for (let i = 0; i < 3; i++) {
+			await seedComment({ author: `P${i}`, email: `p${i}@example.com`, pub_date: now - 8 * DAY });
+		}
+		await seedComment({ author: 'N', email: 'n@example.com', pub_date: now - DAY });
+		const d = (await api('/admin/stats/overview?range=7', { headers: authed() })).body.data;
+		// (1 - 3) / 3 * 100 = -66.67 → -67
+		expect(d.commentsDelta).toBe(-67);
+	});
+
+	it('range=1 的窗口只有今天，上一个窗口是昨天', async () => {
+		const now = new Date();
+		const startOfToday = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+		await seedComment({ pub_date: Date.now() });
+		await seedComment({ pub_date: startOfToday - 3600 * 1000 });
+		const d = (await api('/admin/stats/overview?range=1', { headers: authed() })).body.data;
+		expect(d.windowComments).toBe(1);
+		expect(d.prevWindowComments).toBe(1);
+	});
+
+	it('range=all：窗口 = 最近 12 个自然月，且等于 recentComments 之和；上一窗口 = 再往前 12 个月', async () => {
+		const now = new Date();
+		const sixMonthsAgo = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 6, 15);
+		const thirteenMonthsAgo = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 13, 15);
+		await seedComment({ pub_date: Date.now() });
+		await seedComment({ pub_date: sixMonthsAgo });
+		await seedComment({ pub_date: thirteenMonthsAgo });
+
+		const d = (await api('/admin/stats/overview?range=all', { headers: authed() })).body.data;
+		expect(d.windowComments).toBe(2);
+		expect(d.windowComments).toBe(
+			d.recentComments.reduce((sum: number, row: any) => sum + row.count, 0)
+		);
+		expect(d.prevWindowComments).toBe(1);
+		// range=0 与 range=all 同口径
+		const zero = (await api('/admin/stats/overview?range=0', { headers: authed() })).body.data;
+		expect(zero.windowComments).toBe(2);
+		expect(zero.prevWindowComments).toBe(1);
+	});
+});
+
+describe('GET /admin/stats/overview — 今日与最近 7 日', () => {
+	const DAY = 24 * 3600 * 1000;
+
+	it('todayComments 只算今天（UTC），last7DaysComments 含今天共 7 个 UTC 日', async () => {
+		const now = Date.now();
+		await seedComment({ pub_date: now });
+		await seedComment({ pub_date: now });
+		await seedComment({ pub_date: now - DAY });
+		await seedComment({ pub_date: now - 6 * DAY });
+		await seedComment({ pub_date: now - 7 * DAY }); // 第 8 个 UTC 日之前，不计入
+
+		const d = (await api('/admin/stats/overview', { headers: authed() })).body.data;
+		expect(d.todayComments).toBe(2);
+		expect(d.last7DaysComments).toBe(4);
+	});
+});
+
+describe('GET /admin/stats/overview — 最新评论动态', () => {
+	it('按 pub_date 倒序取 5 条，含所有状态且不下发截断后的正文', async () => {
+		const ids: number[] = [];
+		for (let i = 0; i < 6; i++) {
+			ids.push(
+				await seedComment({
+					author: `U${i}`,
+					email: `u${i}@example.com`,
+					post_slug: `/p/${i}`,
+					content_text: `content-${i}`,
+					content_html: `<p>content-${i}</p>`,
+					status: i % 2 === 0 ? 'pending' : 'approved',
+					pub_date: 1730000000000 + i * 1000,
+				})
+			);
+		}
+
+		const d = (await api('/admin/stats/overview', { headers: authed() })).body.data;
+		expect(d.latestComments).toHaveLength(5);
+		expect(d.latestComments.map((c: any) => c.id)).toEqual([
+			ids[5],
+			ids[4],
+			ids[3],
+			ids[2],
+			ids[1],
+		]);
+		expect(d.latestComments[0]).toEqual({
+			id: ids[5],
+			author: 'U5',
+			email: 'u5@example.com',
+			postSlug: '/p/5',
+			contentText: 'content-5',
+			status: 'approved',
+			pubDate: new Date(1730000005000).toISOString(),
+		});
+	});
+
+	it('pub_date 相同时按 id 倒序', async () => {
+		const first = await seedComment({ author: '旧', pub_date: 1730000000000 });
+		const second = await seedComment({ author: '新', pub_date: 1730000000000 });
+		const d = (await api('/admin/stats/overview', { headers: authed() })).body.data;
+		expect(d.latestComments.map((c: any) => c.id)).toEqual([second, first]);
+	});
+
+	it('deleted / rejected 也出现在动态里（含所有状态）', async () => {
+		await seedComment({ status: 'deleted', pub_date: 1730000000000 });
+		await seedComment({ status: 'rejected', pub_date: 1730000001000 });
+		const d = (await api('/admin/stats/overview', { headers: authed() })).body.data;
+		expect(d.latestComments.map((c: any) => c.status)).toEqual(['rejected', 'deleted']);
 	});
 });

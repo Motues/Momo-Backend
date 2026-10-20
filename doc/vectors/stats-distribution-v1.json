@@ -1,0 +1,261 @@
+{
+  "version": 1,
+  "generatedBy": "scripts/gen-stats-distribution-vectors.js",
+  "description": "数据统计页客户端分布（设备 / 浏览器 / 操作系统）的归一化口径：原始值 → 展示用家族名。",
+  "rules": {
+    "whitespace": "首尾空白按**显式字符集**去除（ASCII 空白 + NBSP + U+1680 + U+2000-U+200A + U+2028/9 + U+202F + U+205F + U+3000 + U+FEFF）；版本号前的分隔空白也用同一集合。刻意不用各语言的 \\s / trim()：JS 与 Go 的空白集合不同（Go RE2 的 \\s 只认 ASCII、TrimSpace 不含 U+FEFF）",
+    "versionSuffix": "去掉尾部「空白集 + 以数字开头的 token」；其余部分 trim 后即为家族名",
+    "rawUserAgent": "以 Mozilla/ 开头或含 AppleWebKit 的值判为历史脏数据 → 未知",
+    "empty": "null / 空串 / 纯空白 → 浏览器与操作系统为「未知」，设备为「桌面」",
+    "deviceOrder": [
+      "原始UA→未知",
+      "iPad|tablet→平板",
+      "移动关键词→移动",
+      "桌面关键词→桌面",
+      "其余机型码→移动"
+    ],
+    "deviceEmpty": "设备的空值视为桌面：ua-parser 对桌面端就是不下发 device"
+  },
+  "browser": [
+    {
+      "raw": "Chrome 145.0.0.0",
+      "expected": "Chrome"
+    },
+    {
+      "raw": "Mobile Chrome 122.0.0.0",
+      "expected": "Mobile Chrome"
+    },
+    {
+      "raw": "Edge 147.0.0.0",
+      "expected": "Edge"
+    },
+    {
+      "raw": "Safari 17.0",
+      "expected": "Safari"
+    },
+    {
+      "raw": "Mobile Safari 17.0",
+      "expected": "Mobile Safari"
+    },
+    {
+      "raw": "Firefox 121.0",
+      "expected": "Firefox"
+    },
+    {
+      "raw": "Samsung Internet 23.0",
+      "expected": "Samsung Internet"
+    },
+    {
+      "raw": "Chrome 142",
+      "expected": "Chrome"
+    },
+    {
+      "raw": "Chrome",
+      "expected": "Chrome"
+    },
+    {
+      "raw": "  Chrome 120.0.0.0  ",
+      "expected": "Chrome"
+    },
+    {
+      "raw": "Mobile Safari  17.0  ",
+      "expected": "Mobile Safari"
+    },
+    {
+      "raw": "Chrome 120.0.0.0",
+      "expected": "Chrome"
+    },
+    {
+      "raw": "﻿Chrome 120.0.0.0　",
+      "expected": "Chrome"
+    },
+    {
+      "raw": "Chrome 120.0.0.0",
+      "expected": "Chrome"
+    },
+    {
+      "raw": " ",
+      "expected": "未知"
+    },
+    {
+      "raw": "",
+      "expected": "未知"
+    },
+    {
+      "raw": "   ",
+      "expected": "未知"
+    },
+    {
+      "raw": null,
+      "expected": "未知"
+    },
+    {
+      "raw": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+      "expected": "未知"
+    },
+    {
+      "raw": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Mobile/15E148 Safari/604.1",
+      "expected": "未知"
+    },
+    {
+      "raw": "AppleWebKit/537.36 (KHTML, like Gecko)",
+      "expected": "未知"
+    },
+    {
+      "raw": "Opera 9.80",
+      "expected": "Opera"
+    }
+  ],
+  "os": [
+    {
+      "raw": "Windows 10",
+      "expected": "Windows"
+    },
+    {
+      "raw": "Windows 10.0",
+      "expected": "Windows"
+    },
+    {
+      "raw": "Windows 11",
+      "expected": "Windows"
+    },
+    {
+      "raw": "macOS 10.15.7",
+      "expected": "macOS"
+    },
+    {
+      "raw": "iOS 17.7.2",
+      "expected": "iOS"
+    },
+    {
+      "raw": "Android 10",
+      "expected": "Android"
+    },
+    {
+      "raw": "Android 12",
+      "expected": "Android"
+    },
+    {
+      "raw": "HarmonyOS ",
+      "expected": "HarmonyOS"
+    },
+    {
+      "raw": "Ubuntu",
+      "expected": "Ubuntu"
+    },
+    {
+      "raw": "Linux",
+      "expected": "Linux"
+    },
+    {
+      "raw": "Chrome OS 120.0.0.0",
+      "expected": "Chrome OS"
+    },
+    {
+      "raw": "Windows 10",
+      "expected": "Windows"
+    },
+    {
+      "raw": "　macOS 10.15.7",
+      "expected": "macOS"
+    },
+    {
+      "raw": "",
+      "expected": "未知"
+    },
+    {
+      "raw": null,
+      "expected": "未知"
+    },
+    {
+      "raw": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+      "expected": "未知"
+    }
+  ],
+  "device": [
+    {
+      "raw": null,
+      "expected": "桌面"
+    },
+    {
+      "raw": "",
+      "expected": "桌面"
+    },
+    {
+      "raw": "   ",
+      "expected": "桌面"
+    },
+    {
+      "raw": " ",
+      "expected": "桌面"
+    },
+    {
+      "raw": "﻿",
+      "expected": "桌面"
+    },
+    {
+      "raw": "Desktop",
+      "expected": "桌面"
+    },
+    {
+      "raw": "Macintosh",
+      "expected": "桌面"
+    },
+    {
+      "raw": "Windows 10",
+      "expected": "桌面"
+    },
+    {
+      "raw": "iPad",
+      "expected": "平板"
+    },
+    {
+      "raw": "tablet",
+      "expected": "平板"
+    },
+    {
+      "raw": "Tablet",
+      "expected": "平板"
+    },
+    {
+      "raw": "iPad ",
+      "expected": "平板"
+    },
+    {
+      "raw": "iPhone",
+      "expected": "移动"
+    },
+    {
+      "raw": "mobile",
+      "expected": "移动"
+    },
+    {
+      "raw": "Android 13",
+      "expected": "移动"
+    },
+    {
+      "raw": "Windows Phone",
+      "expected": "移动"
+    },
+    {
+      "raw": "ABR-AL60",
+      "expected": "移动"
+    },
+    {
+      "raw": "V2507A",
+      "expected": "移动"
+    },
+    {
+      "raw": "SM-G991B",
+      "expected": "移动"
+    },
+    {
+      "raw": "K",
+      "expected": "移动"
+    },
+    {
+      "raw": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+      "expected": "未知"
+    }
+  ]
+}
