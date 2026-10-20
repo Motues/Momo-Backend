@@ -1,6 +1,9 @@
 import nodemailer from 'nodemailer';
 import { Bindings } from '../bindings';
 import { getSetting, isEmailEnabled } from './settings';
+import { getNotifyEmail } from './adminEmails';
+import { hydrateEmojiHtml } from './emailEmoji';
+import { MailType, writeMailLog } from './mailLog';
 
 function htmlEscape(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -31,9 +34,17 @@ export async function isEmailServiceAvailable(env: Bindings): Promise<boolean> {
 }
 
 /**
- * 通用 SMTP 发送函数 (适配 Cloudflare Workers)
+ * 通用 SMTP 发送函数 (适配 Cloudflare Workers)。
+ *
+ * 这是本端**最底层的发送函数**：所有上层发送函数都经它出网，因此邮件日志
+ * （`MailLog`，见任务规范 §3）也在这里记一次，`type` 由各上层函数传入。
+ *
+ * 语义保持不变：
+ *  - SMTP 未配置 → 返回 null（**不记日志**：面板只看「真正尝试过的发送」）；
+ *  - 发送成功 → 记一行 `sent`；
+ *  - 发送抛错 → 记一行 `failed`（含截断后的错误信息）后**照旧把错误抛给调用方**。
  */
-async function smtpFetch(env: Bindings, options: { to: string, subject: string, html: string }) {
+async function smtpFetch(env: Bindings, options: { to: string, subject: string, html: string, type: MailType }) {
   const config = await getSmtpConfig(env);
   if (!config) {
     console.log('SMTP not configured, skipping email');
@@ -62,8 +73,22 @@ async function smtpFetch(env: Bindings, options: { to: string, subject: string, 
       html: options.html,
     });
 
+    await writeMailLog(env, {
+      type: options.type,
+      recipient: options.to,
+      subject: options.subject,
+      status: 'sent',
+    });
+
     return info;
   } catch (err: any) {
+    await writeMailLog(env, {
+      type: options.type,
+      recipient: options.to,
+      subject: options.subject,
+      status: 'failed',
+      error: err?.message ?? String(err),
+    });
     console.error('Nodemailer Error:', err);
     throw new Error(`邮件发送失败: ${err.message}`);
   }
@@ -71,6 +96,10 @@ async function smtpFetch(env: Bindings, options: { to: string, subject: string, 
 
 /**
  * 回复通知邮件
+ *
+ * 正文是**渲染后的 HTML**（`doc/mail.md`）：`{{parentCommentHtml}}` 与
+ * `{{replyContentHtml}}` 原样插入（库里已净化的 content_html + 短代码水合），
+ * 旧的纯文本占位符保留且语义不变（HTML 转义）。
  */
 export async function sendCommentReplyNotification(
   env: Bindings,
@@ -82,6 +111,10 @@ export async function sendCommentReplyNotification(
     replyAuthor: string;
     replyContent: string;
     postUrl: string;
+    /** 原评论渲染后的 HTML（可选；缺省时回落为转义后的纯文本） */
+    parentCommentHtml?: string;
+    /** 回复渲染后的 HTML（可选；缺省时回落为转义后的纯文本） */
+    replyContentHtml?: string;
   }
 ) {
   if (!(await isEmailEnabled(env))) {
@@ -92,12 +125,33 @@ export async function sendCommentReplyNotification(
   const { toEmail, toName, postTitle, parentComment, replyAuthor, replyContent, postUrl } = params;
   const customTpl = await getSetting(env, "reply_template");
 
+  // 渲染（= 可能拉取表情来源）只发生在**已经决定要发信**之后（doc/mail.md 第 5 节）：
+  // 没有收件人或 SMTP 不可用时直接返回，不做任何网络请求。
+  if (!toEmail) return null;
+  if (!(await isEmailServiceAvailable(env))) {
+    console.log('SMTP not configured, skipping email');
+    return null;
+  }
+
+  // 原始 HTML：优先用调用方传入的 content_html（水合后插入），否则回落为纯文本转义。
+  // 水合失败只会让短代码保持文字，不会让邮件发不出去。
+  const parentHtml =
+    typeof params.parentCommentHtml === "string" && params.parentCommentHtml !== ""
+      ? await hydrateEmojiHtml(env, params.parentCommentHtml)
+      : htmlEscape(parentComment);
+  const replyHtml =
+    typeof params.replyContentHtml === "string" && params.replyContentHtml !== ""
+      ? await hydrateEmojiHtml(env, params.replyContentHtml)
+      : htmlEscape(replyContent);
+
   let html: string;
   if (customTpl) {
     html = customTpl
       .replace(/\{\{toName\}\}/g, htmlEscape(toName))
       .replace(/\{\{replyAuthor\}\}/g, htmlEscape(replyAuthor))
       .replace(/\{\{postTitle\}\}/g, htmlEscape(postTitle))
+      .replace(/\{\{parentCommentHtml\}\}/g, parentHtml)
+      .replace(/\{\{replyContentHtml\}\}/g, replyHtml)
       .replace(/\{\{parentComment\}\}/g, htmlEscape(parentComment))
       .replace(/\{\{replyContent\}\}/g, htmlEscape(replyContent))
       .replace(/\{\{postUrl\}\}/g, htmlEscape(postUrl));
@@ -111,11 +165,11 @@ export async function sendCommentReplyNotification(
               <strong>${htmlEscape(replyAuthor)}</strong> 回复了您在 <span style="color: #007acc;">《${htmlEscape(postTitle)}》</span> 中的评论：
             </p>
             <div style="margin: 20px 0; padding: 12px 16px; border-left: 4px solid #dfe3e8; background-color: #fcfcfc; color: #555; font-size: 14px;">
-              ${htmlEscape(parentComment)}
+              ${parentHtml}
             </div>
             <p style="color: #333; font-weight: bold; margin-bottom: 8px;">最新回复：</p>
             <div style="margin-bottom: 30px; padding: 16px; border-radius: 6px; background-color: #f0f7ff; border-left: 4px solid #007acc; color: #2c3e50; line-height: 1.6;">
-              ${htmlEscape(replyContent)}
+              ${replyHtml}
             </div>
             <div style="text-align: center;">
               <a href="${htmlEscape(postUrl)}" style="display: inline-block; background-color: #007acc; color: #ffffff; padding: 12px 28px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 15px; box-shadow: 0 2px 5px rgba(0,122,204,0.2);">
@@ -135,12 +189,17 @@ export async function sendCommentReplyNotification(
   return await smtpFetch(env, {
     to: toEmail,
     subject: `您在 ${siteName} 上的评论有了新回复`,
-    html
+    html,
+    type: 'reply_notify',
   });
 }
 
 /**
  * 站长通知邮件
+ *
+ * 收件人是解析后的 `notify_email`（见 `doc/admin_emails.md`），正文是**渲染后的 HTML**
+ * （`doc/mail.md`）：`{{commentContentHtml}}` 原样插入（库里已净化的 content_html +
+ * 短代码水合），旧的 `{{commentContent}}` 保留且语义不变（HTML 转义）。
  */
 export async function sendCommentNotification(
   env: Bindings,
@@ -149,6 +208,8 @@ export async function sendCommentNotification(
     postUrl: string;
     commentAuthor: string;
     commentContent: string;
+    /** 评论渲染后的 HTML（可选；缺省时回落为转义后的纯文本） */
+    commentContentHtml?: string;
   }
 ) {
   if (!(await isEmailEnabled(env))) {
@@ -159,11 +220,30 @@ export async function sendCommentNotification(
   const { postTitle, postUrl, commentAuthor, commentContent } = params;
   const customTpl = await getSetting(env, "notification_template");
 
+  // 渲染（= 可能拉取表情来源）只发生在**已经决定要发信**之后（doc/mail.md 第 5 节）：
+  // 收件人 = 解析后的 notify_email（列表为空时为空串 → 不发信），SMTP 不可用同样直接返回。
+  const notifyEmail = await getNotifyEmail(env);
+  if (!notifyEmail) {
+    console.log("Admin email not configured, skipping notification");
+    return null;
+  }
+  if (!(await isEmailServiceAvailable(env))) {
+    console.log('SMTP not configured, skipping email');
+    return null;
+  }
+
+  // 原始 HTML：优先用调用方传入的 content_html（水合后插入），否则回落为纯文本转义
+  const commentHtml =
+    typeof params.commentContentHtml === "string" && params.commentContentHtml !== ""
+      ? await hydrateEmojiHtml(env, params.commentContentHtml)
+      : htmlEscape(commentContent);
+
   let html: string;
   if (customTpl) {
     html = customTpl
       .replace(/\{\{postTitle\}\}/g, htmlEscape(postTitle))
       .replace(/\{\{commentAuthor\}\}/g, htmlEscape(commentAuthor))
+      .replace(/\{\{commentContentHtml\}\}/g, commentHtml)
       .replace(/\{\{commentContent\}\}/g, htmlEscape(commentContent))
       .replace(/\{\{postUrl\}\}/g, htmlEscape(postUrl));
   } else {
@@ -178,7 +258,7 @@ export async function sendCommentNotification(
             </p>
             <div style="background-color: #f9fafb; border-radius: 8px; padding: 20px; border: 1px dashed #e1e4e8; margin-bottom: 32px;">
               <div style="color: #444; font-size: 15px; line-height: 1.8; word-break: break-all;">
-                ${htmlEscape(commentContent)}
+                ${commentHtml}
               </div>
             </div>
             <div style="text-align: center;">
@@ -194,18 +274,14 @@ export async function sendCommentNotification(
       </div>`;
   }
 
-  const adminEmail = await getSetting(env, "admin_email");
-  if (!adminEmail) {
-    console.log("Admin email not configured, skipping notification");
-    return null;
-  }
-
+  // 收件人 = 解析后的 notify_email（已在渲染前解析，见上）
   const siteName = await getSetting(env, "site_name") || 'Momo Blog';
 
   return await smtpFetch(env, {
-    to: adminEmail,
+    to: notifyEmail,
     subject: `您在 ${siteName} 上有了新评论`,
-    html
+    html,
+    type: 'comment_notify',
   });
 }
 
@@ -218,6 +294,22 @@ export async function checkEmailVerified(env: Bindings, email: string): Promise<
   const row = await env.MOMO_DB.prepare(
     "SELECT COUNT(*) as count FROM EmailVerification WHERE email = ? AND verified = 1"
   ).bind(email).first<{ count: number }>();
+  return row ? row.count > 0 : false;
+}
+
+/**
+ * 链接同步专用：按**归一化**（trim + 小写）邮箱判断是否已验证。
+ *
+ * 与 `checkEmailVerified` 的精确匹配刻意不同：`doc/link_security.md` 把「邮箱」定义为
+ * `lower(trim(email))` 归一化后的身份凭据，历史评论的归属、批量更新与确认端点都按这个口径，
+ * 提交评论时邮箱的大小写/两侧空格不应让触发判定漏掉（`checkEmailVerified` 的既有语义保持不变）。
+ */
+export async function isEmailIdentityVerified(env: Bindings, email: string): Promise<boolean> {
+  const normalized = String(email ?? "").trim().toLowerCase();
+  if (!normalized) return false;
+  const row = await env.MOMO_DB.prepare(
+    "SELECT COUNT(*) as count FROM EmailVerification WHERE lower(trim(email)) = ? AND verified = 1"
+  ).bind(normalized).first<{ count: number }>();
   return row ? row.count > 0 : false;
 }
 
@@ -303,6 +395,73 @@ export async function sendVerificationEmail(
     to: toEmail,
     subject: `请验证您在 ${htmlEscape(siteName)} 上的评论邮箱`,
     html,
+    type: 'verify',
+  });
+}
+
+/**
+ * 历史链接同步确认邮件（内置模板，不提供自定义模板，见 `doc/link_security.md` 第 3.2 节）。
+ *
+ * 主题固定为 `确认更新您在 {siteName} 上的历史评论链接`；正文包含问候语、
+ * 「旧网址 → 新网址」、页面地址（若有）与 24 小时有效的确认链接。
+ */
+export async function sendLinkSyncConfirmationEmail(
+  env: Bindings,
+  params: {
+    toEmail: string;
+    toName: string;
+    oldUrl: string;
+    newUrl: string;
+    confirmUrl: string;
+    postTitle?: string;
+    postUrl?: string;
+  }
+) {
+  if (!(await isEmailEnabled(env))) {
+    console.log("Email disabled by settings, skipping link sync confirmation");
+    return null;
+  }
+
+  const { toEmail, toName, oldUrl, newUrl, confirmUrl } = params;
+  const siteName = await getSetting(env, "site_name") || 'Momo Blog';
+
+  const pageLine = params.postUrl
+    ? `<p style="color: #555; line-height: 1.6;">
+         页面地址：<a href="${htmlEscape(params.postUrl)}" style="color: #0066cc; word-break: break-all;">${htmlEscape(params.postTitle || params.postUrl)}</a>
+       </p>`
+    : '';
+
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 30px; border: 1px solid #e1e4e8; border-radius: 8px;">
+      <h2 style="color: #333; margin-top: 0;">确认更新您的历史评论链接</h2>
+      <p style="color: #555; line-height: 1.6;">
+        Hi ${htmlEscape(toName)}，<br><br>
+        您刚在 <strong>${htmlEscape(siteName)}</strong> 提交了一个新的个人网址，
+        系统将把它同步到您以前的所有评论。
+      </p>
+      <p style="color: #555; line-height: 1.6;">
+        旧网址：<span style="color: #999; word-break: break-all;">${htmlEscape(oldUrl)}</span><br>
+        新网址：<strong style="color: #0066cc; word-break: break-all;">${htmlEscape(newUrl)}</strong>
+      </p>
+      ${pageLine}
+      <div style="text-align: center; margin: 28px 0;">
+        <a href="${htmlEscape(confirmUrl)}" style="display: inline-block; background-color: #0066cc; color: #ffffff; padding: 12px 28px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 15px;">
+          确认更新我的历史评论链接
+        </a>
+      </div>
+      <p style="margin: 24px 0; padding: 12px; background: #f5f5f5; border-radius: 4px; word-break: break-all; font-size: 14px; color: #0066cc;">
+        ${htmlEscape(confirmUrl)}
+      </p>
+      <p style="color: #999; font-size: 13px;">此链接 24 小时内有效。如果您没有提交新网址，请忽略此邮件，您的历史评论不会被修改。</p>
+      <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
+      <p style="color: #999; font-size: 12px;">此邮件由系统自动发送，请勿直接回复。</p>
+    </div>`;
+
+  return await smtpFetch(env, {
+    to: toEmail,
+    subject: `确认更新您在 ${siteName} 上的历史评论链接`,
+    html,
+    type: 'link_sync',
   });
 }
 
@@ -328,5 +487,73 @@ export async function sendTestEmail(env: Bindings, toEmail: string): Promise<voi
       <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
       <p style="color: #999; font-size: 12px;">此邮件由系统自动发送，请勿直接回复。</p>
     </div>`,
+    type: 'test',
+  });
+}
+
+/**
+ * 休眠链接提醒邮件（内置模板，不提供自定义模板，见任务规范 §8.2）。
+ *
+ * 主题（逐字）：`您在 {siteName} 的个人网站链接已进入休眠`；
+ * 正文包含问候语、休眠说明、完整链接（`word-break: break-all`）、
+ * 「查看并确认」按钮 + 明文 URL、两个选项说明、有效期说明与忽略提示。
+ *
+ * 与既有邮件一致：SMTP 未配置或 `email_enabled === "false"` 时返回 `null` 且不发送
+ * （返回 `null` 时调用方**不落** `DormantNotice` 记录，下次读取会重试）。
+ */
+export async function sendDormantNoticeEmail(
+  env: Bindings,
+  params: {
+    toEmail: string;
+    toName: string;
+    /** 触发休眠的那个网址（逐字，来自评论） */
+    url: string;
+    /** 提醒页地址（邮件里的按钮与明文 URL） */
+    noticeUrl: string;
+    /** 有效期天数（= link_dormant_days 归一化后的值） */
+    dormantDays: number;
+  }
+) {
+  if (!(await isEmailEnabled(env))) {
+    console.log("Email disabled by settings, skipping dormant notice");
+    return null;
+  }
+
+  const { toEmail, toName, url, noticeUrl, dormantDays } = params;
+  const siteName = await getSetting(env, "site_name") || 'Momo Blog';
+
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 30px; border: 1px solid #e1e4e8; border-radius: 8px;">
+      <h2 style="color: #333; margin-top: 0;">您的个人网站链接已进入休眠</h2>
+      <p style="color: #555; line-height: 1.6;">
+        Hi ${htmlEscape(toName)}，<br><br>
+        您在 <strong>${htmlEscape(siteName)}</strong> 留下的这个个人网站链接很久没有新的评论活动了。
+        为防止域名被抢注后指向钓鱼站点，本站已不再从评论区直接跳转它。
+      </p>
+      <p style="color: #555; line-height: 1.6;">
+        当前链接：<span style="color: #0066cc; word-break: break-all;">${htmlEscape(url)}</span>
+      </p>
+      <div style="text-align: center; margin: 28px 0;">
+        <a href="${htmlEscape(noticeUrl)}" style="display: inline-block; background-color: #0066cc; color: #ffffff; padding: 12px 28px; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 15px;">
+          查看并确认
+        </a>
+      </div>
+      <p style="margin: 24px 0; padding: 12px; background: #f5f5f5; border-radius: 4px; word-break: break-all; font-size: 14px; color: #0066cc;">
+        ${htmlEscape(noticeUrl)}
+      </p>
+      <p style="color: #555; line-height: 1.6;">
+        在该页面里，您可以选择「我仍在使用」即可让链接恢复正常；也可以直接提交一个新的链接，
+        我们会把它同步到您的历史评论。
+      </p>
+      <p style="color: #999; font-size: 13px;">此链接 ${dormantDays} 天内有效。如果这不是您本人或您已不再使用该链接，忽略本邮件即可。</p>
+      <hr style="border: none; border-top: 1px solid #eee; margin: 24px 0;">
+      <p style="color: #999; font-size: 12px;">此邮件由系统自动发送，请勿直接回复。</p>
+    </div>`;
+
+  return await smtpFetch(env, {
+    to: toEmail,
+    subject: `您在 ${siteName} 的个人网站链接已进入休眠`,
+    html,
+    type: 'dormant_notice',
   });
 }

@@ -4,7 +4,7 @@
  * nodemailer 已由测试替身替换（见 vitest.config.mts 的 alias 与 test/stubs/nodemailer.ts），
  * 因此这里可以断言「邮件确实被构造出来」以及收件人 / 主题 / 正文。
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { createSchema, seedComment, seedSettings, seedVerification, testEnv } from '../helpers/db';
 import {
 	approvePendingComments,
@@ -14,12 +14,27 @@ import {
 	saveVerificationToken,
 	sendCommentNotification,
 	sendCommentReplyNotification,
+	sendLinkSyncConfirmationEmail,
 	sendTestEmail,
 	sendVerificationEmail,
 } from '../../src/utils/email';
+import { resetEmailEmojiCache } from '../../src/utils/emailEmoji';
 import { failNextSendMail, resetSentMails, sentMails } from '../stubs/nodemailer';
 
 const env = testEnv;
+
+/**
+ * 文件级网络替身：发信路径的表情水合（`src/utils/emailEmoji.ts`）会拉取 owo.json。
+ * 默认让所有出站请求立即失败（= 网络不可用，水合按契约降级为纯文本）；
+ * 需要断言水合成功路径的用例在文件内部用 `vi.stubGlobal('fetch', ...)` 覆盖。
+ *
+ * 刻意在模块加载时就装上、且不用 `vi.unstubAllGlobals()`：卸载替身会恢复真实 fetch，
+ * 让测试重新暴露在网络与平台端口限制之下（曾导致 isolate 拆除后的 unhandled rejection）。
+ */
+const disabledFetch = async (): Promise<Response> => {
+	throw new Error('network disabled in tests');
+};
+vi.stubGlobal('fetch', disabledFetch);
 const SMTP = {
 	smtp_host: 'smtp.example.com',
 	smtp_port: '465',
@@ -379,5 +394,356 @@ describe('SMTP 传输参数', () => {
 		await seedSettings({ ...SMTP, email_secure: 'true' });
 		await sendTestEmail(env, 'admin@example.com');
 		expect(sentMails).toHaveLength(1);
+	});
+});
+
+/**
+ * 契约 1.8.0（doc/mail.md）：通知邮件正文是**渲染后的 HTML**。
+ * `*Html` 占位符原样插入（不二次转义），旧的纯文本占位符保留且语义不变（HTML 转义）。
+ */
+describe('通知 / 回复模板的 *Html 占位符', () => {
+	beforeEach(async () => {
+		await createSchema();
+		resetSentMails();
+		resetEmailEmojiCache();
+	});
+
+	it('{{commentContentHtml}} 原样插入，不做二次转义', async () => {
+		await seedSettings({
+			...SMTP,
+			emoji_enabled: 'false',
+			notification_template: '<div>{{commentContentHtml}}</div>',
+		});
+		await sendCommentNotification(env, {
+			postTitle: 'T',
+			postUrl: 'https://a.com/p',
+			commentAuthor: 'A',
+			commentContent: '<b>x</b>',
+			commentContentHtml: '<p><b>x</b></p>',
+		});
+		expect(sentMails[0].html).toBe('<div><p><b>x</b></p></div>');
+	});
+
+	it('{{commentContent}} 继续 HTML 转义（旧模板语义不变）', async () => {
+		await seedSettings({
+			...SMTP,
+			emoji_enabled: 'false',
+			notification_template: '<div>{{commentContent}}</div>',
+		});
+		await sendCommentNotification(env, {
+			postTitle: 'T',
+			postUrl: 'https://a.com/p',
+			commentAuthor: 'A',
+			commentContent: '<b>x</b>',
+		});
+		expect(sentMails[0].html).toBe('<div>&lt;b&gt;x&lt;/b&gt;</div>');
+	});
+
+	it('默认通知模板已改用 {{commentContentHtml}}', async () => {
+		await seedSettings({ ...SMTP, emoji_enabled: 'false' });
+		await sendCommentNotification(env, {
+			postTitle: 'T',
+			postUrl: 'https://a.com/p',
+			commentAuthor: 'A',
+			commentContent: 'plain',
+			commentContentHtml: '<p>RENDERED</p>',
+		});
+		expect(sentMails[0].html).toContain('<p>RENDERED</p>');
+	});
+
+	it('{{parentCommentHtml}} / {{replyContentHtml}} 原样插入，纯文本占位符仍转义', async () => {
+		await seedSettings({
+			...SMTP,
+			emoji_enabled: 'false',
+			reply_template:
+				'<p>{{parentCommentHtml}}|{{replyContentHtml}}|{{parentComment}}|{{replyContent}}</p>',
+		});
+		await sendCommentReplyNotification(env, {
+			toEmail: 'parent@example.com',
+			toName: 'Parent',
+			postTitle: '文章',
+			parentComment: '<i>p</i>',
+			parentCommentHtml: '<p>P</p>',
+			replyAuthor: 'Child',
+			replyContent: '<i>r</i>',
+			replyContentHtml: '<p>R</p>',
+			postUrl: 'https://blog.example.com/post',
+		});
+		expect(sentMails[0].html).toBe('<p><p>P</p>|<p>R</p>|&lt;i&gt;p&lt;/i&gt;|&lt;i&gt;r&lt;/i&gt;</p>');
+	});
+
+	it('未提供 *Html 时回落为转义后的纯文本（旧调用方不受影响）', async () => {
+		await seedSettings({ ...SMTP, emoji_enabled: 'false' });
+		await sendCommentNotification(env, {
+			postTitle: 'T',
+			postUrl: 'https://a.com/p',
+			commentAuthor: 'A',
+			commentContent: '<b>fallback</b>',
+		});
+		expect(sentMails[0].html).toContain('&lt;b&gt;fallback&lt;/b&gt;');
+	});
+});
+
+describe('通知收件人 —— notify_email（doc/admin_emails.md 第 6 节）', () => {
+	beforeEach(async () => {
+		await createSchema();
+		resetSentMails();
+	});
+
+	const params = {
+		postTitle: '文章',
+		postUrl: 'https://blog.example.com/post',
+		commentAuthor: 'Alice',
+		commentContent: 'hello',
+	};
+
+	it('发给 notify_email（而不是列表第一个）', async () => {
+		await seedSettings({
+			...SMTP,
+			emoji_enabled: 'false',
+			admin_emails: '["a@x.com","b@y.com"]',
+			notify_email: 'b@y.com',
+		});
+		await sendCommentNotification(env, params);
+		expect(sentMails[0].to).toBe('b@y.com');
+	});
+
+	it('notify_email 不在列表里时回落到列表第一个', async () => {
+		await seedSettings({
+			...SMTP,
+			emoji_enabled: 'false',
+			admin_emails: '["a@x.com","b@y.com"]',
+			notify_email: 'c@z.com',
+		});
+		await sendCommentNotification(env, params);
+		expect(sentMails[0].to).toBe('a@x.com');
+	});
+
+	it('未配置 notify_email 时回落到列表第一个', async () => {
+		await seedSettings({ ...SMTP, emoji_enabled: 'false', admin_emails: '["a@x.com","b@y.com"]' });
+		await sendCommentNotification(env, params);
+		expect(sentMails[0].to).toBe('a@x.com');
+	});
+
+	it('只配旧键 admin_email 时行为与旧版一致', async () => {
+		await seedSettings({ ...SMTP, emoji_enabled: 'false' });
+		await sendCommentNotification(env, params);
+		expect(sentMails[0].to).toBe('admin@example.com');
+	});
+
+	it('没有任何管理员邮箱时返回 null 且不发信', async () => {
+		await seedSettings({ ...SMTP, emoji_enabled: 'false', admin_emails: '[]', notify_email: 'c@z.com' });
+		await testEnv.MOMO_DB.prepare("DELETE FROM Settings WHERE key = 'admin_email'").run();
+		expect(await sendCommentNotification(env, params)).toBeNull();
+		expect(sentMails).toHaveLength(0);
+	});
+});
+
+/**
+ * 服务端短代码水合（doc/mail.md 第 4 节）。
+ * 用 stub 的全局 fetch 模拟 ow o.json 来源，避免测试依赖网络。
+ */
+describe('邮件短代码水合（服务端）', () => {
+	const OWO_URL = 'https://cdn.example.com/owo.json';
+	const OWO = {
+		图片: {
+			type: 'image',
+			container: [
+				{ icon: '<img src="https://cdn.example.com/doge.png">', text: 'doge' },
+				{ icon: '<img src="https://cdn.example.com/hi.png">', text: '' },
+			],
+		},
+	};
+	const IMG_DOGE =
+		'<img src="https://cdn.example.com/doge.png" alt=":doge:" title=":doge:" style="max-width:1.5em;max-height:1.5em;vertical-align:-0.25em;margin:0 1px;">';
+
+	function stubJson(payload: unknown, status = 200) {
+		const mock = vi.fn(async () => new Response(JSON.stringify(payload), { status }));
+		vi.stubGlobal('fetch', mock);
+		return mock;
+	}
+
+	beforeEach(async () => {
+		await createSchema();
+		resetSentMails();
+		resetEmailEmojiCache();
+	});
+
+	afterEach(() => {
+		// 装回文件级断网替身（而不是 unstubAllGlobals：那会恢复真实的 fetch）
+		vi.stubGlobal('fetch', disabledFetch);
+	});
+
+	async function sendWithHtml(commentContentHtml: string) {
+		await seedSettings({
+			...SMTP,
+			emoji_enabled: 'true',
+			emoji_cdn_urls: JSON.stringify([OWO_URL]),
+			notification_template: '<div>{{commentContentHtml}}</div>',
+		});
+		await sendCommentNotification(env, {
+			postTitle: 'T',
+			postUrl: 'https://a.com/p',
+			commentAuthor: 'A',
+			commentContent: 'plain',
+			commentContentHtml,
+		});
+		return sentMails[0].html as string;
+	}
+
+	it('命中短代码时注入内联小图（alt/title/style 与契约一致）', async () => {
+		const mock = stubJson(OWO);
+		const html = await sendWithHtml('<p>hi :doge: and 12:30:45</p>');
+		expect(mock).toHaveBeenCalledTimes(1);
+		expect(html).toBe(`<div><p>hi ${IMG_DOGE} and 12:30:45</p></div>`);
+	});
+
+	it('text 为空时用 FNV-1a 短代码（e-<8hex>）', async () => {
+		stubJson(OWO);
+		const html = await sendWithHtml('<p>:e-ebc4e309:</p>');
+		expect(html).toBe(
+			'<div><p><img src="https://cdn.example.com/hi.png" alt=":e-ebc4e309:" title=":e-ebc4e309:" style="max-width:1.5em;max-height:1.5em;vertical-align:-0.25em;margin:0 1px;"></p></div>'
+		);
+	});
+
+	it('fetch 失败时降级为纯文本，邮件照常发出', async () => {
+		vi.stubGlobal('fetch', vi.fn(async () => {
+			throw new Error('network down');
+		}));
+		const html = await sendWithHtml('<p>hi :doge:</p>');
+		expect(html).toBe('<div><p>hi :doge:</p></div>');
+		expect(sentMails).toHaveLength(1);
+	});
+
+	it('非 2xx / 非 JSON 同样只丢该来源', async () => {
+		stubJson({}, 500);
+		expect(await sendWithHtml('<p>:doge:</p>')).toBe('<div><p>:doge:</p></div>');
+		resetSentMails();
+		vi.stubGlobal('fetch', vi.fn(async () => new Response('not json', { status: 200 })));
+		expect(await sendWithHtml('<p>:doge:</p>')).toBe('<div><p>:doge:</p></div>');
+	});
+
+	it('emoji_enabled = "false" 时不水合，也不发请求', async () => {
+		const mock = stubJson(OWO);
+		await seedSettings({
+			...SMTP,
+			emoji_enabled: 'false',
+			emoji_cdn_urls: JSON.stringify([OWO_URL]),
+			notification_template: '<div>{{commentContentHtml}}</div>',
+		});
+		await sendCommentNotification(env, {
+			postTitle: 'T',
+			postUrl: 'https://a.com/p',
+			commentAuthor: 'A',
+			commentContent: 'plain',
+			commentContentHtml: '<p>:doge:</p>',
+		});
+		expect(sentMails[0].html).toBe('<div><p>:doge:</p></div>');
+		expect(mock).not.toHaveBeenCalled();
+	});
+
+	it('code / pre / script 内部不替换（只处理文本节点）', async () => {
+		stubJson(OWO);
+		const html = await sendWithHtml(
+			'<p title=":doge:">a :doge:</p><code>:doge:</code><pre>:doge:</pre><script>:doge:</script>'
+		);
+		expect(html).toBe(
+			`<div><p title=":doge:">a ${IMG_DOGE}</p><code>:doge:</code><pre>:doge:</pre><script>:doge:</script></div>`
+		);
+	});
+
+	it('边界：名称前是字母/数字或后是数字时不替换', async () => {
+		stubJson(OWO);
+		const html = await sendWithHtml('<p>a:doge: :doge:1 x:doge:</p>');
+		// `a:doge:` 前一个字符是字母 → 不替换；`:doge:1` 后一个字符是数字 → 不替换
+		expect(html).toBe('<div><p>a:doge: :doge:1 x:doge:</p></div>');
+	});
+
+	it('多来源按顺序合并，跨来源重名追加 -2（每项水合回自己的图）', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (input: string) => {
+				if (input === 'https://a.example.com/owo.json') {
+					return new Response(
+						JSON.stringify({
+							Pack: { type: 'image', container: [{ icon: '<img src="https://a.example.com/doge.png">', text: 'doge' }] },
+						}),
+						{ status: 200 }
+					);
+				}
+				return new Response(
+					JSON.stringify({
+						Pack: { type: 'image', container: [{ icon: '<img src="https://b.example.com/doge.gif">', text: 'doge' }] },
+					}),
+					{ status: 200 }
+				);
+			})
+		);
+		await seedSettings({
+			...SMTP,
+			emoji_enabled: 'true',
+			emoji_cdn_urls: JSON.stringify(['https://a.example.com/owo.json', 'https://b.example.com/owo.json']),
+			notification_template: '<div>{{commentContentHtml}}</div>',
+		});
+		await sendCommentNotification(env, {
+			postTitle: 'T',
+			postUrl: 'https://a.com/p',
+			commentAuthor: 'A',
+			commentContent: 'plain',
+			commentContentHtml: '<p>:doge: :doge-2:</p>',
+		});
+		expect(sentMails[0].html).toContain('src="https://a.example.com/doge.png"');
+		expect(sentMails[0].html).toContain('src="https://b.example.com/doge.gif"');
+	});
+
+	it('10 分钟模块级缓存：同一地址列表第二次发信不再请求', async () => {
+		const mock = stubJson(OWO);
+		await sendWithHtml('<p>:doge:</p>');
+		resetSentMails();
+		await sendWithHtml('<p>:doge:</p>');
+		expect(mock).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('sendLinkSyncConfirmationEmail（历史链接同步确认邮件）', () => {
+	beforeEach(async () => {
+		await createSchema();
+		resetSentMails();
+	});
+
+	it('主题固定，正文包含旧/新网址、页面地址与 24 小时说明', async () => {
+		await seedSettings({ ...SMTP, site_name: 'Momo Blog' });
+		await sendLinkSyncConfirmationEmail(env, {
+			toEmail: 'alice@example.com',
+			toName: 'Alice',
+			oldUrl: 'https://old.example.com',
+			newUrl: 'https://new.example.com',
+			confirmUrl: 'https://blog.example.com/api/link-sync/confirm?token=t1&email=a%40x.com',
+			postTitle: '文章标题',
+			postUrl: 'https://blog.example.com/post',
+		});
+
+		expect(sentMails).toHaveLength(1);
+		expect(sentMails[0].to).toBe('alice@example.com');
+		expect(sentMails[0].subject).toBe('确认更新您在 Momo Blog 上的历史评论链接');
+		expect(sentMails[0].html).toContain('https://old.example.com');
+		expect(sentMails[0].html).toContain('https://new.example.com');
+		expect(sentMails[0].html).toContain('文章标题');
+		expect(sentMails[0].html).toContain('token=t1&amp;email=a%40x.com');
+		expect(sentMails[0].html).toContain('24 小时内有效');
+	});
+
+	it('email_enabled = "false" 时跳过', async () => {
+		await seedSettings({ ...SMTP, email_enabled: 'false' });
+		expect(
+			await sendLinkSyncConfirmationEmail(env, {
+				toEmail: 'alice@example.com',
+				toName: 'Alice',
+				oldUrl: 'https://old.example.com',
+				newUrl: 'https://new.example.com',
+				confirmUrl: 'https://blog.example.com/api/link-sync/confirm?token=t1&email=a%40x.com',
+			})
+		).toBeNull();
+		expect(sentMails).toHaveLength(0);
 	});
 });

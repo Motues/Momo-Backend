@@ -227,17 +227,20 @@ func TestEmailServiceUnavailableErrors(t *testing.T) {
 	}
 
 	// 所有发送接口在服务不可用时都必须快速失败，不得尝试建立连接
-	if err := svc.SendRaw("a@b.com", "s", "<p>x</p>"); err == nil {
+	if err := svc.SendRaw(MailTypeTest, "a@b.com", "s", "<p>x</p>"); err == nil {
 		t.Errorf("SendRaw 在服务不可用时应返回错误")
 	}
-	if err := svc.SendCommentNotification("t", "u", "a", "c"); err == nil {
+	if err := svc.SendCommentNotification("t", "u", "a", "c", "<p>c</p>"); err == nil {
 		t.Errorf("SendCommentNotification 在服务不可用时应返回错误")
 	}
-	if err := svc.SendCommentReplyNotification("a@b.com", "n", "t", "p", "ra", "rc", "u"); err == nil {
+	if err := svc.SendCommentReplyNotification("a@b.com", "n", "t", "p", "ra", "rc", "u", "<p>p</p>", "<p>rc</p>"); err == nil {
 		t.Errorf("SendCommentReplyNotification 在服务不可用时应返回错误")
 	}
 	if err := svc.SendVerificationEmail("a@b.com", "n", "t", "/s", "http://x"); err == nil {
 		t.Errorf("SendVerificationEmail 在服务不可用时应返回错误")
+	}
+	if err := svc.SendLinkSyncConfirmationEmail("a@b.com", "n", "https://old", "https://new", "t", "u", "http://x"); err == nil {
+		t.Errorf("SendLinkSyncConfirmationEmail 在服务不可用时应返回错误")
 	}
 
 	// nil 接收者也不能 panic
@@ -259,7 +262,7 @@ func TestSendCommentNotificationRequiresAdminMail(t *testing.T) {
 		t.Fatalf("前置条件：SMTP 配置完整时服务应可用")
 	}
 
-	err := svc.SendCommentNotification("标题", "https://x", "作者", "内容")
+	err := svc.SendCommentNotification("标题", "https://x", "作者", "内容", "<p>内容</p>")
 	if err == nil {
 		t.Fatalf("未配置管理员邮箱时应返回错误")
 	}
@@ -395,4 +398,142 @@ func TestGetTemplateFallbacksForEmail(t *testing.T) {
 			t.Errorf("已配置 %s 时不应使用兜底模板", key)
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// *Html 占位符（raw vs escaped，见 doc/mail.md 第 2 节）
+// ---------------------------------------------------------------------------
+
+// TestRenderTemplateRawVsEscaped 钉死「纯文本占位符转义、*Html 占位符原样插入」
+func TestRenderTemplateRawVsEscaped(t *testing.T) {
+	const injected = `<p>hi <img src="https://cdn.example.com/doge.png" alt=":doge:"></p>`
+
+	t.Run("通知模板", func(t *testing.T) {
+		tpl := `<div class="plain">{{commentContent}}</div><div class="html">{{commentContentHtml}}</div>`
+		got := renderTemplate(tpl,
+			map[string]string{"commentContent": `<script>alert(1)</script>`},
+			map[string]string{"commentContentHtml": injected})
+
+		if !strings.Contains(got, `&lt;script&gt;alert(1)&lt;/script&gt;`) {
+			t.Errorf("纯文本占位符必须被 HTML 转义，实际 %q", got)
+		}
+		if strings.Contains(got, "<script>") {
+			t.Errorf("纯文本占位符不应注入原始标签，实际 %q", got)
+		}
+		if !strings.Contains(got, injected) {
+			t.Errorf("*Html 占位符必须原样插入，实际 %q", got)
+		}
+	})
+
+	t.Run("回复模板", func(t *testing.T) {
+		tpl := `<div>{{parentComment}}</div><div>{{parentCommentHtml}}</div><div>{{replyContent}}</div><div>{{replyContentHtml}}</div>`
+		got := renderTemplate(tpl,
+			map[string]string{
+				"parentComment": `<b>p</b>`,
+				"replyContent":  `<b>r</b>`,
+			},
+			map[string]string{
+				"parentCommentHtml": injected,
+				"replyContentHtml":  `<p>reply <a href="https://x">link</a></p>`,
+			})
+
+		if strings.Count(got, injected) != 1 {
+			t.Errorf("parentCommentHtml 应原样插入一次，实际 %q", got)
+		}
+		if !strings.Contains(got, `<p>reply <a href="https://x">link</a></p>`) {
+			t.Errorf("replyContentHtml 应原样插入，实际 %q", got)
+		}
+		if !strings.Contains(got, "&lt;b&gt;p&lt;/b&gt;") || !strings.Contains(got, "&lt;b&gt;r&lt;/b&gt;") {
+			t.Errorf("纯文本占位符应被转义，实际 %q", got)
+		}
+	})
+
+	t.Run("未匹配的占位符保持原样", func(t *testing.T) {
+		got := renderTemplate(`{{a}} {{bHtml}}`, map[string]string{"a": "1"}, nil)
+		if got != "1 {{bHtml}}" {
+			t.Errorf("期望 %q，实际 %q", "1 {{bHtml}}", got)
+		}
+	})
+}
+
+// TestDefaultTemplatesUseRenderedHTML 内置模板必须使用 *Html 内容
+// （否则邮件里的图片 / 链接 / 表情根本不会出现）
+func TestDefaultTemplatesUseRenderedHTML(t *testing.T) {
+	const rendered = `<p>见 <img src="https://cdn.example.com/doge.png"> 与 <a href="https://x">链接</a></p>`
+
+	notification := defaultCommentNotificationHTML("作者", "标题", "https://post", rendered)
+	if !strings.Contains(notification, rendered) {
+		t.Errorf("内置通知模板应原样嵌入渲染后的 HTML，实际 %q", notification)
+	}
+
+	reply := defaultReplyNotificationHTML("收件人", "回复者", "标题", "https://post", rendered, rendered)
+	if strings.Count(reply, rendered) != 2 {
+		t.Errorf("内置回复模板应嵌入原评论与回复的渲染 HTML，实际 %q", reply)
+	}
+
+	// 其余字段照旧转义：作者名里的标签不得变成真标签
+	cursed := defaultCommentNotificationHTML(`<script>alert(1)</script>`, "标题", "https://post", rendered)
+	if strings.Contains(cursed, "<script>alert(1)</script>") {
+		t.Errorf("作者名必须被转义，实际 %q", cursed)
+	}
+}
+
+// TestHtmlOrEscaped 未提供 *Html 时回落到转义后的纯文本
+func TestHtmlOrEscaped(t *testing.T) {
+	if got := htmlOrEscaped("", `<b>x</b>`); got != "&lt;b&gt;x&lt;/b&gt;" {
+		t.Errorf("空 HTML 应回落到转义后的纯文本，实际 %q", got)
+	}
+	if got := htmlOrEscaped("<p>ok</p>", "ignored"); got != "<p>ok</p>" {
+		t.Errorf("非空 HTML 应原样返回，实际 %q", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 通知收件人（notify_email，见 doc/admin_emails.md 第 6 节）
+// ---------------------------------------------------------------------------
+
+// TestEmailServiceNotifyRecipient 新评论通知的收件人是解析后的 notify_email
+func TestEmailServiceNotifyRecipient(t *testing.T) {
+	resetSettings(t)
+	setSetting(t, "smtp_host", "smtp.example.com")
+	setSetting(t, "email_user", "noreply@example.com")
+	setSetting(t, "email_password", "secret")
+
+	t.Run("未配置管理员时没有收件人", func(t *testing.T) {
+		if got := GetService().adminMail; got != "" {
+			t.Errorf("没有任何管理员时收件人应为空，实际 %q", got)
+		}
+	})
+
+	t.Run("只配旧键：收件人就是它（与 1.7.0 行为一致）", func(t *testing.T) {
+		setSetting(t, "admin_email", "Old@X.com")
+		if got := GetService().adminMail; got != "old@x.com" {
+			t.Errorf("收件人期望旧键归一化后的值，实际 %q", got)
+		}
+	})
+
+	t.Run("列表与 notify_email 都配好：收件人是 notify_email", func(t *testing.T) {
+		setSetting(t, "admin_emails", `["a@x.com","b@y.com"]`)
+		setSetting(t, "notify_email", "b@y.com")
+		if got := GetService().adminMail; got != "b@y.com" {
+			t.Errorf("收件人期望 b@y.com，实际 %q", got)
+		}
+	})
+
+	t.Run("notify_email 命中不了列表：回落到列表第一个", func(t *testing.T) {
+		setSetting(t, "admin_emails", `["a@x.com","b@y.com"]`)
+		setSetting(t, "notify_email", "c@z.com")
+		if got := GetService().adminMail; got != "a@x.com" {
+			t.Errorf("收件人期望列表第一个 a@x.com，实际 %q", got)
+		}
+	})
+
+	t.Run("列表为空串：回落到旧键", func(t *testing.T) {
+		setSetting(t, "admin_emails", "[]")
+		setSetting(t, "admin_email", "legacy@x.com")
+		setSetting(t, "notify_email", "b@y.com")
+		if got := GetService().adminMail; got != "legacy@x.com" {
+			t.Errorf("收件人期望旧键 legacy@x.com，实际 %q", got)
+		}
+	})
 }
