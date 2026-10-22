@@ -10,6 +10,7 @@ import {
 	needDormantNotice,
 	shouldSendDormantNotice,
 } from './linkSecurity';
+import { VERIFY_BASE_URL_KEY } from './verifySettings';
 import type { WaitUntil } from './verifyRecord';
 
 /**
@@ -162,8 +163,11 @@ export async function upsertDormantNotice(
  * 调用方（`getComments`）只在 `link_security_enabled === "true"` 时调用，并已按
  * (email, url) 收集好本页休眠评论；这里再做一次同请求内去重，保证同一对只处理一次。
  *
- * **发信前提**（doc/link_security.md 第 2.7 节）：总开关 + 休眠提醒开关 + 邮箱验证都开启。
- * 任一不满足就直接返回（连 DormantNotice 都不查）：打开提醒开关后第一次有人访问评论区才开始提醒。
+ * - **发信前提**（doc/link_security.md 第 2.7 节）：总开关 + 休眠提醒开关 + API 地址非空才发信，
+ *   任一不满足直接返回（连 DormantNotice 都不查）：打开提醒开关后第一次有人访问评论区才开始提醒；
+ *   不再依赖 `email_verify_enabled`。
+ * - 发信函数在 SMTP 未配置 / 邮件通知关闭 / 发送失败时返回 `null` → **不落记录**，下次读取重试；
+ * - 只有真正发出去（拿到返回）才 upsert 记录：换新令牌、刷新有效期、`notify_count` +1。
  */
 export async function sweepDormantNotices(
 	env: Bindings,
@@ -172,12 +176,12 @@ export async function sweepDormantNotices(
 	waitUntil: WaitUntil | undefined
 ): Promise<void> {
 	try {
-		const [securityEnabled, noticeEnabled, emailVerifyEnabled] = await Promise.all([
+		const [securityEnabled, noticeEnabled, apiBaseUrl] = await Promise.all([
 			getSetting(env, LINK_SECURITY_ENABLED_KEY),
 			getSetting(env, LINK_DORMANT_NOTICE_ENABLED_KEY),
-			getSetting(env, 'email_verify_enabled'),
+			getSetting(env, VERIFY_BASE_URL_KEY),
 		]);
-		if (!shouldSendDormantNotice({ securityEnabled, noticeEnabled, emailVerifyEnabled })) {
+		if (!shouldSendDormantNotice({ securityEnabled, noticeEnabled, apiBaseUrl })) {
 			return;
 		}
 		// 同一次请求里同一 (email, url) 只处理一次

@@ -23,8 +23,6 @@ const DEFAULT_FORM = {
 	email_password: '',
 	email_secure: 'true',
 	email_enabled: 'true',
-	email_verify_enabled: 'false',
-	verify_base_url: '',
 	// 外发邮件日志保留天数：0 = 永久保留
 	mail_log_retention_days: '30',
 	reply_template: '',
@@ -76,11 +74,10 @@ describe('EmailSettings - 加载与默认值', () => {
 		expect(requestMock.get).toHaveBeenCalledWith('/admin/settings', { params: { type: 'email' } });
 	});
 
-	it('默认值：邮件通知开启、SSL 开启、邮箱验证关闭', async () => {
+	it('默认值：邮件通知开启、SSL 开启', async () => {
 		await mountSettings();
 		expect(wrapper.vm.form.email_enabled).toBe('true');
 		expect(wrapper.vm.form.email_secure).toBe('true');
-		expect(wrapper.vm.form.email_verify_enabled).toBe('false');
 	});
 
 	it('默认值：邮件保存天数 30 天', async () => {
@@ -97,7 +94,7 @@ describe('EmailSettings - 加载与默认值', () => {
 
 	it('默认值：SMTP 与模板字段为空', async () => {
 		await mountSettings();
-		['smtp_host', 'smtp_port', 'email_user', 'email_password', 'verify_base_url', 'reply_template', 'notification_template']
+		['smtp_host', 'smtp_port', 'email_user', 'email_password', 'reply_template', 'notification_template']
 			.forEach((key) => expect(wrapper.vm.form[key]).toBe(''));
 	});
 
@@ -110,15 +107,12 @@ describe('EmailSettings - 加载与默认值', () => {
 				email_user: 'bot@example.com',
 				email_secure: 'false',
 				email_enabled: 'false',
-				email_verify_enabled: 'true',
-				verify_base_url: 'https://api.example.com',
 			},
 		});
 		expect(wrapper.vm.form.smtp_host).toBe('smtp.example.com');
 		expect(wrapper.vm.form.smtp_port).toBe('465');
 		expect(wrapper.vm.form.email_user).toBe('bot@example.com');
 		expect(wrapper.vm.form.email_secure).toBe('false');
-		expect(wrapper.vm.form.email_verify_enabled).toBe('true');
 		expect(wrapper.find('input[placeholder="smtp.example.com"]').element.value).toBe('smtp.example.com');
 	});
 
@@ -142,12 +136,18 @@ describe('EmailSettings - 开关与选项', () => {
 		expect(wrapper.text()).toContain('已关闭');
 	});
 
-	it('开启邮箱验证后显示验证强度相关提示与 API 地址输入框', async () => {
+	it('邮件通知开关仍可正常切换', async () => {
 		await mountSettings();
-		await wrapper.findAll('input[type="checkbox"]')[1].setValue(true);
-		expect(wrapper.vm.form.email_verify_enabled).toBe('true');
-		expect(wrapper.find('input[placeholder="https://api.example.com"]').exists()).toBe(true);
-		expect(wrapper.text()).toContain('已启用');
+		await wrapper.findAll('input[type="checkbox"]')[0].setValue(true);
+		expect(wrapper.vm.form.email_enabled).toBe('true');
+	});
+
+	it('邮件通知页不再包含邮箱验证开关与 API 地址输入框', async () => {
+		await mountSettings();
+		expect(wrapper.vm.form.email_verify_enabled).toBeUndefined();
+		expect(wrapper.vm.form.verify_base_url).toBeUndefined();
+		expect(wrapper.find('input[placeholder="https://api.example.com"]').exists()).toBe(false);
+		expect(wrapper.text()).toContain('基本设置 → 评论审核');
 	});
 
 	it('SSL 下拉框可切换为 "false"', async () => {
@@ -185,42 +185,12 @@ describe('EmailSettings - 保存载荷', () => {
 		expect(lastPayload().email_password).toBe('s3cret');
 	});
 
-	it('verify_base_url 结尾斜杠会被去掉', async () => {
-		await mountSettings();
-		await wrapper.findAll('input[type="checkbox"]')[1].setValue(true);
-		await wrapper.find('input[placeholder="https://api.example.com"]').setValue('https://api.example.com///');
-		await saveButton().trigger('click');
-		await flushPromises();
-		expect(lastPayload().verify_base_url).toBe('https://api.example.com');
-	});
-
-	it('verify_base_url 为空时保持为空字符串', async () => {
-		await mountSettings();
-		await saveButton().trigger('click');
-		await flushPromises();
-		expect(lastPayload().verify_base_url).toBe('');
-	});
-
-	it('verify_base_url 只由斜杠组成时会绕过校验并提交空字符串（已记录的缺陷）', async () => {
-		await mountSettings();
-		await wrapper.findAll('input[type="checkbox"]')[1].setValue(true);
-		await wrapper.find('input[placeholder="https://api.example.com"]').setValue('///');
-		await saveButton().trigger('click');
-		await flushPromises();
-		// 非空校验发生在去掉结尾斜杠之前，因此 "///" 能通过校验却被裁剪成空值提交
-		expect(requestMock.put).toHaveBeenCalledTimes(1);
-		expect(lastPayload().verify_base_url).toBe('');
-	});
-
 	it('开关以字符串 "true"/"false" 提交', async () => {
 		await mountSettings();
 		await wrapper.findAll('input[type="checkbox"]')[0].setValue(false);
-		await wrapper.findAll('input[type="checkbox"]')[1].setValue(true);
-		await wrapper.find('input[placeholder="https://api.example.com"]').setValue('https://api.example.com');
 		await saveButton().trigger('click');
 		await flushPromises();
 		expect(lastPayload().email_enabled).toBe('false');
-		expect(lastPayload().email_verify_enabled).toBe('true');
 	});
 
 	it('邮件保存天数：默认提交 30，0 表示永久保留', async () => {
@@ -253,33 +223,6 @@ describe('EmailSettings - 保存载荷', () => {
 			wrapper.unmount();
 			wrapper = undefined;
 		}
-	});
-
-	it('开启邮箱验证但未填 API 地址时拒绝保存并提示', async () => {
-		await mountSettings();
-		await wrapper.findAll('input[type="checkbox"]')[1].setValue(true);
-		await saveButton().trigger('click');
-		await flushPromises();
-		expect(toastMock.error).toHaveBeenCalledWith('启用邮箱验证时必须填写 API 地址');
-		expect(requestMock.put).not.toHaveBeenCalled();
-	});
-
-	it('开启邮箱验证并填写地址后可以保存', async () => {
-		await mountSettings();
-		await wrapper.findAll('input[type="checkbox"]')[1].setValue(true);
-		await wrapper.find('input[placeholder="https://api.example.com"]').setValue('https://api.example.com');
-		await saveButton().trigger('click');
-		await flushPromises();
-		expect(requestMock.put).toHaveBeenCalledTimes(1);
-	});
-
-	it('校验失败后按钮不会卡在加载态', async () => {
-		await mountSettings();
-		await wrapper.findAll('input[type="checkbox"]')[1].setValue(true);
-		await saveButton().trigger('click');
-		await flushPromises();
-		expect(saveButton().text()).toContain('保存设置');
-		expect(saveButton().attributes('disabled')).toBeUndefined();
 	});
 
 	it('保存成功后提示并展示保存成功标记', async () => {

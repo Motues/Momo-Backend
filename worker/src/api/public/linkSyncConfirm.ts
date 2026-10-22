@@ -15,6 +15,7 @@ import {
 	markLinkSyncConfirmed,
 	resolveLinkSecurityConfig,
 } from '../../utils/linkSecurity';
+import { VERIFY_BASE_URL_KEY } from '../../utils/verifySettings';
 import { normalizeEmail } from '../../utils/adminEmails';
 
 interface LinkSyncRecord {
@@ -32,7 +33,7 @@ interface LinkSyncRecord {
  *
  * 触发（评论提交后，全部条件满足才会发确认邮件）：
  *   1. `link_sync_enabled = "true"`（fail-closed）；
- *   2. `email_verify_enabled = "true"`（硬前提）；
+ *   2. `verify_base_url`（API 地址）非空 —— 确认邮件里的链接需要它；
  *   3. SMTP 可用；
  *   4. 提交评论的邮箱已经通过邮箱验证；
  *   5. 本次提交的 `url` 非空，且该邮箱存在 url 非空且与本次不同的历史评论。
@@ -57,7 +58,8 @@ export async function requestLinkSyncIfNeeded(
 		if (!params.newUrl) return;
 		const config = await resolveLinkSecurityConfig(env);
 		if (!config.syncEnabled) return;
-		if ((await getSetting(env, 'email_verify_enabled')) !== 'true') return;
+		// 链接同步依赖 API 地址（不再依赖 email_verify_enabled）
+		if (!String((await getSetting(env, VERIFY_BASE_URL_KEY)) ?? '').trim()) return;
 		if (!(await isEmailServiceAvailable(env))) return;
 		if (!(await isEmailIdentityVerified(env, params.email))) return;
 

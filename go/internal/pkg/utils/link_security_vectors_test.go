@@ -90,13 +90,13 @@ type linkSecurityFixture struct {
 			CurrentLastCommentAt  int64  `json:"currentLastCommentAt"`
 			Expect                bool   `json:"expect"`
 		} `json:"needNotify"`
-		// SendGate 发信前提：总开关 + 提醒开关 + 邮箱验证
+		// SendGate 发信前提：总开关 + 提醒开关 + API 地址非空
 		SendGate []struct {
-			Name               string `json:"name"`
-			SecurityEnabled    string `json:"securityEnabled"`
-			NoticeEnabled      string `json:"noticeEnabled"`
-			EmailVerifyEnabled string `json:"emailVerifyEnabled"`
-			Expect             bool   `json:"expect"`
+			Name            string `json:"name"`
+			SecurityEnabled string `json:"securityEnabled"`
+			NoticeEnabled   string `json:"noticeEnabled"`
+			APIBaseURL      string `json:"apiBaseUrl"`
+			Expect          bool   `json:"expect"`
 		} `json:"sendGate"`
 	} `json:"notice"`
 }
@@ -382,7 +382,7 @@ func TestLinkDormantDaysStrictDecimal(t *testing.T) {
 }
 
 // TestShouldSendDormantNoticeVector 发信前提（doc/link_security.md 第 2.7 节 notice.sendGate）：
-// 总开关 + 提醒开关 + 邮箱验证，三者缺一不发。
+// 总开关 + 提醒开关 + API 地址非空，三者缺一不发。
 func TestShouldSendDormantNoticeVector(t *testing.T) {
 	fixture := loadLinkSecurityFixture(t)
 	if len(fixture.Notice.SendGate) == 0 {
@@ -394,24 +394,24 @@ func TestShouldSendDormantNoticeVector(t *testing.T) {
 			got := ShouldSendDormantNotice(
 				testCase.SecurityEnabled,
 				testCase.NoticeEnabled,
-				testCase.EmailVerifyEnabled,
+				testCase.APIBaseURL,
 			)
 			if got != testCase.Expect {
 				t.Errorf("ShouldSendDormantNotice(%q, %q, %q) 期望 %v，实际 %v",
 					testCase.SecurityEnabled, testCase.NoticeEnabled,
-					testCase.EmailVerifyEnabled, testCase.Expect, got)
+					testCase.APIBaseURL, testCase.Expect, got)
 			}
 		})
 	}
 
-	// 穷举 8 种组合：只有三者全为 true 才发信
+	// 穷举 2×2×2 种组合：只有总开关与提醒开关都开启、且 API 地址非空时才发信
 	for _, security := range []string{"true", "false"} {
 		for _, notice := range []string{"true", "false"} {
-			for _, verify := range []string{"true", "false"} {
-				want := security == "true" && notice == "true" && verify == "true"
-				if got := ShouldSendDormantNotice(security, notice, verify); got != want {
+			for _, baseURL := range []string{"https://api.example.com", ""} {
+				want := security == "true" && notice == "true" && baseURL != ""
+				if got := ShouldSendDormantNotice(security, notice, baseURL); got != want {
 					t.Errorf("ShouldSendDormantNotice(%q, %q, %q) 期望 %v，实际 %v",
-						security, notice, verify, want, got)
+						security, notice, baseURL, want, got)
 				}
 			}
 		}

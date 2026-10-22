@@ -29,6 +29,16 @@
             <input v-model="form.site_name" type="text"
               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm" />
           </div>
+          <div class="md:col-span-2">
+            <label class="block text-sm font-medium text-gray-700 mb-1">API 地址</label>
+            <input v-model="form.verify_base_url" type="url" placeholder="https://api.example.com"
+              data-test="verify-base-url"
+              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm" />
+            <p class="text-xs text-gray-400 mt-1">
+              站点对外根地址，用于邮箱验证、历史链接同步确认与休眠提醒邮件里的链接；
+              <strong>不填写时这些功能无法开启</strong>。不要带 <code class="bg-gray-100 px-1 rounded">/api</code> 后缀。
+            </p>
+          </div>
         </div>
 
         <!-- 管理员邮箱列表 -->
@@ -168,6 +178,35 @@
             </div>
           </div>
         </div>
+
+        <!-- 邮箱验证（原「邮件通知 → 邮箱验证」） -->
+        <div class="mt-5 pt-5 border-t border-gray-100">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm font-medium text-gray-700">邮箱验证</p>
+              <p class="text-xs text-gray-400 mt-1">
+                开启后，未验证邮箱的评论先保存为待审核状态，验证后自动发布
+              </p>
+            </div>
+            <label class="relative shrink-0 ms-4 inline-flex items-center cursor-pointer">
+              <input type="checkbox" v-model="form.email_verify_enabled" :disabled="emailVerifyLocked"
+                class="sr-only peer" true-value="true" false-value="false"
+                data-test="email-verify-enabled">
+              <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"
+                :class="emailVerifyLocked ? 'opacity-50 cursor-not-allowed' : ''"></div>
+              <span class="ms-3 text-sm font-medium whitespace-nowrap text-gray-700">
+                {{ form.email_verify_enabled === 'true' ? '已启用' : '已禁用' }}
+              </span>
+            </label>
+          </div>
+          <p v-if="!normalizedBaseUrl" class="mt-3 text-xs text-amber-600 flex items-center gap-1" data-test="email-verify-no-base-url">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            请先在「站点信息」填写 API 地址，否则邮箱验证无法开启
+          </p>
+          <p v-else class="mt-3 text-xs text-gray-400">
+            验证邮件里的链接使用上方 API 地址；还需要在「邮件通知」中配置 SMTP 并开启邮件通知。
+          </p>
+        </div>
       </section>
 
       <!-- 博主标识 -->
@@ -280,6 +319,7 @@ import {
   parseAdminEmails,
   resolveNotifyEmail,
 } from '../utils/emails'
+import { normalizeBaseUrl, validateBaseUrl } from '../utils/baseUrl'
 
 const router = useRouter()
 const apiUrl = ref(localStorage.getItem('apiUrl') || window.location.origin)
@@ -292,6 +332,10 @@ let initialSnapshot = ''
 
 const form = reactive({
   site_name: '',
+  // 站点对外根地址：邮箱验证 / 历史链接同步确认 / 休眠提醒邮件共用
+  verify_base_url: '',
+  // 邮箱验证开关（原「邮件通知」页，已合并到评论审核）
+  email_verify_enabled: 'false',
   comment_auto_approve: 'true',
   // 审核自动化规则：默认全部为 0（不启用），与后端默认值一致 ——
   // 开启「评论自动通过」后不会凭空拦下评论，由管理员按需填写阈值
@@ -323,6 +367,17 @@ const adminCommentKey = ref('')
 const adminCommentKeyEnabled = ref(false)
 
 const notifyOptions = computed(() => adminEmails.value.map((email) => ({ label: email, value: email })))
+
+/** API 地址归一化值（保存时提交、开关联动都用它） */
+const normalizedBaseUrl = computed(() => normalizeBaseUrl(form.verify_base_url))
+
+/**
+ * API 地址为空时不允许「开启」邮箱验证；已经开启的旧配置仍然可以关闭。
+ * 与后端「邮箱验证开启时必须填写 API 地址」同一口径。
+ */
+const emailVerifyLocked = computed(
+  () => form.email_verify_enabled !== 'true' && !normalizedBaseUrl.value,
+)
 
 const addKeyword = () => {
   const val = newKeyword.value.trim()
@@ -406,6 +461,8 @@ const loadSettings = async () => {
       // 管理员邮箱列表与通知邮箱单独接管：不把原始 JSON 字符串留在 form 里
       const { admin_emails, notify_email, admin_email, ...rest } = res.data
       Object.assign(form, rest)
+      // 开关只接受 true/false；空串/脏值一律按关闭展示（与后端 fail-closed 一致）
+      if (form.email_verify_enabled !== 'true') form.email_verify_enabled = 'false'
       // 规则阈值：未配置时显示后端默认值（全部为 0 = 不启用），避免「页面显示空」而实际仍在按默认值拦截
       if (res.data.comment_spam_max_links === undefined) form.comment_spam_max_links = '0'
       if (res.data.comment_spam_min_length === undefined) form.comment_spam_min_length = '0'
@@ -463,11 +520,27 @@ const saveSettings = async () => {
   }
   notifyEmail.value = selected
 
+  // API 地址：格式校验 + 邮箱验证的开启前置（后端还会校验链接同步/休眠提醒）
+  const baseUrlError = validateBaseUrl(form.verify_base_url)
+  if (baseUrlError) {
+    toast.error(baseUrlError)
+    return
+  }
+  const baseUrl = normalizedBaseUrl.value
+  if (form.email_verify_enabled === 'true' && !baseUrl) {
+    toast.error('邮箱验证开启时必须填写 API 地址')
+    return
+  }
+
   loading.value = true
   saved.value = false
   try {
     const payload = {
       ...form,
+      // API 地址：去首尾空格与末尾斜杠后提交（后端同口径归一化）
+      verify_base_url: baseUrl,
+      // 邮箱验证开关只提交归一化后的 "true" / "false"
+      email_verify_enabled: form.email_verify_enabled === 'true' ? 'true' : 'false',
       // 阈值归一化：后端也会校验，这里先夹取并转成字符串
       comment_spam_max_links: normalizeNumber(form.comment_spam_max_links, 0, 50),
       comment_spam_min_length: normalizeNumber(form.comment_spam_min_length, 0, 2000),
@@ -493,6 +566,7 @@ const saveSettings = async () => {
     form.comment_spam_max_links = payload.comment_spam_max_links
     form.comment_spam_min_length = payload.comment_spam_min_length
     form.comment_spam_duplicate_window = payload.comment_spam_duplicate_window
+    form.verify_base_url = baseUrl
     const res = await request.put('/admin/settings', payload)
     if (res.code === 200) {
       saved.value = true

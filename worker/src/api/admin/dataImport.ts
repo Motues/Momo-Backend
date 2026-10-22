@@ -1,6 +1,6 @@
 import { Context } from 'hono';
 import { Bindings } from '../../bindings';
-import { setSetting } from '../../utils/settings';
+import { getAllSettings, setSetting } from '../../utils/settings';
 import { checkContent, sanitizeUrl, isValidIpBlacklistJson, MAX_CONTENT, MAX_AUTHOR, MAX_EMAIL, MAX_URL, MAX_POST_SLUG } from '../../utils/security';
 import { parseMarkdown, sanitizeHtml } from '../../utils/markdown';
 import { validateSpamSettings } from '../../utils/spam';
@@ -24,6 +24,16 @@ import {
   resolveMailLogRetentionDays,
   validateMailLogRetentionDays,
 } from '../../utils/mailLog';
+import {
+  EMAIL_VERIFY_ENABLED_KEY,
+  VERIFY_BASE_URL_KEY,
+  hasApiUrlDependencyKey,
+  normalizeEmailVerifyEnabled,
+  normalizeVerifyBaseUrl,
+  validateApiUrlDependents,
+  validateEmailVerifyEnabled,
+  validateVerifyBaseUrl,
+} from '../../utils/verifySettings';
 
 // 导入时不允许用空值覆盖已有值的敏感字段
 const SENSITIVE_SETTINGS = new Set(["email_password", "admin_comment_key"]);
@@ -179,6 +189,26 @@ export const importSettings = async (c: Context<{ Bindings: Bindings }>) => {
     return c.json({ code: 400, message: linkError }, 400);
   }
 
+  // API 地址与邮箱验证开关：与 PUT /admin/settings 同一套校验
+  if (VERIFY_BASE_URL_KEY in body) {
+    const baseUrlError = validateVerifyBaseUrl(body[VERIFY_BASE_URL_KEY]);
+    if (baseUrlError) {
+      return c.json({ code: 400, message: baseUrlError }, 400);
+    }
+  }
+  if (EMAIL_VERIFY_ENABLED_KEY in body) {
+    const verifyError = validateEmailVerifyEnabled(body[EMAIL_VERIFY_ENABLED_KEY]);
+    if (verifyError) {
+      return c.json({ code: 400, message: verifyError }, 400);
+    }
+  }
+  if (hasApiUrlDependencyKey(body)) {
+    const dependencyError = validateApiUrlDependents(body, await getAllSettings(c.env));
+    if (dependencyError) {
+      return c.json({ code: 400, message: dependencyError }, 400);
+    }
+  }
+
   // 邮件日志保留天数：与 PUT /admin/settings 同一套校验（0–3650，0 = 永久保留）
   if ("mail_log_retention_days" in body) {
     const retentionError = validateMailLogRetentionDays(body.mail_log_retention_days);
@@ -210,7 +240,9 @@ export const importSettings = async (c: Context<{ Bindings: Bindings }>) => {
     } else if (key === LINK_DORMANT_DAYS_KEY) await setSetting(c.env, key, String(parseDormantDays(value)));
     else if (key === MAIL_LOG_RETENTION_KEY) {
       await setSetting(c.env, key, String(resolveMailLogRetentionDays(value)));
-    } else if (key === "admin_email") await setSetting(c.env, key, String(value));
+    } else if (key === VERIFY_BASE_URL_KEY) await setSetting(c.env, key, normalizeVerifyBaseUrl(value));
+    else if (key === EMAIL_VERIFY_ENABLED_KEY) await setSetting(c.env, key, normalizeEmailVerifyEnabled(value));
+    else if (key === "admin_email") await setSetting(c.env, key, String(value));
     else await setSetting(c.env, key, String(value));
     updated.push(key);
   }

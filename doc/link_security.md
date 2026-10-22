@@ -20,8 +20,11 @@
 |---|---|---|
 | `link_security_enabled` | `"false"` | 休眠链接**总开关** |
 | `link_dormant_days` | `"30"` | 多久没来评论就算「休眠」，整数 **1–3650** |
-| `link_sync_enabled` | `"false"` | 历史链接批量更新开关（**运行时还要求** `email_verify_enabled = "true"` + SMTP 可用 + 该邮箱已通过邮箱验证） |
-| `link_dormant_notice_enabled` | `"false"` | 链接**进入休眠时是否给评论者发提醒邮件**（**运行时还要求** 总开关开启 + `email_verify_enabled = "true"` + SMTP 可用 + `email_enabled != "false"`，见第 2.7 节） |
+| `link_sync_enabled` | `"false"` | 历史链接批量更新开关（**运行时还要求** `verify_base_url`（API 地址）非空 + SMTP 可用 + 该邮箱已通过邮箱验证） |
+| `link_dormant_notice_enabled` | `"false"` | 链接**进入休眠时是否给评论者发提醒邮件**（**运行时还要求** 总开关开启 + `verify_base_url` 非空 + SMTP 可用 + `email_enabled != "false"`，见第 2.7 节） |
+
+> 自本版本起，`link_sync_enabled` / `link_dormant_notice_enabled` **不再依赖** `email_verify_enabled`：
+> 只要填写了 API 地址（`verify_base_url`）就可以发送对应邮件。面板「链接安全」页的警告与后端同一口径。
 
 **开关一律 fail-closed**：读取时只有归一化（`trim` + 小写）后等于 `"true"` 才算开启，
 其余（空、脏值、`TRUE` 以外的大小写写完就算，见下）一律按**关闭**处理。
@@ -168,16 +171,16 @@ Worker `worker/schemas/comment.sql` + `worker/src/utils/migrations.ts` 一条版
 ```
 发信 = link_security_enabled == "true"
     && link_dormant_notice_enabled == "true"     # 后台「链接安全」页的开关，默认关闭
-    && email_verify_enabled == "true"            # 与历史链接同步同一硬前提
+    && verify_base_url 非空                       # API 地址：提醒邮件里的链接由它拼出
     && SMTP 可用 && email_enabled != "false"      # 由发信函数自己再检查一次
 ```
 
-- 三个设置值都按**同一套 fail-closed 归一化**（`trim` + 小写后等于 `"true"`）判定；
-- 开关关闭（含空值 / 脏值）时**什么都不做**：不发信、不查 `DormantNotice`、不落记录。
+- 两个开关按**同一套 fail-closed 归一化**（`trim` + 小写后等于 `"true"`）判定；
+- API 地址只做 `trim` 后非空判定；**不再依赖 `email_verify_enabled`**（只要有 API 地址就能发提醒）；
+- 开关关闭（含空值 / 脏值）或 API 地址为空时**什么都不做**：不发信、不查 `DormantNotice`、不落记录。
   因此「先关着攒历史、再打开」与「一直开着」在状态机看来没有区别：打开后第一次有人访问评论区才开始提醒；
-- **依赖邮箱验证**：`email_verify_enabled` 未开启时**即使提醒开关打开也不会发信**
-  （面板「链接安全」页会显示同样口径的警告，与历史链接同步同款）；
-- 后台已打开提醒开关但邮箱验证未开启属于**配置不完整**，面板只提示、不自动改任何设置。
+- 后台已打开提醒开关但 API 地址未填写属于**配置不完整**，面板只提示、不自动改任何设置；
+  此时保存设置会被后端拒绝（`休眠提醒邮件开启时必须填写 API 地址`）。
 
 本仓库三端**都没有定时任务**（休眠是读取时实时推导的），因此这封信也挂在读取路径上**惰性触发**：
 
@@ -241,7 +244,7 @@ Worker `worker/schemas/comment.sql` + `worker/src/utils/migrations.ts` 一条版
 ### 3.1 开启条件（全部满足才会发确认邮件）
 
 1. `link_sync_enabled = "true"`（fail-closed）；
-2. `email_verify_enabled = "true"`（**必须**先开启邮箱验证，这条在需求里就是硬前提）；
+2. `verify_base_url`（API 地址）**非空** —— 确认邮件里的链接需要它；**不再要求 `email_verify_enabled`**；
 3. SMTP 可用（`isEmailServiceAvailable`）；
 4. 提交评论的邮箱**已经通过邮箱验证**（`EmailVerification.verified = 1`）；
 5. 本次提交的 `url` 非空，且该邮箱**存在历史评论**：`url` 非空且与本次提交的 `url` **不同**

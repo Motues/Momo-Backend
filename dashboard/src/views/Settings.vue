@@ -10,7 +10,7 @@
             <i class="fa-solid fa-globe text-blue-500 text-2xl"></i>
           </div>
           <h2 class="text-lg font-semibold text-gray-800 mb-2">基本设置</h2>
-          <p class="text-sm text-gray-500">站点名称、管理员邮箱、管理员评论密钥、评论审核、博主标识、占位符</p>
+          <p class="text-sm text-gray-500">站点名称与 API 地址、管理员邮箱、管理员评论密钥、评论审核（含邮箱验证）、博主标识、占位符</p>
         </router-link>
 
         <!-- 2. 账户安全 -->

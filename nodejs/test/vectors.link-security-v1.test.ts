@@ -199,9 +199,9 @@ describe("vectors/link-security-v1 — 休眠提醒状态机", () => {
 });
 
 /**
- * 休眠提醒邮件的**发信前提**：总开关 + 提醒开关 + 邮箱验证，三者缺一不发。
+ * 休眠提醒邮件的**发信前提**：总开关 + 提醒开关 + API 地址非空，三者缺一不发。
  *
- * 这也是后台「链接安全」页警告文案的口径来源：开关打开但邮箱验证没开时，
+ * 这也是后台「链接安全」页警告文案的口径来源：开关打开但 API 地址没填时，
  * 界面提示「即使这里打开，通知邮件也不会发出」，与后端判定完全一致。
  */
 describe("vectors/link-security-v1 — 休眠提醒发信前提", () => {
@@ -211,23 +211,23 @@ describe("vectors/link-security-v1 — 休眠提醒发信前提", () => {
         shouldSendDormantNotice({
           securityEnabled: item.securityEnabled,
           noticeEnabled: item.noticeEnabled,
-          emailVerifyEnabled: item.emailVerifyEnabled,
+          apiBaseUrl: item.apiBaseUrl,
         })
       ).toBe(item.expect);
     });
   }
 
-  it("任一前提关闭时必然不发（穷举 8 种组合）", () => {
+  it("任一前提关闭时必然不发（穷举 2×2×2 种组合）", () => {
     for (const security of ["true", "false"]) {
       for (const notice of ["true", "false"]) {
-        for (const verify of ["true", "false"]) {
+        for (const baseUrl of ["https://api.example.com", ""]) {
           expect(
             shouldSendDormantNotice({
               securityEnabled: security,
               noticeEnabled: notice,
-              emailVerifyEnabled: verify,
+              apiBaseUrl: baseUrl,
             })
-          ).toBe(security === "true" && notice === "true" && verify === "true");
+          ).toBe(security === "true" && notice === "true" && baseUrl !== "");
         }
       }
     }

@@ -19,6 +19,17 @@
         </div>
       </div>
 
+      <!-- API 地址缺失：链接同步 / 休眠提醒都无法开启 -->
+      <div v-if="apiBaseUrlMissing"
+        class="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"
+        data-test="link-api-base-url-missing">
+        <i class="fa-solid fa-triangle-exclamation mr-1"></i>
+        历史链接同步与休眠提醒依赖<strong>API 地址</strong>：当前未填写，这两个开关无法开启。
+        <router-link to="/settings/basic" class="text-amber-800 underline font-medium">
+          前往基本设置 → 站点信息填写
+        </router-link>
+      </div>
+
       <!-- 休眠链接 -->
       <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
         <div class="flex items-center justify-between mb-3">
@@ -62,8 +73,10 @@
           </h2>
           <label class="relative shrink-0 ms-4 inline-flex items-center cursor-pointer">
             <input type="checkbox" v-model="noticeEnabled" class="sr-only peer" true-value="true" false-value="false"
+              :disabled="noticeBlocked"
               data-test="link-dormant-notice-enabled">
-            <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-sky-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-sky-600"></div>
+            <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-sky-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-sky-600"
+              :class="noticeBlocked ? 'opacity-50 cursor-not-allowed' : ''"></div>
             <span class="ms-3 text-sm font-medium whitespace-nowrap text-gray-700">
               {{ noticeEnabled === 'true' ? '已开启' : '已关闭' }}
             </span>
@@ -76,13 +89,13 @@
           关闭后就不发任何提醒邮件（休眠标记本身照常生效）。
         </p>
 
-        <div v-if="noticeOnWithoutVerify"
+        <div v-if="noticeOnWithoutBaseUrl"
           class="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700"
           data-test="link-dormant-notice-warning">
           <i class="fa-solid fa-triangle-exclamation mr-1"></i>
-          休眠提醒邮件依赖<strong>邮箱验证</strong>：当前 <code class="px-1 bg-amber-100 rounded">email_verify_enabled</code>
-          未开启，即使这里打开，通知邮件也不会发出（功能实际不生效）。
-          <router-link to="/settings/email" class="text-amber-800 underline font-medium">前往邮件通知设置开启邮箱验证</router-link>
+          休眠提醒邮件依赖<strong>API 地址</strong>：当前 <code class="px-1 bg-amber-100 rounded">verify_base_url</code>
+          为空，即使这里打开，通知邮件也不会发出（功能实际不生效）。
+          <router-link to="/settings/basic" class="text-amber-800 underline font-medium">前往基本设置 → 站点信息填写</router-link>
         </div>
       </section>
 
@@ -94,8 +107,10 @@
           </h2>
           <label class="relative shrink-0 ms-4 inline-flex items-center cursor-pointer">
             <input type="checkbox" v-model="syncEnabled" class="sr-only peer" true-value="true" false-value="false"
+              :disabled="syncBlocked"
               data-test="link-sync-enabled">
-            <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-sky-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-sky-600"></div>
+            <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-sky-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-sky-600"
+              :class="syncBlocked ? 'opacity-50 cursor-not-allowed' : ''"></div>
             <span class="ms-3 text-sm font-medium whitespace-nowrap text-gray-700">
               {{ syncEnabled === 'true' ? '已开启' : '已关闭' }}
             </span>
@@ -106,14 +121,18 @@
           <strong>只有他本人点邮件里的链接确认后</strong>，他所有历史评论里的旧链接才会被改写成新网址
           （邮件 24 小时内有效，不确认则历史评论不动）。
         </p>
+        <p class="text-xs text-gray-400 mt-2">
+          另外，评论者的邮箱需要<strong>曾经通过邮箱验证</strong>（存在已验证记录）；
+          如果站点从未开启过邮箱验证，则不会有验证记录，本功能不会触发。
+        </p>
 
-        <div v-if="syncOnWithoutVerify"
+        <div v-if="syncOnWithoutBaseUrl"
           class="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700"
           data-test="link-sync-warning">
           <i class="fa-solid fa-triangle-exclamation mr-1"></i>
-          历史链接同步依赖<strong>邮箱验证</strong>：当前 <code class="px-1 bg-amber-100 rounded">email_verify_enabled</code>
-          未开启，即使这里打开，确认邮件也不会发出（功能实际不生效）。
-          <router-link to="/settings/email" class="text-amber-800 underline font-medium">前往邮件通知设置开启邮箱验证</router-link>
+          历史链接同步依赖<strong>API 地址</strong>：当前 <code class="px-1 bg-amber-100 rounded">verify_base_url</code>
+          为空，即使这里打开，确认邮件也不会发出（功能实际不生效）。
+          <router-link to="/settings/basic" class="text-amber-800 underline font-medium">前往基本设置 → 站点信息填写</router-link>
         </div>
       </section>
 
@@ -142,36 +161,43 @@ const apiUrl = ref(localStorage.getItem('apiUrl') || window.location.origin);
 
 const securityEnabled = ref('false');
 const syncEnabled = ref('false');
-/** 链接进入休眠时是否给评论者发提醒邮件（同样依赖邮箱验证） */
+/** 链接进入休眠时是否给评论者发提醒邮件（依赖 API 地址，不再依赖邮箱验证） */
 const noticeEnabled = ref('false');
 const dormantDays = ref(String(DEFAULT_LINK_DORMANT_DAYS));
-/** 邮箱验证开关（另一个设置组）：历史链接同步与休眠提醒邮件的硬前提 */
-const emailVerifyEnabled = ref('false');
+/** API 地址（基本设置 → 站点信息）：历史链接同步与休眠提醒邮件的硬前提 */
+const apiBaseUrl = ref('');
 
 const loading = ref(false);
 const saving = ref(false);
 const saved = ref(false);
 
-/** 同步开着但邮箱验证没开：给出明确警告（后端也不会发确认邮件） */
-const syncOnWithoutVerify = computed(
-  () => syncEnabled.value === 'true' && emailVerifyEnabled.value !== 'true',
+/** API 地址是否为空（trim 后） */
+const apiBaseUrlMissing = computed(() => String(apiBaseUrl.value ?? '').trim() === '');
+
+/** 同步开着但 API 地址没填：给出明确警告（后端也不会发确认邮件） */
+const syncOnWithoutBaseUrl = computed(
+  () => syncEnabled.value === 'true' && apiBaseUrlMissing.value,
 );
 
-/** 休眠提醒开着但邮箱验证没开：同样给出警告（后端也不会发提醒邮件） */
-const noticeOnWithoutVerify = computed(
-  () => noticeEnabled.value === 'true' && emailVerifyEnabled.value !== 'true',
+/** 休眠提醒开着但 API 地址没填：同样给出警告（后端也不会发提醒邮件） */
+const noticeOnWithoutBaseUrl = computed(
+  () => noticeEnabled.value === 'true' && apiBaseUrlMissing.value,
 );
+
+/** API 地址为空时不允许「开启」；已经开启的旧配置仍然可以关闭 */
+const syncBlocked = computed(() => syncEnabled.value !== 'true' && apiBaseUrlMissing.value);
+const noticeBlocked = computed(() => noticeEnabled.value !== 'true' && apiBaseUrlMissing.value);
 
 async function loadSettings() {
   loading.value = true;
   try {
-    const [linkRes, emailRes] = await Promise.all([
+    const [linkRes, basicRes] = await Promise.all([
       request.get('/admin/settings', { params: { type: 'link' } }).catch((e) => {
         console.error('Failed to load link security settings:', e);
         return null;
       }),
-      request.get('/admin/settings', { params: { type: 'email' } }).catch((e) => {
-        console.error('Failed to load email settings:', e);
+      request.get('/admin/settings', { params: { type: 'basic' } }).catch((e) => {
+        console.error('Failed to load basic settings:', e);
         return null;
       }),
     ]);
@@ -183,8 +209,8 @@ async function loadSettings() {
       noticeEnabled.value = normalizeLinkSwitch(linkRes.data.link_dormant_notice_enabled);
       dormantDays.value = String(resolveLinkDormantDays(linkRes.data.link_dormant_days));
     }
-    if (emailRes?.code === 200 && emailRes.data) {
-      emailVerifyEnabled.value = normalizeLinkSwitch(emailRes.data.email_verify_enabled);
+    if (basicRes?.code === 200 && basicRes.data) {
+      apiBaseUrl.value = String(basicRes.data.verify_base_url ?? '').trim();
     }
   } finally {
     loading.value = false;

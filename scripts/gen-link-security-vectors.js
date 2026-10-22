@@ -120,14 +120,14 @@ function needNotice({ dormant, hasRecord, recordExpired, recordLastCommentAt, cu
 /**
  * 休眠提醒邮件的**发信前提**（见 doc/link_security.md 第 2.7 节）。
  *
- *   发信 = link_security_enabled && link_dormant_notice_enabled && email_verify_enabled
+ *   发信 = link_security_enabled && link_dormant_notice_enabled && verify_base_url 非空
  *
- * 三个值一律 fail-closed（归一化后等于 "true" 才算开启）：功能没开、提醒开关没开、
- * 或站点没开邮箱验证时，一封提醒都不发（界面上的警告与后端口径完全一致）。
+ * 两个开关 fail-closed（归一化后等于 "true" 才算开启）；API 地址只做 trim 后非空判定。
+ * 不再依赖 email_verify_enabled：只要有 API 地址就可以发提醒邮件。
  */
-function shouldSendNotice({ securityEnabled, noticeEnabled, emailVerifyEnabled }) {
+function shouldSendNotice({ securityEnabled, noticeEnabled, apiBaseUrl }) {
   const on = (value) => String(value ?? '').trim().toLowerCase() === 'true';
-  return on(securityEnabled) && on(noticeEnabled) && on(emailVerifyEnabled);
+  return on(securityEnabled) && on(noticeEnabled) && String(apiBaseUrl ?? '').trim() !== '';
 }
 
 const fixture = {
@@ -135,7 +135,7 @@ const fixture = {
   note:
     '链接安全审查契约 v1：四个设置键（开关 fail-closed、休眠天数 1-3650 默认 30）、' +
     '休眠判定（严格大于 N 天、再次评论自动解除）、人工确认豁免（有效期 = 确认时的休眠天数，' +
-    '读取时严格大于当前时间）与休眠提醒邮件的发信前提（总开关 + 提醒开关 + 邮箱验证）三端必须逐条一致。' +
+    '读取时严格大于当前时间）与休眠提醒邮件的发信前提（总开关 + 提醒开关 + API 地址非空）三端必须逐条一致。' +
     '由 scripts/gen-link-security-vectors.js 生成，请勿手改。',
   keys: KEYS,
   defaults: {
@@ -281,40 +281,40 @@ const fixture = {
     ],
     /**
      * 发信前提（见 shouldSendNotice 的注释）：
-     * `{ securityEnabled, noticeEnabled, emailVerifyEnabled }` → 是否真的会发提醒邮件。
+     * `{ securityEnabled, noticeEnabled, apiBaseUrl }` → 是否真的会发提醒邮件。
      */
     sendGate: [
       {
-        name: '三个前提都开启：发信',
-        securityEnabled: 'true', noticeEnabled: 'true', emailVerifyEnabled: 'true', expect: true,
+        name: '三个前提都具备：发信',
+        securityEnabled: 'true', noticeEnabled: 'true', apiBaseUrl: 'https://api.example.com', expect: true,
       },
       {
-        name: '提醒开关关闭：不发（即使链接安全与邮箱验证都开着）',
-        securityEnabled: 'true', noticeEnabled: 'false', emailVerifyEnabled: 'true', expect: false,
+        name: '提醒开关关闭：不发（即使链接安全开着、API 地址已填）',
+        securityEnabled: 'true', noticeEnabled: 'false', apiBaseUrl: 'https://api.example.com', expect: false,
       },
       {
         name: '提醒开关是脏值：fail-closed 不发',
-        securityEnabled: 'true', noticeEnabled: 'yes', emailVerifyEnabled: 'true', expect: false,
+        securityEnabled: 'true', noticeEnabled: 'yes', apiBaseUrl: 'https://api.example.com', expect: false,
       },
       {
-        name: '邮箱验证关闭：不发（需求里的硬前提）',
-        securityEnabled: 'true', noticeEnabled: 'true', emailVerifyEnabled: 'false', expect: false,
+        name: 'API 地址为空：不发（不再依赖邮箱验证）',
+        securityEnabled: 'true', noticeEnabled: 'true', apiBaseUrl: '', expect: false,
       },
       {
-        name: '邮箱验证未配置（空串）：不发',
-        securityEnabled: 'true', noticeEnabled: 'true', emailVerifyEnabled: '', expect: false,
+        name: 'API 地址只有空白：不发',
+        securityEnabled: 'true', noticeEnabled: 'true', apiBaseUrl: '   ', expect: false,
       },
       {
         name: '链接安全总开关关闭：不发',
-        securityEnabled: 'false', noticeEnabled: 'true', emailVerifyEnabled: 'true', expect: false,
+        securityEnabled: 'false', noticeEnabled: 'true', apiBaseUrl: 'https://api.example.com', expect: false,
       },
       {
         name: '全都未配置：不发',
-        securityEnabled: '', noticeEnabled: '', emailVerifyEnabled: '', expect: false,
+        securityEnabled: '', noticeEnabled: '', apiBaseUrl: '', expect: false,
       },
       {
-        name: '大小写与空格：TRUE 视为开启（三处同一归一化）',
-        securityEnabled: ' TRUE ', noticeEnabled: 'True', emailVerifyEnabled: ' true ',
+        name: '开关大小写与空格：TRUE 视为开启；API 地址两侧空格被忽略',
+        securityEnabled: ' TRUE ', noticeEnabled: 'True', apiBaseUrl: '  https://api.example.com  ',
         expect: true,
       },
     ],

@@ -29,6 +29,16 @@ import {
   resolveMailLogRetentionDays,
   validateMailLogRetentionDays,
 } from '../../utils/mailLog';
+import {
+  EMAIL_VERIFY_ENABLED_KEY,
+  VERIFY_BASE_URL_KEY,
+  hasApiUrlDependencyKey,
+  normalizeEmailVerifyEnabled,
+  normalizeVerifyBaseUrl,
+  validateApiUrlDependents,
+  validateEmailVerifyEnabled,
+  validateVerifyBaseUrl,
+} from '../../utils/verifySettings';
 
 // 敏感字段：读取时始终置空。comment_verify_secret 由系统自动生成，不对外开放读写
 const SENSITIVE_KEYS = new Set(["admin_password", "email_password", "admin_comment_key", "comment_verify_secret"]);
@@ -82,7 +92,7 @@ const ALLOWED_SETTINGS = new Set([
 ]);
 
 const SETTINGS_GROUPS: Record<string, string[]> = {
-  basic: ["site_name", "admin_email", "admin_emails", "notify_email", "comment_auto_approve", "comment_spam_keywords", "comment_spam_max_links", "comment_spam_min_length", "comment_spam_duplicate_window", "blogger_badge_enabled", "blogger_badge_text", "placeholder_name", "placeholder_email", "placeholder_content", "placeholder_url"],
+  basic: ["site_name", "admin_email", "admin_emails", "notify_email", "verify_base_url", "email_verify_enabled", "comment_auto_approve", "comment_spam_keywords", "comment_spam_max_links", "comment_spam_min_length", "comment_spam_duplicate_window", "blogger_badge_enabled", "blogger_badge_text", "placeholder_name", "placeholder_email", "placeholder_content", "placeholder_url"],
   email: ["smtp_host", "smtp_port", "email_user", "email_password", "email_secure", "email_enabled", "email_verify_enabled", "verify_base_url", "mail_log_retention_days", "reply_template", "notification_template"],
   security: ["allow_origin", "admin_comment_key", "admin_comment_key_enabled", "ip_blacklist", "email_blacklist", "comment_verify_enabled", "comment_verify_difficulty", "comment_verify_instr_enabled", "comment_verify_block_automated", "comment_verify_domain_enabled", "comment_verify_retention_days", "comment_verify_log_challenge", "trust_proxy"],
   account: ["admin_name"],
@@ -173,6 +183,27 @@ export const updateSettings = async (c: Context<{ Bindings: Bindings }>) => {
     return c.json({ code: 400, message: linkError }, 400);
   }
 
+  // API 地址与邮箱验证开关：空串允许；非空 URL 必须是 http(s) 绝对地址。
+  // 依赖功能（邮箱验证 / 历史链接同步 / 休眠提醒）开启时，API 地址不得为空。
+  if (VERIFY_BASE_URL_KEY in body) {
+    const baseUrlError = validateVerifyBaseUrl(body[VERIFY_BASE_URL_KEY]);
+    if (baseUrlError) {
+      return c.json({ code: 400, message: baseUrlError }, 400);
+    }
+  }
+  if (EMAIL_VERIFY_ENABLED_KEY in body) {
+    const verifyError = validateEmailVerifyEnabled(body[EMAIL_VERIFY_ENABLED_KEY]);
+    if (verifyError) {
+      return c.json({ code: 400, message: verifyError }, 400);
+    }
+  }
+  if (hasApiUrlDependencyKey(body)) {
+    const dependencyError = validateApiUrlDependents(body, await getAllSettings(c.env));
+    if (dependencyError) {
+      return c.json({ code: 400, message: dependencyError }, 400);
+    }
+  }
+
   // 多管理员邮箱（口径见 doc/admin_emails.md）：notify_email 必须在列表里
   const adminConfig = await getAdminConfig(c.env);
   const adminWrite = validateAdminSettingsBody(body, adminConfig.admins);
@@ -228,6 +259,16 @@ export const updateSettings = async (c: Context<{ Bindings: Bindings }>) => {
       // 邮件日志保留天数：同样存规范化后的十进制（0 = 永久保留）
       if (key === MAIL_LOG_RETENTION_KEY) {
         await setSetting(c.env, key, String(resolveMailLogRetentionDays(value)));
+        continue;
+      }
+      // API 地址：去空格与末尾斜杠后落库（格式已在上面校验）
+      if (key === VERIFY_BASE_URL_KEY) {
+        await setSetting(c.env, key, normalizeVerifyBaseUrl(value));
+        continue;
+      }
+      // 邮箱验证开关：只存归一化后的 "true" / "false" / ""
+      if (key === EMAIL_VERIFY_ENABLED_KEY) {
+        await setSetting(c.env, key, normalizeEmailVerifyEnabled(value));
         continue;
       }
       // 旧键 admin_email：原样存储（不 trim、不做大小写归一），与 Node/Go 及 1.7.0 的写入语义一致；

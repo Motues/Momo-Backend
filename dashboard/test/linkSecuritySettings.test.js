@@ -27,7 +27,7 @@ import {
  * 「链接安全」设置页（契约 v1）：休眠链接开关 + 休眠天数 + 历史链接同步开关。
  *
  * 口径由 doc/link_security.md 与 doc/vectors/link-security-v1.json 钉死：
- * 开关 fail-closed、天数 1–3650 默认 30、同步依赖邮箱验证。
+ * 开关 fail-closed、天数 1–3650 默认 30；同步 / 提醒依赖 API 地址（不再依赖邮箱验证）。
  */
 
 let router;
@@ -36,11 +36,11 @@ let wrapper;
 let errorSpy;
 
 /** 按 type 分发的 GET 实现 */
-const mountSettings = async ({ link = {}, email = {}, linkCode = 200, emailCode = 200 } = {}) => {
+const mountSettings = async ({ link = {}, basic = {}, linkCode = 200, basicCode = 200 } = {}) => {
 	requestMock.get.mockImplementation((url, config) => {
 		const type = config?.params?.type;
 		if (type === 'link') return Promise.resolve({ code: linkCode, data: link });
-		if (type === 'email') return Promise.resolve({ code: emailCode, data: email });
+		if (type === 'basic') return Promise.resolve({ code: basicCode, data: basic });
 		return Promise.resolve({ code: 200, data: {} });
 	});
 	router = await createTestRouter('/settings/link');
@@ -60,6 +60,7 @@ const noticeSwitch = () => wrapper.get('[data-test="link-dormant-notice-enabled"
 const daysInput = () => wrapper.get('[data-test="link-dormant-days"]');
 const warning = () => wrapper.find('[data-test="link-sync-warning"]');
 const noticeWarning = () => wrapper.find('[data-test="link-dormant-notice-warning"]');
+const missingBanner = () => wrapper.find('[data-test="link-api-base-url-missing"]');
 const lastPayload = () => requestMock.put.mock.calls.at(-1)[1];
 
 beforeEach(() => {
@@ -124,10 +125,10 @@ describe('linkSecurity 纯逻辑', () => {
 });
 
 describe('LinkSecuritySettings - 加载', () => {
-	it('同时拉取 type=link 与 type=email 两组设置', async () => {
+	it('同时拉取 type=link 与 type=basic 两组设置', async () => {
 		await mountSettings();
 		expect(requestMock.get).toHaveBeenCalledWith('/admin/settings', { params: { type: 'link' } });
-		expect(requestMock.get).toHaveBeenCalledWith('/admin/settings', { params: { type: 'email' } });
+		expect(requestMock.get).toHaveBeenCalledWith('/admin/settings', { params: { type: 'basic' } });
 		expect(requestMock.get).toHaveBeenCalledTimes(2);
 	});
 
@@ -147,7 +148,7 @@ describe('LinkSecuritySettings - 加载', () => {
 				link_sync_enabled: 'true',
 				link_dormant_notice_enabled: 'true',
 			},
-			email: { email_verify_enabled: 'true' },
+			basic: { verify_base_url: 'https://api.example.com' },
 		});
 		expect(securitySwitch().element.checked).toBe(true);
 		expect(syncSwitch().element.checked).toBe(true);
@@ -194,89 +195,93 @@ describe('LinkSecuritySettings - 加载', () => {
 	});
 
 	it('业务 code 非 200 时保留默认值', async () => {
-		await mountSettings({ linkCode: 500, emailCode: 500 });
+		await mountSettings({ linkCode: 500, basicCode: 500 });
 		expect(securitySwitch().element.checked).toBe(false);
 		expect(daysInput().element.value).toBe('30');
 	});
 });
 
-describe('LinkSecuritySettings - 邮箱验证警告', () => {
-	it('同步开启但邮箱验证未开启时给出警告与跳转链接', async () => {
+describe('LinkSecuritySettings - API 地址警告', () => {
+	it('API 地址为空时显示顶部提示，并禁用同步 / 提醒开关', async () => {
+		await mountSettings({ basic: {} });
+
+		expect(missingBanner().exists()).toBe(true);
+		expect(missingBanner().text()).toContain('API 地址');
+		expect(missingBanner().find('a').attributes('href')).toBe('/settings/basic');
+		expect(syncSwitch().attributes('disabled')).toBeDefined();
+		expect(noticeSwitch().attributes('disabled')).toBeDefined();
+	});
+
+	it('API 地址已填写时不显示顶部提示，开关可用', async () => {
+		await mountSettings({ basic: { verify_base_url: 'https://api.example.com' } });
+
+		expect(missingBanner().exists()).toBe(false);
+		expect(syncSwitch().attributes('disabled')).toBeUndefined();
+		expect(noticeSwitch().attributes('disabled')).toBeUndefined();
+	});
+
+	it('同步开关已开启但 API 地址为空时给出警告与跳转链接', async () => {
 		await mountSettings({
 			link: { link_security_enabled: 'false', link_dormant_days: '30', link_sync_enabled: 'true' },
-			email: { email_verify_enabled: 'false' },
+			basic: {},
 		});
 
 		expect(warning().exists()).toBe(true);
-		expect(warning().text()).toContain('邮箱验证');
-		expect(warning().text()).toContain('email_verify_enabled');
+		expect(warning().text()).toContain('API 地址');
+		expect(warning().text()).toContain('verify_base_url');
 		const link = warning().find('a');
-		expect(link.attributes('href')).toBe('/settings/email');
+		expect(link.attributes('href')).toBe('/settings/basic');
 	});
 
-	it('邮箱验证已开启时不显示警告', async () => {
+	it('API 地址已填写时不显示同步警告', async () => {
 		await mountSettings({
 			link: { link_sync_enabled: 'true' },
-			email: { email_verify_enabled: 'true' },
+			basic: { verify_base_url: 'https://api.example.com' },
 		});
 		expect(warning().exists()).toBe(false);
 	});
 
-	it('同步关闭时不显示警告（即使邮箱验证关闭）', async () => {
-		await mountSettings({ link: { link_sync_enabled: 'false' }, email: { email_verify_enabled: 'false' } });
+	it('同步关闭时不显示警告（即使 API 地址为空）', async () => {
+		await mountSettings({ link: { link_sync_enabled: 'false' }, basic: {} });
 		expect(warning().exists()).toBe(false);
-	});
-
-	it('打开同步开关后立即显示警告', async () => {
-		await mountSettings({ email: { email_verify_enabled: 'false' } });
-		expect(warning().exists()).toBe(false);
-		await syncSwitch().setValue(true);
-		expect(warning().exists()).toBe(true);
 	});
 });
 
-describe('LinkSecuritySettings - 休眠提醒邮件的邮箱验证警告', () => {
-	it('提醒开关打开但邮箱验证未开启时给出警告与跳转链接', async () => {
+describe('LinkSecuritySettings - 休眠提醒邮件的 API 地址警告', () => {
+	it('提醒开关打开但 API 地址为空时给出警告与跳转链接', async () => {
 		await mountSettings({
 			link: { link_dormant_notice_enabled: 'true' },
-			email: { email_verify_enabled: 'false' },
+			basic: {},
 		});
 
 		expect(noticeWarning().exists()).toBe(true);
-		expect(noticeWarning().text()).toContain('邮箱验证');
-		expect(noticeWarning().text()).toContain('email_verify_enabled');
+		expect(noticeWarning().text()).toContain('API 地址');
+		expect(noticeWarning().text()).toContain('verify_base_url');
 		expect(noticeWarning().text()).toContain('通知邮件也不会发出');
 		const link = noticeWarning().find('a');
-		expect(link.attributes('href')).toBe('/settings/email');
+		expect(link.attributes('href')).toBe('/settings/basic');
 	});
 
-	it('邮箱验证已开启时不显示警告', async () => {
+	it('API 地址已填写时不显示提醒警告', async () => {
 		await mountSettings({
 			link: { link_dormant_notice_enabled: 'true' },
-			email: { email_verify_enabled: 'true' },
+			basic: { verify_base_url: 'https://api.example.com' },
 		});
 		expect(noticeWarning().exists()).toBe(false);
 	});
 
-	it('提醒开关关闭时不显示警告（即使邮箱验证关闭）', async () => {
+	it('提醒开关关闭时不显示警告（即使 API 地址为空）', async () => {
 		await mountSettings({
 			link: { link_dormant_notice_enabled: 'false' },
-			email: { email_verify_enabled: 'false' },
+			basic: {},
 		});
 		expect(noticeWarning().exists()).toBe(false);
-	});
-
-	it('打开提醒开关后立即显示警告', async () => {
-		await mountSettings({ email: { email_verify_enabled: 'false' } });
-		expect(noticeWarning().exists()).toBe(false);
-		await noticeSwitch().setValue(true);
-		expect(noticeWarning().exists()).toBe(true);
 	});
 
 	it('同步与提醒互不影响：只开提醒时只有提醒的警告', async () => {
 		await mountSettings({
 			link: { link_sync_enabled: 'false', link_dormant_notice_enabled: 'true' },
-			email: { email_verify_enabled: 'false' },
+			basic: {},
 		});
 		expect(warning().exists()).toBe(false);
 		expect(noticeWarning().exists()).toBe(true);
@@ -319,7 +324,7 @@ describe('LinkSecuritySettings - 保存', () => {
 	});
 
 	it('切换开关与天数后提交用户选择', async () => {
-		await mountSettings();
+		await mountSettings({ basic: { verify_base_url: 'https://api.example.com' } });
 		await securitySwitch().setValue(true);
 		await syncSwitch().setValue(true);
 		await noticeSwitch().setValue(true);
@@ -435,6 +440,7 @@ describe('LinkSecuritySettings - 页面说明与布局', () => {
 		const text = wrapper.text();
 		expect(text).toContain('确认邮件');
 		expect(text).toContain('历史评论');
+		expect(text).toContain('曾经通过邮箱验证');
 	});
 
 	it('解释休眠提醒邮件（进入休眠时通知本人，同一休眠周期只提醒一次）', async () => {

@@ -6,6 +6,7 @@ import {
   LINK_SYNC_ENABLED_KEY,
   resolveLinkSwitch,
 } from "./linkSecurity";
+import { VERIFY_BASE_URL_KEY, normalizeVerifyBaseUrl } from "./verifySettings";
 import { isEmailServiceAvailable, isEmailIdentityVerified, sendLinkSyncEmail } from "./email";
 import CommentService from "../orm/commentService";
 import {
@@ -37,7 +38,7 @@ export interface LinkSyncOfferResult {
   /** 未发送的原因（便于测试与排障） */
   reason?:
     | "disabled"
-    | "verify-disabled"
+    | "no-base-url"
     | "no-smtp"
     | "email-unverified"
     | "no-url"
@@ -53,7 +54,7 @@ export interface LinkSyncOfferResult {
  *
  * 只有同时满足下面全部条件才会发出确认邮件：
  *  1. `link_sync_enabled = "true"`（fail-closed）；
- *  2. `email_verify_enabled = "true"`（需求里的硬前提）；
+ *  2. `verify_base_url`（API 地址）非空 —— 确认邮件里的链接需要它；
  *  3. SMTP 可用；
  *  4. 该邮箱已经通过邮箱验证；
  *  5. 本次提交了非空网址，且该邮箱存在**不同网址**的历史评论。
@@ -69,8 +70,10 @@ export async function offerLinkSync(input: LinkSyncOfferInput): Promise<LinkSync
     if (resolveLinkSwitch(await getSetting(LINK_SYNC_ENABLED_KEY)) !== "true") {
       return { sent: false, reason: "disabled" };
     }
-    if ((await getSetting("email_verify_enabled")) !== "true") {
-      return { sent: false, reason: "verify-disabled" };
+    // 链接同步依赖 API 地址（不再依赖 email_verify_enabled）：
+    // 没有配置地址时不发信，避免邮件里出现空/错误的链接。
+    if (normalizeVerifyBaseUrl(await getSetting(VERIFY_BASE_URL_KEY)) === "") {
+      return { sent: false, reason: "no-base-url" };
     }
     if (!(await isEmailServiceAvailable())) {
       return { sent: false, reason: "no-smtp" };

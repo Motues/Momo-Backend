@@ -314,7 +314,7 @@ func dormantNoticePage(targetURL, token string, dormantDays int) string {
 // 口径不下发 email，所以邮箱只能在 GetComments 构建响应时一并记下来。
 // 任何异常只写服务端日志，绝不影响评论列表响应。
 //
-// **发信前提**（doc/link_security.md 第 2.7 节）：总开关 + 休眠提醒开关 + 邮箱验证都开启。
+// **发信前提**（doc/link_security.md 第 2.7 节）：总开关 + 休眠提醒开关 + API 地址非空。
 // 任一不满足就直接返回（连 DormantNotice 都不查）：打开提醒开关后第一次有人访问评论区才开始提醒。
 func (h *CommentHandler) maybeSendDormantNotices(
 	parent *gin.Context,
@@ -326,7 +326,7 @@ func (h *CommentHandler) maybeSendDormantNotices(
 	if !utils.ShouldSendDormantNotice(
 		utils.GetSetting(utils.LinkSecurityEnabledKey),
 		utils.GetSetting(utils.LinkDormantNoticeEnabledKey),
-		utils.GetSetting("email_verify_enabled"),
+		utils.GetSetting(utils.VerifyBaseURLKey),
 	) {
 		return
 	}

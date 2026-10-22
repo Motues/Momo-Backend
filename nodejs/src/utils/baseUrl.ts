@@ -10,7 +10,7 @@ export async function resolveBaseUrl(headers: {
   origin?: string | null;
   host?: string | null;
 }): Promise<string> {
-  const configured = await getSetting("verify_base_url");
+  const configured = (await getSetting("verify_base_url"))?.trim();
   if (configured) return configured.replace(/\/+$/, "");
 
   const origin = headers.origin || headers.host || "";

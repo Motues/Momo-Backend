@@ -1,6 +1,6 @@
 import type { Context } from "hono";
 import { db, schema } from "../../orm/client";
-import { setSetting } from "../../utils/settings";
+import { getAllSettings, setSetting } from "../../utils/settings";
 import { checkKey, extractToken, checkContent, sanitizeUrl, sanitizeHtml, isValidIpBlacklistJson } from "../../utils/security";
 import { validateSpamSettings } from "../../utils/spam";
 import { normalizeEmojiCdnUrls, normalizeEmojiEnabled, validateEmojiCdnUrl, validateEmojiCdnUrls, validateEmojiEnabled } from "../../utils/emoji";
@@ -21,6 +21,16 @@ import {
 } from "../../utils/linkSecurity";
 import { parseMarkdown } from "../../utils/markdown";
 import { resolveMailLogRetentionDays, validateMailLogRetentionDays } from "../../utils/mailLog";
+import {
+  EMAIL_VERIFY_ENABLED_KEY,
+  VERIFY_BASE_URL_KEY,
+  hasApiUrlDependencyKey,
+  normalizeEmailVerifyEnabled,
+  normalizeVerifyBaseUrl,
+  validateApiUrlDependents,
+  validateEmailVerifyEnabled,
+  validateVerifyBaseUrl,
+} from "../../utils/verifySettings";
 import { applyTrustProxySetting } from "../../utils/ip";
 import LogService from "../../utils/log";
 
@@ -275,6 +285,29 @@ export async function importSettings(c: Context): Promise<Response> {
     }
   }
 
+  // API 地址与邮箱验证开关：与 PUT /admin/settings 同一套校验
+  {
+    const bodyRecord = body as Record<string, unknown>;
+    if (VERIFY_BASE_URL_KEY in bodyRecord) {
+      const baseUrlError = validateVerifyBaseUrl(bodyRecord[VERIFY_BASE_URL_KEY]);
+      if (baseUrlError) {
+        return c.json({ code: 400, message: baseUrlError }, 400);
+      }
+    }
+    if (EMAIL_VERIFY_ENABLED_KEY in bodyRecord) {
+      const verifyError = validateEmailVerifyEnabled(bodyRecord[EMAIL_VERIFY_ENABLED_KEY]);
+      if (verifyError) {
+        return c.json({ code: 400, message: verifyError }, 400);
+      }
+    }
+    if (hasApiUrlDependencyKey(bodyRecord)) {
+      const dependencyError = validateApiUrlDependents(bodyRecord, await getAllSettings());
+      if (dependencyError) {
+        return c.json({ code: 400, message: dependencyError }, 400);
+      }
+    }
+  }
+
   // 邮件日志保留天数：与 PUT /admin/settings 同一套校验（0–3650，0 = 永久保留）
   if ("mail_log_retention_days" in (body as Record<string, unknown>)) {
     const retentionError = validateMailLogRetentionDays(
@@ -344,6 +377,17 @@ export async function importSettings(c: Context): Promise<Response> {
     // 邮件日志保留天数：存规范化后的十进制（0 = 永久保留）
     if (key === "mail_log_retention_days") {
       await setSetting(key, String(resolveMailLogRetentionDays(value)));
+      updated.push(key);
+      continue;
+    }
+    // API 地址：去空格与末尾斜杠；邮箱验证开关：存归一化后的 true/false/""
+    if (key === VERIFY_BASE_URL_KEY) {
+      await setSetting(key, normalizeVerifyBaseUrl(value));
+      updated.push(key);
+      continue;
+    }
+    if (key === EMAIL_VERIFY_ENABLED_KEY) {
+      await setSetting(key, normalizeEmailVerifyEnabled(value));
       updated.push(key);
       continue;
     }

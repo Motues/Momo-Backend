@@ -57,13 +57,15 @@
 | key | 说明 |
 |-----|------|
 | `site_name` | 站点名称 |
+| `verify_base_url` | API 地址（站点对外根地址），邮箱验证 / 历史链接同步确认 / 休眠提醒邮件里的链接由它拼出；空串表示未配置 |
+| `email_verify_enabled` | 邮箱验证开关，默认 `"false"`；开启时要求 `verify_base_url` 非空 |
 | `admin_email` | 管理员邮箱（**旧键**：`admin_emails` 为空时回落成单元素列表） |
 | `admin_emails` | 管理员邮箱列表（JSON 数组，最多 10 个，trim + 小写 + 去重）：列表里的人都是博主，见 `doc/admin_emails.md` |
 | `notify_email` | 通知收件邮箱（新评论通知与测试邮件的收件人）；必须命中 `admin_emails`，未配置或不在列表时回落列表第一个 |
 | `link_security_enabled` | 链接安全审查（休眠链接）总开关，默认 `"false"`；**fail-closed**，只有 `"true"` 才算开启 |
 | `link_dormant_days` | 多久没来评论就标记为休眠（整数 1–3650，默认 `"30"`），见 `doc/link_security.md` |
-| `link_sync_enabled` | 历史链接批量更新开关，默认 `"false"`（还要求 `email_verify_enabled = "true"`） |
-| `link_dormant_notice_enabled` | 链接进入休眠时是否给评论者发提醒邮件，默认 `"false"`（还要求 `link_security_enabled` 与 `email_verify_enabled` 都为 `"true"`），见 `doc/link_security.md` 第 2.7 节 |
+| `link_sync_enabled` | 历史链接批量更新开关，默认 `"false"`（还要求 `verify_base_url` 非空） |
+| `link_dormant_notice_enabled` | 链接进入休眠时是否给评论者发提醒邮件，默认 `"false"`（还要求 `link_security_enabled` 为 `"true"` 且 `verify_base_url` 非空），见 `doc/link_security.md` 第 2.7 节 |
 | `admin_name` | 管理员用户名 |
 | `admin_password` | 管理员密码（bcrypt 哈希） |
 | `smtp_host` | SMTP 服务器地址 |

@@ -30,7 +30,7 @@ const LinkSyncRequestTTL = 24 * time.Hour
 //
 // 开启条件（全部满足才发确认邮件，任一条不满足什么都不做、评论照常落库）：
 //  1. link_sync_enabled = "true"（fail-closed）；
-//  2. email_verify_enabled = "true"；
+//  2. verify_base_url（API 地址）非空 —— 确认邮件里的链接需要它；
 //  3. SMTP 可用；
 //  4. 提交评论的邮箱已经通过邮箱验证；
 //  5. 本次提交的 url 非空，且该邮箱存在「url 非空且与本次不同」的历史评论。
@@ -40,7 +40,8 @@ func (h *CommentHandler) maybeRequestLinkSync(c *gin.Context, req model.CommentR
 	if !utils.ResolveLinkSecurityEnabled(utils.GetSetting(utils.LinkSyncEnabledKey)) {
 		return
 	}
-	if utils.GetSetting("email_verify_enabled") != "true" {
+	// 链接同步依赖 API 地址（不再依赖 email_verify_enabled）
+	if utils.NormalizeVerifyBaseURL(utils.GetSetting(utils.VerifyBaseURLKey)) == "" {
 		return
 	}
 	if newURL == "" {
@@ -135,7 +136,7 @@ func (h *CommentHandler) maybeRequestLinkSync(c *gin.Context, req model.CommentR
 // resolvePublicBaseURL 推断对外可访问的站点根地址：优先 verify_base_url，否则从
 // Origin / Host 推断（与验证邮件里的口径一致）。
 func resolvePublicBaseURL(c *gin.Context) string {
-	baseURL := utils.GetSetting("verify_base_url")
+	baseURL := strings.TrimSpace(utils.GetSetting("verify_base_url"))
 	if baseURL == "" {
 		origin := c.GetHeader("Origin")
 		if origin == "" {

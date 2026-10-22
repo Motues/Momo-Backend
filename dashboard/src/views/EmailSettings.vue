@@ -75,31 +75,12 @@
         </div>
       </section>
 
-      <!-- 邮箱验证 -->
-      <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        <h2 class="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
-          <i class="fa-solid fa-shield-halved text-teal-500"></i> 邮箱验证
-        </h2>
-        <div class="flex items-center justify-between mb-4">
-          <div>
-            <p class="text-sm font-medium text-gray-700">启用邮箱验证</p>
-            <p class="text-xs text-gray-400 mt-1">开启后，未验证邮箱的评论将先保存为待审核状态，验证后自动发布</p>
-          </div>
-          <label class="relative shrink-0 ms-4 inline-flex items-center cursor-pointer">
-            <input type="checkbox" v-model="form.email_verify_enabled" class="sr-only peer" true-value="true" false-value="false">
-            <div class="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-teal-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-teal-600"></div>
-            <span class="ms-3 text-sm font-medium whitespace-nowrap text-gray-700">
-              {{ form.email_verify_enabled === 'true' ? '已启用' : '已禁用' }}
-            </span>
-          </label>
-        </div>
-        <div class="pt-4 border-t border-gray-100">
-          <label class="block text-sm font-medium text-gray-700 mb-1">API 地址</label>
-          <input v-model="form.verify_base_url" type="text" placeholder="https://api.example.com"
-            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:border-transparent text-sm" />
-          <p class="text-xs text-gray-400 mt-1">验证邮件链接的基础地址，不能以 / 结尾</p>
-        </div>
-      </section>
+      <!-- 邮箱验证已移至基本设置 → 评论审核 -->
+      <p class="text-xs text-gray-400 -mt-2">
+        邮箱验证已移至
+        <router-link to="/settings/basic" class="text-teal-600 hover:underline font-medium">基本设置 → 评论审核</router-link>，
+        与评论审核规则一起管理。
+      </p>
 
       <!-- 邮件记录 -->
       <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
@@ -208,8 +189,6 @@ const form = reactive({
   email_password: '',
   email_secure: 'true',
   email_enabled: 'true',
-  email_verify_enabled: 'false',
-  verify_base_url: '',
   // 外发邮件日志（「邮件管理」页）的保留天数：0 = 永久保留，默认 30
   mail_log_retention_days: '30',
   reply_template: '',
@@ -272,21 +251,10 @@ const saveSettings = async () => {
   loading.value = true
   saved.value = false
 
-  // 验证：启用邮箱验证时必须填写 API 地址
-  if (form.email_verify_enabled === 'true' && !form.verify_base_url) {
-    toast.error('启用邮箱验证时必须填写 API 地址')
-    loading.value = false
-    return
-  }
-
   try {
     const payload = { ...form }
     if (!payload.email_password) {
       delete payload.email_password
-    }
-    // 去除末尾斜杠
-    if (payload.verify_base_url) {
-      payload.verify_base_url = payload.verify_base_url.replace(/\/+$/, '')
     }
     // 邮件保存天数：归一化后再提交（0 = 永久保留）
     payload.mail_log_retention_days = String(normalizedMailLogRetentionDays.value);

@@ -107,7 +107,7 @@ func TestUpdateSettingsLinkSecurityNormalization(t *testing.T) {
 	resetState(t)
 	token := adminToken(t)
 
-	body := `{"link_security_enabled":" TRUE ","link_sync_enabled":"False","link_dormant_notice_enabled":" True ","link_dormant_days":" 30 "}`
+	body := `{"verify_base_url":"https://blog.example.com","link_security_enabled":" TRUE ","link_sync_enabled":"False","link_dormant_notice_enabled":" True ","link_dormant_days":" 30 "}`
 	requireStatus(t, callWithToken(t, "PUT", "/admin/settings", body, token), http.StatusOK)
 
 	if got := utils.GetSetting("link_security_enabled"); got != "true" {
@@ -407,7 +407,6 @@ func enableSmtpForTest(t *testing.T) {
 	setSetting(t, "smtp_port", "1")
 	setSetting(t, "email_user", "noreply@example.com")
 	setSetting(t, "email_password", "secret")
-	setSetting(t, "verify_base_url", "https://blog.example.com")
 }
 
 // linkSyncRow 读取唯一的 LinkSyncRequest 行
@@ -433,7 +432,7 @@ func linkSyncRowCount(t *testing.T) int {
 func TestLinkSyncTriggerAndConfirm(t *testing.T) {
 	resetState(t)
 	setSetting(t, "link_sync_enabled", "true")
-	setSetting(t, "email_verify_enabled", "true")
+	setSetting(t, "verify_base_url", "https://blog.example.com")
 	enableSmtpForTest(t)
 
 	oldURL := "https://old.example.com"
@@ -520,7 +519,7 @@ func TestLinkSyncTriggerConditions(t *testing.T) {
 	t.Run("同步开关关闭", func(t *testing.T) {
 		base(t, func() {
 			setSetting(t, "link_sync_enabled", "false")
-			setSetting(t, "email_verify_enabled", "true")
+			setSetting(t, "verify_base_url", "https://blog.example.com")
 		})
 		requireStatus(t, callJSON(t, "POST", "/api/comments", newCommentBody), http.StatusOK)
 		if n := linkSyncRowCount(t); n != 0 {
@@ -528,21 +527,33 @@ func TestLinkSyncTriggerConditions(t *testing.T) {
 		}
 	})
 
-	t.Run("邮箱验证关闭", func(t *testing.T) {
+	t.Run("API 地址为空", func(t *testing.T) {
 		base(t, func() {
 			setSetting(t, "link_sync_enabled", "true")
-			setSetting(t, "email_verify_enabled", "false")
+			setSetting(t, "verify_base_url", "")
 		})
 		requireStatus(t, callJSON(t, "POST", "/api/comments", newCommentBody), http.StatusOK)
 		if n := linkSyncRowCount(t); n != 0 {
-			t.Errorf("邮箱验证关闭时不应写记录，实际 %d 条", n)
+			t.Errorf("API 地址为空时不应写记录，实际 %d 条", n)
+		}
+	})
+
+	t.Run("邮箱验证关闭但 API 地址已填：仍然触发", func(t *testing.T) {
+		base(t, func() {
+			setSetting(t, "link_sync_enabled", "true")
+			setSetting(t, "verify_base_url", "https://blog.example.com")
+			setSetting(t, "email_verify_enabled", "false")
+		})
+		requireStatus(t, callJSON(t, "POST", "/api/comments", newCommentBody), http.StatusOK)
+		if n := linkSyncRowCount(t); n != 1 {
+			t.Errorf("只要 API 地址已填就应触发，实际 %d 条", n)
 		}
 	})
 
 	t.Run("SMTP 不可用", func(t *testing.T) {
 		base(t, func() {
 			setSetting(t, "link_sync_enabled", "true")
-			setSetting(t, "email_verify_enabled", "true")
+			setSetting(t, "verify_base_url", "https://blog.example.com")
 			setSetting(t, "smtp_host", "")
 		})
 		requireStatus(t, callJSON(t, "POST", "/api/comments", newCommentBody), http.StatusOK)
@@ -555,7 +566,7 @@ func TestLinkSyncTriggerConditions(t *testing.T) {
 		resetState(t)
 		enableSmtpForTest(t)
 		setSetting(t, "link_sync_enabled", "true")
-		setSetting(t, "email_verify_enabled", "true")
+		setSetting(t, "verify_base_url", "https://blog.example.com")
 		seedLinkComment(t, "老评论", "user@example.com", "https://old.example.com", "approved", 1700000000000)
 		// 没写 EmailVerification：此时会走「发验证邮件」的分支，但不是链接同步
 
@@ -568,7 +579,7 @@ func TestLinkSyncTriggerConditions(t *testing.T) {
 	t.Run("本次提交没有网址", func(t *testing.T) {
 		base(t, func() {
 			setSetting(t, "link_sync_enabled", "true")
-			setSetting(t, "email_verify_enabled", "true")
+			setSetting(t, "verify_base_url", "https://blog.example.com")
 		})
 		body := `{"post_slug":"` + linkTestSlug + `","author":"新评论","email":"user@example.com","content":"没有网址"}`
 		requireStatus(t, callJSON(t, "POST", "/api/comments", body), http.StatusOK)
@@ -580,7 +591,7 @@ func TestLinkSyncTriggerConditions(t *testing.T) {
 	t.Run("没有与本次不同的历史网址", func(t *testing.T) {
 		base(t, func() {
 			setSetting(t, "link_sync_enabled", "true")
-			setSetting(t, "email_verify_enabled", "true")
+			setSetting(t, "verify_base_url", "https://blog.example.com")
 		})
 		// 历史评论的网址与本次完全相同 → 没有需要更新的历史链接
 		body := `{"post_slug":"` + linkTestSlug + `","author":"新评论","email":"user@example.com",` +
@@ -596,7 +607,7 @@ func TestLinkSyncTriggerConditions(t *testing.T) {
 func TestLinkSyncDedupeAndInvalidate(t *testing.T) {
 	resetState(t)
 	setSetting(t, "link_sync_enabled", "true")
-	setSetting(t, "email_verify_enabled", "true")
+	setSetting(t, "verify_base_url", "https://blog.example.com")
 	enableSmtpForTest(t)
 
 	seedLinkComment(t, "老评论", "user@example.com", "https://old.example.com", "approved", 1700000000000)
@@ -658,7 +669,7 @@ func TestLinkSyncDedupeAndInvalidate(t *testing.T) {
 func TestLinkSyncTriggerUsesNormalizedEmailIdentity(t *testing.T) {
 	resetState(t)
 	setSetting(t, "link_sync_enabled", "true")
-	setSetting(t, "email_verify_enabled", "true")
+	setSetting(t, "verify_base_url", "https://blog.example.com")
 	enableSmtpForTest(t)
 
 	seedLinkComment(t, "老评论", "alice@example.com", "https://old.example.com", "approved", 1700000000000)

@@ -195,6 +195,8 @@
 > 会被丢弃为空。后台编辑与数据导入路径同样执行该校验。
 
 > **邮箱验证**：当 `email_verify_enabled` 设为 `"true"` 且 SMTP 已配置时：
+> - **必须先填写 `verify_base_url`（API 地址）**：验证邮件里的链接由它拼出；地址为空时
+>   `PUT /admin/settings` 会拒绝开启（`400 邮箱验证开启时必须填写 API 地址`）
 > - 如果评论者的邮箱尚未验证，评论状态会被设为 `"pending"`
 > - 系统会自动发送验证邮件到评论者邮箱
 > - 验证通过后，所有来自该邮箱的待审核评论会自动变为 `"approved"`
@@ -768,8 +770,9 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
 
 **查询参数**：
 - `type`：按模块筛选（可选）
-  - `basic` — 基本设置（站点信息、评论审核、博主标识、占位符）
-  - `email` — 邮件通知（SMTP 配置、邮箱验证、邮件模板）
+  - `basic` — 基本设置（站点信息（含 API 地址）、评论审核（含邮箱验证）、博主标识、占位符）
+  - `email` — 邮件通知（SMTP 配置、邮件模板、邮件记录；`email_verify_enabled` / `verify_base_url`
+    仍随该组下发以兼容旧面板，新面板不再使用）
   - `security` — 安全设置（CORS、评论密钥、IP/邮箱黑名单）
   - `account` — 账户信息（管理员名称）
   - `emoji` — 表情设置（是否启用、OwO 格式的表情来源地址）
@@ -851,6 +854,8 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
     "admin_email": "admin@example.com",
     "admin_emails": "[\"admin@example.com\"]",
     "notify_email": "admin@example.com",
+    "verify_base_url": "https://api.example.com",
+    "email_verify_enabled": "false",
     "comment_auto_approve": "true",
     "comment_spam_keywords": "",
     "comment_spam_max_links": "0",
@@ -879,6 +884,7 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
     "email_secure": "true",
     "email_enabled": "true",
     "email_verify_enabled": "false",
+    "verify_base_url": "https://api.example.com",
     "mail_log_retention_days": "30",
     "reply_template": "",
     "notification_template": ""
@@ -986,6 +992,7 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
   "allow_origin": "https://myblog.com",
   "email_enabled": "true",
   "email_verify_enabled": "false",
+  "verify_base_url": "https://api.example.com",
   "reply_template": "<div>Hi {{toName}}，<br>{{replyAuthor}} 回复了您：{{replyContent}}</div>",
   "notification_template": "<div>{{commentAuthor}} 评论了 {{postTitle}}：{{commentContent}}</div>",
   "comment_auto_approve": "false",
@@ -1019,6 +1026,11 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
 
 > **注意**：
 > - `email_password` 留空时不覆盖已有密码，仅当传入新值时更新
+> - `verify_base_url`：站点对外根地址（API 地址），用于邮箱验证 / 历史链接同步确认 / 休眠提醒邮件里的链接。
+>   空串表示未配置；非空必须是 `http(s)://` 开头的绝对地址、≤500 字符、不含 query / hash / 用户名密码，
+>   写入时去首尾空格与末尾 `/`。`email_verify_enabled`、`link_sync_enabled`、`link_dormant_notice_enabled`
+>   任一开启时该地址不得为空，否则整批返回 `400`（错误文案见下）；清空地址前必须先关闭这些功能。
+> - `email_verify_enabled`：只接受 `""` / `"true"` / `"false"`（忽略大小写与两侧空格），其余返回 `400`。
 > - `admin_comment_key_enabled` 控制管理员评论密钥的启用/关闭，关闭时自动清除密钥
 > - `comment_verify_enabled` 控制评论无感验证的启用/关闭，默认 `"false"`；开启后提交评论必须携带 `verify_ticket`
 > - `comment_verify_difficulty` 是**访客需要完成的哈希计算总次数**（协议 v2 语义），默认 `"1000000"`；≤26 的历史值会按 `2^值` 自动迁移
@@ -1050,8 +1062,9 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
 >   口径见 [admin_emails.md](./admin_emails.md)
 > - `link_security_enabled` / `link_dormant_days` / `link_sync_enabled` / `link_dormant_notice_enabled`：
 >   链接安全审查的四个键，口径见 [link_security.md](./link_security.md)；`link_dormant_days` 只能是 1–3650 的整数。
->   `link_dormant_notice_enabled`（默认 `"false"`）控制**链接进入休眠时是否给评论者发提醒邮件**，
->   运行时还要求 `email_verify_enabled = "true"`：邮箱验证未开启时即使打开该开关也不会发信
+>   `link_sync_enabled` 与 `link_dormant_notice_enabled` **依赖 `verify_base_url`（API 地址）非空**：
+>   地址为空时 `PUT` 返回 `400`，运行时即使开关打开也不会发信（**不再依赖 `email_verify_enabled`**）。
+>   `link_sync_enabled` 另外仍要求评论者的邮箱存在已验证记录（`EmailVerification.verified = 1`）
 
 > **邮件模板可用占位符**（三端一致：替换为 **HTML 转义后**的值，未匹配的 `{{...}}` 保持原样）：
 > - 回复模板：`{{toName}}` `{{replyAuthor}}` `{{postTitle}}` `{{parentComment}}` `{{replyContent}}` `{{postUrl}}`
@@ -1798,9 +1811,9 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
 > 有效期见下）。页面显示当前链接，并提供「我仍在使用」与「提交新链接」两个表单。
 >
 > 提醒邮件本身只在**三个条件同时满足**时才会发出：`link_security_enabled = "true"` &&
-> `link_dormant_notice_enabled = "true"` && `email_verify_enabled = "true"`（SMTP 可用且
-> `email_enabled != "false"`）。提醒开关默认关闭，未开邮箱验证时即使打开提醒开关也不会发信。
-> 详见 [link_security.md](./link_security.md) 第 2.7 节。
+> `link_dormant_notice_enabled = "true"` && `verify_base_url` 非空（SMTP 可用且
+> `email_enabled != "false"`）。提醒开关默认关闭；API 地址为空时即使打开提醒开关也不会发信。
+> **不再依赖 `email_verify_enabled`**。详见 [link_security.md](./link_security.md) 第 2.7 节。
 
 **响应**：`200` + `text/html`（中文页面）。令牌缺失/未知/已过期时同样是 HTML，文案分别为
 `缺少提醒参数。` / `该提醒已失效或已处理。` / `该提醒已过期，请在评论区留言或等待新的提醒邮件。`
@@ -2016,6 +2029,7 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
       "email_enabled": "true",
       "admin_comment_key": "",
       "email_verify_enabled": "false",
+      "verify_base_url": "https://api.example.com",
       "reply_template": "...",
       "notification_template": "..."
     }

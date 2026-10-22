@@ -1210,7 +1210,7 @@ describe('POST /api/comments —— 历史链接同步', () => {
 	async function linkSyncReady(overrides: Record<string, string> = {}) {
 		await seedSettings({
 			...SMTP_ONLY,
-			email_verify_enabled: 'true',
+			verify_base_url: 'https://blog.example.com',
 			link_sync_enabled: 'true',
 			site_name: 'Momo Blog',
 			...overrides,
@@ -1333,15 +1333,22 @@ describe('POST /api/comments —— 历史链接同步', () => {
 		expect(sentMails).toHaveLength(0);
 	});
 
-	it('email_verify_enabled 未开启时不触发（硬前提）', async () => {
-		await linkSyncReady({ email_verify_enabled: 'false' });
+	it('verify_base_url 为空时不触发（依赖 API 地址，不再依赖邮箱验证）', async () => {
+		await linkSyncReady({ verify_base_url: '' });
 		await postComment({ email: EMAIL, url: NEW_URL }, '203.0.113.97');
 		expect(await allLinkSyncRequests()).toHaveLength(0);
 		expect(sentMails).toHaveLength(0);
 	});
 
+	it('只开 API 地址、不开启全局邮箱验证也能触发', async () => {
+		await linkSyncReady({ email_verify_enabled: 'false' });
+		await postComment({ email: EMAIL, url: NEW_URL }, '203.0.113.97');
+		expect(await allLinkSyncRequests()).toHaveLength(1);
+		expect(sentMails).toHaveLength(1);
+	});
+
 	it('邮箱未通过验证时不触发', async () => {
-		await seedSettings({ ...SMTP_ONLY, email_verify_enabled: 'true', link_sync_enabled: 'true' });
+		await seedSettings({ ...SMTP_ONLY, verify_base_url: 'https://blog.example.com', link_sync_enabled: 'true' });
 		await seedVerification({ email: EMAIL, verified: 0 });
 		await seedComment({ post_slug: SLUG, email: EMAIL, url: OLD_URL });
 		await postComment({ email: EMAIL, url: NEW_URL }, '203.0.113.98');
@@ -1356,7 +1363,7 @@ describe('POST /api/comments —— 历史链接同步', () => {
 	});
 
 	it('没有「url 非空且与本次不同」的历史评论时不触发', async () => {
-		await seedSettings({ ...SMTP_ONLY, email_verify_enabled: 'true', link_sync_enabled: 'true' });
+		await seedSettings({ ...SMTP_ONLY, verify_base_url: 'https://blog.example.com', link_sync_enabled: 'true' });
 		await seedVerification({ email: EMAIL, verified: 1 });
 		await seedComment({ post_slug: SLUG, email: EMAIL, url: NEW_URL, pub_date: 1730000000000 });
 		await postComment({ email: EMAIL, url: NEW_URL }, '203.0.113.100');
@@ -1365,7 +1372,7 @@ describe('POST /api/comments —— 历史链接同步', () => {
 	});
 
 	it('历史评论只有 rejected / deleted 时不算「历史评论」', async () => {
-		await seedSettings({ ...SMTP_ONLY, email_verify_enabled: 'true', link_sync_enabled: 'true' });
+		await seedSettings({ ...SMTP_ONLY, verify_base_url: 'https://blog.example.com', link_sync_enabled: 'true' });
 		await seedVerification({ email: EMAIL, verified: 1 });
 		await seedComment({ post_slug: SLUG, email: EMAIL, url: OLD_URL, status: 'rejected' });
 		await postComment({ email: EMAIL, url: NEW_URL }, '203.0.113.101');
@@ -1373,7 +1380,7 @@ describe('POST /api/comments —— 历史链接同步', () => {
 	});
 
 	it('SMTP 不可用时不触发', async () => {
-		await seedSettings({ email_verify_enabled: 'true', link_sync_enabled: 'true' });
+		await seedSettings({ verify_base_url: 'https://blog.example.com', link_sync_enabled: 'true' });
 		await seedVerification({ email: EMAIL, verified: 1 });
 		await seedComment({ post_slug: SLUG, email: EMAIL, url: OLD_URL });
 		await postComment({ email: EMAIL, url: NEW_URL }, '203.0.113.102');

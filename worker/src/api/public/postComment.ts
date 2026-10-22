@@ -67,7 +67,7 @@ async function getCommentStatus(env: Bindings): Promise<string> {
  * 邮箱验证、历史链接同步与休眠提醒共用同一口径（都在 `c.executionCtx.waitUntil` 里发信）。
  */
 export async function resolveBaseUrl(c: Context<{ Bindings: Bindings }>): Promise<string> {
-  let baseUrl = await getSetting(c.env, "verify_base_url");
+  let baseUrl = (await getSetting(c.env, "verify_base_url"))?.trim();
   if (!baseUrl) {
     const origin = c.req.header("Origin") || c.req.header("Host") || "";
     const protocol = origin.includes("localhost") || origin.includes("127.0.0.1") ? "http" : "https";

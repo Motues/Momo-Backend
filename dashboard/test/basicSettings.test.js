@@ -18,6 +18,9 @@ import { createTestRouter, AdminLayoutStub, pickSelectOption } from './support/h
 
 const DEFAULT_FORM = {
 	site_name: '',
+	// 站点 API 地址与邮箱验证开关（原「邮件通知」页，已合并到基本设置）
+	verify_base_url: '',
+	email_verify_enabled: 'false',
 	comment_auto_approve: 'true',
 	// 审核自动化规则：默认全部为 0（不启用），与后端默认值一致
 	comment_spam_max_links: '0',
@@ -142,7 +145,7 @@ describe('BasicSettings - 加载', () => {
 
 	it('默认值：占位符与文本字段均为空字符串', async () => {
 		await mountSettings({ code: 200, data: {} });
-		['site_name', 'blogger_badge_text', 'placeholder_name', 'placeholder_email', 'placeholder_content', 'placeholder_url']
+		['site_name', 'verify_base_url', 'blogger_badge_text', 'placeholder_name', 'placeholder_email', 'placeholder_content', 'placeholder_url']
 			.forEach((key) => expect(wrapper.vm.form[key]).toBe(''));
 	});
 
@@ -193,7 +196,7 @@ describe('BasicSettings - 开关与条件渲染', () => {
 
 	it('开启博主标签后出现自定义标签输入框', async () => {
 		await mountSettings();
-		await switchToggle(1, true);
+		await switchToggle(2, true);
 		expect(wrapper.vm.form.blogger_badge_enabled).toBe('true');
 		expect(wrapper.find('input[placeholder="例如：博主"]').exists()).toBe(true);
 		expect(wrapper.text()).toContain('已启用');
@@ -201,9 +204,85 @@ describe('BasicSettings - 开关与条件渲染', () => {
 
 	it('关闭博主标签后输入框再次隐藏', async () => {
 		await mountSettings();
-		await switchToggle(1, true);
-		await switchToggle(1, false);
+		await switchToggle(2, true);
+		await switchToggle(2, false);
 		expect(wrapper.find('input[placeholder="例如：博主"]').exists()).toBe(false);
+	});
+});
+
+describe('BasicSettings - API 地址与邮箱验证', () => {
+	const baseUrlInput = () => wrapper.get('[data-test="verify-base-url"]');
+	const emailVerifySwitch = () => wrapper.get('[data-test="email-verify-enabled"]');
+
+	it('站点信息里渲染 API 地址输入框，默认空', async () => {
+		await mountSettings();
+		expect(baseUrlInput().exists()).toBe(true);
+		expect(baseUrlInput().element.value).toBe('');
+		expect(wrapper.text()).toContain('不填写时这些功能无法开启');
+	});
+
+	it('加载时回填 API 地址与邮箱验证开关', async () => {
+		await mountSettings({
+			code: 200,
+			data: { verify_base_url: 'https://api.example.com', email_verify_enabled: 'true' },
+		});
+		expect(baseUrlInput().element.value).toBe('https://api.example.com');
+		expect(wrapper.vm.form.email_verify_enabled).toBe('true');
+	});
+
+	it('API 地址为空时邮箱验证开关禁用；填上地址后可用', async () => {
+		await mountSettings();
+		expect(emailVerifySwitch().attributes('disabled')).toBeDefined();
+
+		await baseUrlInput().setValue('https://api.example.com');
+		expect(emailVerifySwitch().attributes('disabled')).toBeUndefined();
+	});
+
+	it('已开启的旧配置即使没有地址也允许关闭', async () => {
+		await mountSettings({
+			code: 200,
+			data: { email_verify_enabled: 'true' },
+		});
+		expect(emailVerifySwitch().attributes('disabled')).toBeUndefined();
+	});
+
+	it('非法的 API 地址拒绝保存', async () => {
+		await mountSettings();
+		await baseUrlInput().setValue('api.example.com');
+		await saveButton().trigger('click');
+		await flushPromises();
+		expect(toastMock.error).toHaveBeenCalledWith('API 地址必须是 http(s) 开头的完整地址');
+		expect(requestMock.put).not.toHaveBeenCalled();
+	});
+
+	it('只有斜杠的 API 地址不会被当成空串放过', async () => {
+		await mountSettings();
+		await baseUrlInput().setValue('///');
+		await saveButton().trigger('click');
+		await flushPromises();
+		expect(toastMock.error).toHaveBeenCalledWith('API 地址必须是 http(s) 开头的完整地址');
+		expect(requestMock.put).not.toHaveBeenCalled();
+	});
+
+	it('邮箱验证开启但 API 地址为空时拒绝保存', async () => {
+		await mountSettings();
+		wrapper.vm.form.email_verify_enabled = 'true';
+		await saveButton().trigger('click');
+		await flushPromises();
+		expect(toastMock.error).toHaveBeenCalledWith('邮箱验证开启时必须填写 API 地址');
+		expect(requestMock.put).not.toHaveBeenCalled();
+	});
+
+	it('保存时提交归一化后的 API 地址与邮箱验证开关', async () => {
+		await mountSettings();
+		await baseUrlInput().setValue('https://api.example.com///');
+		await emailVerifySwitch().setValue(true);
+		await saveButton().trigger('click');
+		await flushPromises();
+		const payload = requestMock.put.mock.calls.at(-1)[1];
+		expect(payload.verify_base_url).toBe('https://api.example.com');
+		expect(payload.email_verify_enabled).toBe('true');
+		expect(wrapper.vm.form.verify_base_url).toBe('https://api.example.com');
 	});
 });
 

@@ -345,6 +345,8 @@ describe("GET /admin/settings", () => {
     const basicKeys = [
       "site_name",
       "admin_email",
+      "verify_base_url",
+      "email_verify_enabled",
       "comment_auto_approve",
       "comment_spam_keywords",
       "comment_spam_max_links",

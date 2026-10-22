@@ -36,6 +36,7 @@ const TOUCHED = [
   "link_sync_enabled",
   "link_dormant_notice_enabled",
   "email_verify_enabled",
+  "verify_base_url",
   "mail_log_retention_days",
   "smtp_host",
   "smtp_port",
@@ -208,6 +209,9 @@ describe("PUT /admin/settings — 多管理员邮箱", () => {
 
 describe("PUT /admin/settings — 链接安全审查", () => {
   it("开关归一化后落库（fail-closed 取值只是校验，不做语义转换）", async () => {
+    // 链接同步 / 休眠提醒开启时要求 API 地址非空
+    expect((await put({ verify_base_url: "https://api.example.com" })).status).toBe(200);
+
     expect((await put({ link_security_enabled: " TRUE " })).status).toBe(200);
     expect((await getGroup("link")).link_security_enabled).toBe("true");
 
@@ -238,6 +242,73 @@ describe("PUT /admin/settings — 链接安全审查", () => {
   it("天数合法值落库为整数", async () => {
     expect((await put({ link_dormant_days: " 45 " })).status).toBe(200);
     expect((await getGroup("link")).link_dormant_days).toBe("45");
+  });
+});
+
+describe("PUT /admin/settings — API 地址与邮箱验证", () => {
+  it("type=basic 下发 verify_base_url 与 email_verify_enabled", async () => {
+    await setSetting("verify_base_url", "https://api.example.com");
+    await setSetting("email_verify_enabled", "true");
+    const data = await getGroup("basic");
+    expect(data.verify_base_url).toBe("https://api.example.com");
+    expect(data.email_verify_enabled).toBe("true");
+  });
+
+  it("API 地址归一化：去首尾空格与末尾斜杠", async () => {
+    expect((await put({ verify_base_url: "  https://api.example.com///  " })).status).toBe(200);
+    expect((await getGroup("basic")).verify_base_url).toBe("https://api.example.com");
+  });
+
+  it("非法 API 地址整批拒绝且文案固定", async () => {
+    for (const value of ["api.example.com", "ftp://api.example.com", "https://", "https://a.com?x=1", "https://u:p@a.com"]) {
+      const result = await put({ verify_base_url: value, site_name: "不应写入" });
+      expect(result.status, value).toBe(400);
+      expect(result.body.message, value).toBe("verify_base_url 必须是 http(s) 开头的完整地址");
+      expect((await getGroup("basic")).site_name ?? "").not.toBe("不应写入");
+    }
+  });
+
+  it("邮箱验证开关只接受 true / false / 空串", async () => {
+    expect((await put({ email_verify_enabled: "yes" })).body.message).toBe(
+      "email_verify_enabled 只能是 true 或 false"
+    );
+    expect((await put({ verify_base_url: "https://api.example.com" })).status).toBe(200);
+    expect((await put({ email_verify_enabled: " TRUE " })).status).toBe(200);
+    expect((await getGroup("basic")).email_verify_enabled).toBe("true");
+  });
+
+  it("开启邮箱验证 / 链接同步 / 休眠提醒前必须填写 API 地址", async () => {
+    expect((await put({ email_verify_enabled: "true" })).body.message).toBe(
+      "邮箱验证开启时必须填写 API 地址"
+    );
+    expect((await put({ link_sync_enabled: "true" })).body.message).toBe(
+      "历史链接同步开启时必须填写 API 地址"
+    );
+    expect((await put({ link_dormant_notice_enabled: "true" })).body.message).toBe(
+      "休眠提醒邮件开启时必须填写 API 地址"
+    );
+  });
+
+  it("清空 API 地址会被仍开启的依赖功能拦住；关闭依赖后可清空", async () => {
+    expect((await put({ verify_base_url: "https://api.example.com" })).status).toBe(200);
+    expect((await put({ link_sync_enabled: "true" })).status).toBe(200);
+    expect((await put({ verify_base_url: "" })).body.message).toBe(
+      "历史链接同步开启时必须填写 API 地址"
+    );
+
+    expect((await put({ link_sync_enabled: "false" })).status).toBe(200);
+    expect((await put({ verify_base_url: "" })).status).toBe(200);
+    expect((await getGroup("basic")).verify_base_url).toBe("");
+  });
+
+  it("同一请求里同时填地址并开启功能可以通过", async () => {
+    const result = await put({
+      verify_base_url: "https://api.example.com",
+      email_verify_enabled: "true",
+      link_sync_enabled: "true",
+      link_dormant_notice_enabled: "true",
+    });
+    expect(result.status).toBe(200);
   });
 });
 
@@ -309,6 +380,7 @@ describe("导出 / 导入往返", () => {
   it("新键都能导出并原样导回", async () => {
     await put({ emoji_cdn_urls: '["https://a.example.com/owo.json","https://b.example.com/owo.json"]' });
     await put({ admin_emails: '["a@x.com","b@y.com"]', notify_email: "b@y.com" });
+    await put({ verify_base_url: "https://api.example.com" });
     await put({ link_security_enabled: "true", link_dormant_days: "45", link_sync_enabled: "true" });
     await put({ link_dormant_notice_enabled: "true" });
 

@@ -35,16 +35,15 @@ const SMTP = {
 	email_password: 'secret',
 };
 
-/** 一份「链接安全开启 + 提醒开关开启 + 邮箱验证开启 + SMTP 可用 + 基地址固定」的配置 */
+/** 一份「链接安全开启 + 提醒开关开启 + API 地址已填 + SMTP 可用 + 基地址固定」的配置 */
 const BASE_SETTINGS: Record<string, string> = {
 	...SMTP,
 	site_name: 'Momo Blog',
 	verify_base_url: 'https://blog.example.com',
 	link_security_enabled: 'true',
 	link_dormant_days: '30',
-	// 休眠提醒邮件的两个前提（doc/link_security.md 第 2.7 节）：提醒开关 + 邮箱验证
+	// 休眠提醒邮件的前提（doc/link_security.md 第 2.7 节）：总开关 + 提醒开关 + API 地址
 	link_dormant_notice_enabled: 'true',
-	email_verify_enabled: 'true',
 };
 
 beforeEach(async () => {
@@ -215,8 +214,8 @@ describe('惰性检测 —— 公开评论列表触发休眠提醒', () => {
 		expect(await countMailLogs()).toBe(0);
 	});
 
-	it('email_verify_enabled = "false" → 即使提醒开关打开也不发信（硬前提）', async () => {
-		await seedSettings({ ...BASE_SETTINGS, email_verify_enabled: 'false' });
+	it('verify_base_url 为空 → 即使提醒开关打开也不发信（硬前提）', async () => {
+		await seedSettings({ ...BASE_SETTINGS, verify_base_url: '' });
 		await seedDormantComment();
 
 		const res = await readComments();
@@ -224,6 +223,17 @@ describe('惰性检测 —— 公开评论列表触发休眠提醒', () => {
 		expect(res.body.data.comments[0].urlDormant).toBe(true);
 		expect(sentMails).toHaveLength(0);
 		expect(await allDormantNotices()).toHaveLength(0);
+	});
+
+	it('email_verify_enabled = "false" 不影响休眠提醒（只看 API 地址）', async () => {
+		await seedSettings({ ...BASE_SETTINGS, email_verify_enabled: 'false' });
+		await seedDormantComment();
+
+		const res = await readComments();
+		expect(res.status).toBe(200);
+		expect(res.body.data.comments[0].urlDormant).toBe(true);
+		expect(sentMails).toHaveLength(1);
+		expect(await allDormantNotices()).toHaveLength(1);
 	});
 
 	it('未配置 SMTP → 不发信、不落记录，也不影响评论列表响应', async () => {

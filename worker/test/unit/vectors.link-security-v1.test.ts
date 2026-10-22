@@ -245,21 +245,21 @@ describe('vectors/link-security-v1 — 休眠提醒发信前提（notice.sendGat
 				shouldSendDormantNotice({
 					securityEnabled: testCase.securityEnabled,
 					noticeEnabled: testCase.noticeEnabled,
-					emailVerifyEnabled: testCase.emailVerifyEnabled,
+					apiBaseUrl: testCase.apiBaseUrl,
 				})
 			).toBe(testCase.expect);
 		});
 	}
 
-	it('总开关 / 提醒开关 / 邮箱验证 必须同时开启（穷举 8 种组合）', () => {
+	it('总开关 / 提醒开关 / API 地址 必须同时具备（穷举 2×2×2 种组合）', () => {
 		for (const securityEnabled of ['true', 'false']) {
 			for (const noticeEnabled of ['true', 'false']) {
-				for (const emailVerifyEnabled of ['true', 'false']) {
+				for (const apiBaseUrl of ['https://api.example.com', '']) {
 					expect(
-						shouldSendDormantNotice({ securityEnabled, noticeEnabled, emailVerifyEnabled }),
-						`${securityEnabled}/${noticeEnabled}/${emailVerifyEnabled}`
+						shouldSendDormantNotice({ securityEnabled, noticeEnabled, apiBaseUrl }),
+						`${securityEnabled}/${noticeEnabled}/${apiBaseUrl}`
 					).toBe(
-						securityEnabled === 'true' && noticeEnabled === 'true' && emailVerifyEnabled === 'true'
+						securityEnabled === 'true' && noticeEnabled === 'true' && apiBaseUrl !== ''
 					);
 				}
 			}

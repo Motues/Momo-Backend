@@ -9,7 +9,7 @@ import { createTestRouter, AdminLayoutStub } from './support/harness.js';
  * keywords 用于锁定卡片说明里的关键信息。
  */
 const EXPECTED_CARDS = [
-	{ href: '/settings/basic', title: '基本设置', keywords: ['站点名称', '管理员邮箱', '管理员评论密钥', '评论审核', '博主标识', '占位符'] },
+	{ href: '/settings/basic', title: '基本设置', keywords: ['站点名称', 'API 地址', '管理员邮箱', '管理员评论密钥', '评论审核', '邮箱验证', '博主标识', '占位符'] },
 	{ href: '/settings/account', title: '账户安全' },
 	{ href: '/settings/email', title: '邮件通知', keywords: ['SMTP'] },
 	{ href: '/settings/security', title: '访问控制', keywords: ['来源白名单', 'IP', '邮箱黑名单', '真实 IP 识别'] },

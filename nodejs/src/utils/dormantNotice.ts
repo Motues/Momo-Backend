@@ -17,6 +17,7 @@ import {
   getDormantNoticesByEmailUrls,
   upsertDormantNotice,
 } from "../orm/dormantNoticeService";
+import { VERIFY_BASE_URL_KEY } from "./verifySettings";
 
 /**
  * 休眠链接的**惰性提醒**（见 doc/link_security.md 第 2.7 节）。
@@ -52,8 +53,9 @@ const MAX_DORMANT_NOTICES_PER_REQUEST = 3;
  * 给这批「当前休眠」的链接发提醒邮件。
  *
  * - 同一个 `(邮箱, 网址)` 只处理一次；查不到最后评论时间的直接跳过（那种情况本就不会判为休眠）；
- * - **发信前提**（doc/link_security.md 第 2.7 节）：总开关 + 提醒开关 + 邮箱验证都开启才发信，
+ * - **发信前提**（doc/link_security.md 第 2.7 节）：总开关 + 提醒开关 + API 地址非空才发信，
  *   任一不满足直接返回（不查记录、不落记录）—— 「打开开关后第一次访问评论区才开始提醒」；
+ *   不再依赖 `email_verify_enabled`；
  * - 发信函数在 SMTP 未配置 / 邮件通知关闭 / 发送失败时返回 `null` → **不落记录**，下次读取重试；
  * - 只有真正发出去（拿到返回）才 upsert 记录：换新令牌、刷新有效期、`notify_count` +1。
  */
@@ -63,12 +65,12 @@ export async function notifyDormantLinks(
 ): Promise<void> {
   if (!baseUrl || candidates.length === 0) return;
 
-  const [securityEnabled, noticeEnabled, emailVerifyEnabled] = await Promise.all([
+  const [securityEnabled, noticeEnabled, apiBaseUrl] = await Promise.all([
     getSetting(LINK_SECURITY_ENABLED_KEY),
     getSetting(LINK_DORMANT_NOTICE_ENABLED_KEY),
-    getSetting("email_verify_enabled"),
+    getSetting(VERIFY_BASE_URL_KEY),
   ]);
-  if (!shouldSendDormantNotice({ securityEnabled, noticeEnabled, emailVerifyEnabled })) {
+  if (!shouldSendDormantNotice({ securityEnabled, noticeEnabled, apiBaseUrl })) {
     return;
   }
 

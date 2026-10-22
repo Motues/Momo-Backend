@@ -53,15 +53,16 @@ func ResolveLinkSecurityEnabled(stored string) bool {
 
 // ShouldSendDormantNotice 休眠提醒邮件的**发信前提**（doc/link_security.md 第 2.7 节）：
 //
-//	发信 = link_security_enabled && link_dormant_notice_enabled && email_verify_enabled
+//	发信 = link_security_enabled && link_dormant_notice_enabled && verify_base_url 非空
 //
-// 三个值一律 fail-closed（归一化后等于 "true" 才算开启）：功能没开、提醒开关没开、
-// 或站点没开邮箱验证时，一封提醒都不发 —— 面板上的警告与这里完全同口径。
+// 两个开关一律 fail-closed（归一化后等于 "true" 才算开启）；API 地址只做
+// TrimSpace 后非空判定 —— 没有地址就没有可用的提醒页链接，一封都不发。
+// **不再依赖 email_verify_enabled**：只要有 API 地址就可以发提醒邮件。
 // SMTP 可用性与 email_enabled 由发信函数再检查一次（不合并进本函数，便于单元测试）。
-func ShouldSendDormantNotice(securityEnabled, noticeEnabled, emailVerifyEnabled string) bool {
+func ShouldSendDormantNotice(securityEnabled, noticeEnabled, apiBaseURL string) bool {
 	return ResolveLinkSecurityEnabled(securityEnabled) &&
 		ResolveLinkSecurityEnabled(noticeEnabled) &&
-		ResolveLinkSecurityEnabled(emailVerifyEnabled)
+		strings.TrimSpace(apiBaseURL) != ""
 }
 
 // ValidateLinkSwitch 写入路径校验：归一化后只能是 "" / "true" / "false"。

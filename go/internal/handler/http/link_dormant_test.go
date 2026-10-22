@@ -146,12 +146,12 @@ func mailLogCountOf(t *testing.T, mailType string) int {
 	return n
 }
 
-// enableDormantNoticeForTest 打开休眠提醒邮件的两个前提（doc/link_security.md 第 2.7 节）：
-// 提醒开关本身 + 邮箱验证（未开邮箱验证时即使提醒开关打开也不会发信）。
+// enableDormantNoticeForTest 打开休眠提醒邮件的前提（doc/link_security.md 第 2.7 节）：
+// 提醒开关本身 + API 地址（不再依赖邮箱验证）。
 func enableDormantNoticeForTest(t *testing.T) {
 	t.Helper()
 	setSetting(t, utils.LinkDormantNoticeEnabledKey, "true")
-	setSetting(t, "email_verify_enabled", "true")
+	setSetting(t, "verify_base_url", "https://blog.example.com")
 }
 
 // ---------------------------------------------------------------------------
@@ -408,9 +408,9 @@ func TestDormantNoticeSweep(t *testing.T) {
 		fake := installFakeMailer(t, nil)
 		setSetting(t, "link_security_enabled", "true")
 		setSetting(t, "link_dormant_days", "30")
-		// 刻意只打开总开关与邮箱验证，提醒开关保持默认关闭
+		// 刻意只打开总开关与 API 地址，提醒开关保持默认关闭
 		setSetting(t, "link_dormant_notice_enabled", "false")
-		setSetting(t, "email_verify_enabled", "true")
+		setSetting(t, "verify_base_url", "https://blog.example.com")
 		enableSmtpForTest(t)
 
 		seedLinkComment(t, "甲", "a@x.com", "https://a.example.com", "approved", now-90*day)
@@ -426,8 +426,8 @@ func TestDormantNoticeSweep(t *testing.T) {
 		}
 	})
 
-	// 邮箱验证是硬前提：未开启时即使提醒开关打开也不会发信（面板同款警告）
-	t.Run("邮箱验证关闭：提醒开关打开也不发信、不落记录", func(t *testing.T) {
+	// API 地址是硬前提：未填写时即使提醒开关打开也不会发信（面板同款警告）
+	t.Run("API 地址为空：提醒开关打开也不发信、不落记录", func(t *testing.T) {
 		resetState(t)
 		withFixedNow(t, now)
 		syncDormantTasks(t)
@@ -435,17 +435,17 @@ func TestDormantNoticeSweep(t *testing.T) {
 		setSetting(t, "link_security_enabled", "true")
 		setSetting(t, "link_dormant_days", "30")
 		setSetting(t, "link_dormant_notice_enabled", "true")
-		setSetting(t, "email_verify_enabled", "false")
+		setSetting(t, "verify_base_url", "")
 		enableSmtpForTest(t)
 
 		seedLinkComment(t, "甲", "a@x.com", "https://a.example.com", "approved", now-90*day)
 
 		linkComments(t)
 		if got := fake.count(); got != 0 {
-			t.Errorf("邮箱验证关闭时不应发信，实际 %d 封", got)
+			t.Errorf("API 地址为空时不应发信，实际 %d 封", got)
 		}
 		if got := dormantNoticeCount(t); got != 0 {
-			t.Errorf("邮箱验证关闭时不应落记录，实际 %d 行", got)
+			t.Errorf("API 地址为空时不应落记录，实际 %d 行", got)
 		}
 	})
 

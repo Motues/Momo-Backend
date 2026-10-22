@@ -63,6 +63,9 @@ describe('GET /admin/settings', () => {
 			site_name: 'Momo',
 			allow_origin: 'https://a.com',
 			smtp_host: 'h',
+			// API 地址与邮箱验证开关也属于基础分组（面板已合并到「站点信息 / 评论审核」）
+			verify_base_url: 'https://api.example.com',
+			email_verify_enabled: 'true',
 			// 审核自动化四项规则都属于基础分组
 			comment_spam_keywords: '["加微信"]',
 			comment_spam_max_links: '5',
@@ -71,6 +74,8 @@ describe('GET /admin/settings', () => {
 		});
 		const res = await api('/admin/settings?type=basic', { headers: authed() });
 		expect(res.body.data.site_name).toBe('Momo');
+		expect(res.body.data.verify_base_url).toBe('https://api.example.com');
+		expect(res.body.data.email_verify_enabled).toBe('true');
 		expect(res.body.data.comment_spam_keywords).toBe('["加微信"]');
 		expect(res.body.data.comment_spam_max_links).toBe('5');
 		expect(res.body.data.comment_spam_min_length).toBe('0');
@@ -467,6 +472,7 @@ describe('PUT /admin/settings', () => {
 			method: 'PUT',
 			headers: authed(),
 			body: {
+				verify_base_url: 'https://api.example.com',
 				link_security_enabled: ' TRUE ',
 				link_dormant_days: ' 30 ',
 				link_sync_enabled: 'False',
@@ -474,6 +480,7 @@ describe('PUT /admin/settings', () => {
 			},
 		});
 		expect(put.status).toBe(200);
+		expect(await rawSetting('verify_base_url')).toBe('https://api.example.com');
 		expect(await rawSetting('link_security_enabled')).toBe('true');
 		expect(await rawSetting('link_dormant_days')).toBe('30');
 		expect(await rawSetting('link_sync_enabled')).toBe('false');
@@ -507,6 +514,84 @@ describe('PUT /admin/settings', () => {
 		}
 	});
 
+	it('API 地址：归一化落库、非法值整批拒绝', async () => {
+		const put = await api('/admin/settings', {
+			method: 'PUT',
+			headers: authed(),
+			body: { verify_base_url: '  https://api.example.com///  ' },
+		});
+		expect(put.status).toBe(200);
+		expect(await rawSetting('verify_base_url')).toBe('https://api.example.com');
+
+		for (const value of ['api.example.com', 'ftp://api.example.com', 'https://', 'https://a.com?x=1', 'https://u:p@a.com']) {
+			const res = await api('/admin/settings', {
+				method: 'PUT',
+				headers: authed(),
+				body: { verify_base_url: value, site_name: '不应写入' },
+			});
+			expect(res.status, value).toBe(400);
+			expect(res.body.message, value).toBe('verify_base_url 必须是 http(s) 开头的完整地址');
+			expect(await rawSetting('site_name')).toBeNull();
+		}
+	});
+
+	it('邮箱验证 / 链接同步 / 休眠提醒开启时必须填写 API 地址', async () => {
+		const cases: Array<[Record<string, string>, string]> = [
+			[{ email_verify_enabled: 'true' }, '邮箱验证开启时必须填写 API 地址'],
+			[{ link_sync_enabled: 'true' }, '历史链接同步开启时必须填写 API 地址'],
+			[{ link_dormant_notice_enabled: 'true' }, '休眠提醒邮件开启时必须填写 API 地址'],
+			[{ email_verify_enabled: 'yes' }, 'email_verify_enabled 只能是 true 或 false'],
+		];
+		for (const [body, message] of cases) {
+			const res = await api('/admin/settings', {
+				method: 'PUT',
+				headers: authed(),
+				body: { ...body, site_name: '不应写入' },
+			});
+			expect(res.status, JSON.stringify(body)).toBe(400);
+			expect(res.body.message, JSON.stringify(body)).toBe(message);
+			expect(await rawSetting('site_name')).toBeNull();
+		}
+	});
+
+	it('清空 API 地址会被仍开启的依赖功能拦住；关闭依赖后可清空', async () => {
+		await seedSettings({ verify_base_url: 'https://api.example.com', link_sync_enabled: 'true' });
+		const blocked = await api('/admin/settings', {
+			method: 'PUT',
+			headers: authed(),
+			body: { verify_base_url: '' },
+		});
+		expect(blocked.status).toBe(400);
+		expect(blocked.body.message).toBe('历史链接同步开启时必须填写 API 地址');
+
+		await api('/admin/settings', {
+			method: 'PUT',
+			headers: authed(),
+			body: { link_sync_enabled: 'false' },
+		});
+		const cleared = await api('/admin/settings', {
+			method: 'PUT',
+			headers: authed(),
+			body: { verify_base_url: '' },
+		});
+		expect(cleared.status).toBe(200);
+		expect(await rawSetting('verify_base_url')).toBe('');
+	});
+
+	it('同一请求里同时填地址并开启功能可以通过', async () => {
+		const res = await api('/admin/settings', {
+			method: 'PUT',
+			headers: authed(),
+			body: {
+				verify_base_url: 'https://api.example.com',
+				email_verify_enabled: 'true',
+				link_sync_enabled: 'true',
+				link_dormant_notice_enabled: 'true',
+			},
+		});
+		expect(res.status).toBe(200);
+	});
+
 	it('邮件日志保留天数：合法值归一化落库、非法值整批拒绝', async () => {
 		const put = await api('/admin/settings', {
 			method: 'PUT',
@@ -538,6 +623,7 @@ describe('PUT /admin/settings', () => {
 			body: {
 				admin_emails: '[" A@X.com ", "a@x.com"]',
 				notify_email: 'A@X.com',
+				verify_base_url: 'https://api.example.com',
 				link_security_enabled: ' TRUE ',
 				link_dormant_days: '45',
 				link_sync_enabled: 'false',
@@ -548,6 +634,7 @@ describe('PUT /admin/settings', () => {
 		expect(res.status).toBe(200);
 		expect(await rawSetting('admin_emails')).toBe('["a@x.com"]');
 		expect(await rawSetting('notify_email')).toBe('a@x.com');
+		expect(await rawSetting('verify_base_url')).toBe('https://api.example.com');
 		expect(await rawSetting('link_security_enabled')).toBe('true');
 		expect(await rawSetting('link_dormant_days')).toBe('45');
 		expect(await rawSetting('link_sync_enabled')).toBe('false');
@@ -566,10 +653,12 @@ describe('PUT /admin/settings', () => {
 		expect(await rawSetting('site_name')).toBeNull();
 	});
 
-	it('导出包含新增的六个键', async () => {
+	it('导出包含新增的设置键（链接安全 / API 地址 / 邮箱验证 / 表情）', async () => {
 		await seedSettings({
 			admin_emails: '["a@x.com"]',
 			notify_email: 'a@x.com',
+			verify_base_url: 'https://api.example.com',
+			email_verify_enabled: 'true',
 			link_security_enabled: 'true',
 			link_dormant_days: '30',
 			link_sync_enabled: 'true',
@@ -580,6 +669,8 @@ describe('PUT /admin/settings', () => {
 		expect(exported.body.data.settings).toMatchObject({
 			admin_emails: '["a@x.com"]',
 			notify_email: 'a@x.com',
+			verify_base_url: 'https://api.example.com',
+			email_verify_enabled: 'true',
 			link_security_enabled: 'true',
 			link_dormant_days: '30',
 			link_sync_enabled: 'true',

@@ -382,7 +382,7 @@ describe("历史链接批量更新（确认邮件 + 确认端点）", () => {
 
   async function enableLinkSync() {
     await setSetting("link_sync_enabled", "true");
-    await setSetting("email_verify_enabled", "true");
+    await setSetting("verify_base_url", "https://blog.example.com");
     await setSetting("notify_email", "admin@example.com");
   }
 
@@ -395,13 +395,23 @@ describe("历史链接批量更新（确认邮件 + 确认端点）", () => {
     expect(mailsWithSubject(smtp.messages, "确认更新")).toHaveLength(0);
   });
 
-  it("缺少邮箱验证功能时不发信（需求里的硬前提）", async () => {
+  it("缺少 API 地址时不发信（依赖 API 地址，不再依赖邮箱验证）", async () => {
     await setSetting("link_sync_enabled", "true");
     markEmailVerified("a@example.com");
     seed({ email: "a@example.com", url: "https://old.example.com" });
 
     await postComment(commentBody({ email: "a@example.com", url: "https://new.example.com" }));
     expect(linkSyncRows()).toHaveLength(0);
+  });
+
+  it("只开 API 地址、不开启邮箱验证也能发信", async () => {
+    await enableLinkSync();
+    await setSetting("email_verify_enabled", "false");
+    markEmailVerified("a@example.com");
+    seed({ email: "a@example.com", url: "https://old.example.com" });
+
+    await postComment(commentBody({ email: "a@example.com", url: "https://new.example.com" }));
+    expect(linkSyncRows()).toHaveLength(1);
   });
 
   it("邮箱未验证时不发信", async () => {

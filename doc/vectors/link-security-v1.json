@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "note": "链接安全审查契约 v1：四个设置键（开关 fail-closed、休眠天数 1-3650 默认 30）、休眠判定（严格大于 N 天、再次评论自动解除）、人工确认豁免（有效期 = 确认时的休眠天数，读取时严格大于当前时间）与休眠提醒邮件的发信前提（总开关 + 提醒开关 + 邮箱验证）三端必须逐条一致。由 scripts/gen-link-security-vectors.js 生成，请勿手改。",
+  "note": "链接安全审查契约 v1：四个设置键（开关 fail-closed、休眠天数 1-3650 默认 30）、休眠判定（严格大于 N 天、再次评论自动解除）、人工确认豁免（有效期 = 确认时的休眠天数，读取时严格大于当前时间）与休眠提醒邮件的发信前提（总开关 + 提醒开关 + API 地址非空）三端必须逐条一致。由 scripts/gen-link-security-vectors.js 生成，请勿手改。",
   "keys": {
     "securityEnabled": "link_security_enabled",
     "dormantDays": "link_dormant_days",
@@ -417,59 +417,59 @@
     ],
     "sendGate": [
       {
-        "name": "三个前提都开启：发信",
+        "name": "三个前提都具备：发信",
         "securityEnabled": "true",
         "noticeEnabled": "true",
-        "emailVerifyEnabled": "true",
+        "apiBaseUrl": "https://api.example.com",
         "expect": true
       },
       {
-        "name": "提醒开关关闭：不发（即使链接安全与邮箱验证都开着）",
+        "name": "提醒开关关闭：不发（即使链接安全开着、API 地址已填）",
         "securityEnabled": "true",
         "noticeEnabled": "false",
-        "emailVerifyEnabled": "true",
+        "apiBaseUrl": "https://api.example.com",
         "expect": false
       },
       {
         "name": "提醒开关是脏值：fail-closed 不发",
         "securityEnabled": "true",
         "noticeEnabled": "yes",
-        "emailVerifyEnabled": "true",
+        "apiBaseUrl": "https://api.example.com",
         "expect": false
       },
       {
-        "name": "邮箱验证关闭：不发（需求里的硬前提）",
+        "name": "API 地址为空：不发（不再依赖邮箱验证）",
         "securityEnabled": "true",
         "noticeEnabled": "true",
-        "emailVerifyEnabled": "false",
+        "apiBaseUrl": "",
         "expect": false
       },
       {
-        "name": "邮箱验证未配置（空串）：不发",
+        "name": "API 地址只有空白：不发",
         "securityEnabled": "true",
         "noticeEnabled": "true",
-        "emailVerifyEnabled": "",
+        "apiBaseUrl": "   ",
         "expect": false
       },
       {
         "name": "链接安全总开关关闭：不发",
         "securityEnabled": "false",
         "noticeEnabled": "true",
-        "emailVerifyEnabled": "true",
+        "apiBaseUrl": "https://api.example.com",
         "expect": false
       },
       {
         "name": "全都未配置：不发",
         "securityEnabled": "",
         "noticeEnabled": "",
-        "emailVerifyEnabled": "",
+        "apiBaseUrl": "",
         "expect": false
       },
       {
-        "name": "大小写与空格：TRUE 视为开启（三处同一归一化）",
+        "name": "开关大小写与空格：TRUE 视为开启；API 地址两侧空格被忽略",
         "securityEnabled": " TRUE ",
         "noticeEnabled": "True",
-        "emailVerifyEnabled": " true ",
+        "apiBaseUrl": "  https://api.example.com  ",
         "expect": true
       }
     ]

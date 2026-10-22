@@ -96,7 +96,7 @@ func (h *CommentHandler) GetSettings(c *gin.Context) {
 
 	// 按模块分组
 	settingsGroups := map[string][]string{
-		"basic":    {"site_name", "admin_email", "admin_emails", "notify_email", "comment_auto_approve", "comment_spam_keywords", "comment_spam_max_links", "comment_spam_min_length", "comment_spam_duplicate_window", "blogger_badge_enabled", "blogger_badge_text", "placeholder_name", "placeholder_email", "placeholder_content", "placeholder_url"},
+		"basic":    {"site_name", "admin_email", "admin_emails", "notify_email", "verify_base_url", "email_verify_enabled", "comment_auto_approve", "comment_spam_keywords", "comment_spam_max_links", "comment_spam_min_length", "comment_spam_duplicate_window", "blogger_badge_enabled", "blogger_badge_text", "placeholder_name", "placeholder_email", "placeholder_content", "placeholder_url"},
 		"email":    {"smtp_host", "smtp_port", "email_user", "email_password", "email_secure", "email_enabled", "email_verify_enabled", "verify_base_url", "mail_log_retention_days", "reply_template", "notification_template"},
 		"security": {"allow_origin", "admin_comment_key", "admin_comment_key_enabled", "ip_blacklist", "email_blacklist", "comment_verify_enabled", "comment_verify_difficulty", "comment_verify_instr_enabled", "comment_verify_block_automated", "comment_verify_domain_enabled", "comment_verify_retention_days", "comment_verify_log_challenge", "trust_proxy"},
 		"account":  {"admin_name"},
@@ -989,6 +989,26 @@ func normalizeSettingsWrite(body map[string]string) (map[string]string, string) 
 			return nil, msg
 		}
 		normalized[utils.LinkDormantDaysKey] = value
+	}
+
+	// API 地址与邮箱验证开关：空串允许；非空 URL 必须是 http(s) 绝对地址。
+	// 依赖功能（邮箱验证 / 历史链接同步 / 休眠提醒）开启时，API 地址不得为空。
+	if raw, ok := body[utils.VerifyBaseURLKey]; ok {
+		if msg := utils.ValidateVerifyBaseURL(raw); msg != "" {
+			return nil, msg
+		}
+		normalized[utils.VerifyBaseURLKey] = utils.NormalizeVerifyBaseURL(raw)
+	}
+	if raw, ok := body[utils.EmailVerifyEnabledKey]; ok {
+		if msg := utils.ValidateEmailVerifyEnabled(raw); msg != "" {
+			return nil, msg
+		}
+		normalized[utils.EmailVerifyEnabledKey] = utils.NormalizeEmailVerifyEnabled(raw)
+	}
+	if utils.HasApiURLDependencyKey(body) {
+		if msg := utils.ValidateApiURLDependents(body); msg != "" {
+			return nil, msg
+		}
 	}
 
 	// 邮件日志保留天数：0–3650 的整数（0 = 永久保留），存规范化后的十进制

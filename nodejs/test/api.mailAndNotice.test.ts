@@ -136,9 +136,8 @@ beforeEach(async () => {
   await setSetting("site_name", "测试站");
   await setSetting("verify_base_url", "https://blog.example.com");
   await setSetting("link_security_enabled", "true");
-  // 休眠提醒邮件的两个前提（doc/link_security.md 第 2.7 节）：提醒开关 + 邮箱验证
+  // 休眠提醒邮件的前提（doc/link_security.md 第 2.7 节）：总开关 + 提醒开关 + API 地址
   await setSetting("link_dormant_notice_enabled", "true");
-  await setSetting("email_verify_enabled", "true");
   // 新评论通知发给管理员，没有管理员邮箱时那封信本来就不会发（也就没有日志）
   await setSetting("admin_emails", JSON.stringify(["admin@example.com"]));
   await setSetting("notify_email", "admin@example.com");
@@ -544,10 +543,10 @@ describe("休眠链接提醒（惰性链路）", () => {
     expect(noticeRows()).toHaveLength(0);
   });
 
-  it("邮箱验证关闭时即使提醒开关打开也不发信（硬前提）", async () => {
+  it("API 地址为空时即使提醒开关打开也不发信（硬前提）", async () => {
     seedDormantComment();
     await setSetting("link_dormant_notice_enabled", "true");
-    await setSetting("email_verify_enabled", "false");
+    await setSetting("verify_base_url", "");
 
     const body = await publicComments();
     await new Promise((resolve) => setTimeout(resolve, 120));
@@ -556,6 +555,19 @@ describe("休眠链接提醒（惰性链路）", () => {
     expect(body.data.comments[0].urlDormant).toBe(true);
     expect(mailRows()).toHaveLength(0);
     expect(noticeRows()).toHaveLength(0);
+  });
+
+  it("邮箱验证关闭不影响休眠提醒（只看 API 地址）", async () => {
+    seedDormantComment();
+    await setSetting("link_dormant_notice_enabled", "true");
+    await setSetting("email_verify_enabled", "false");
+
+    const body = await publicComments();
+    await waitFor(() => noticeRows().length === 1);
+
+    expect(body.code).toBe(200);
+    expect(mailRows()).toHaveLength(1);
+    expect(noticeRows()).toHaveLength(1);
   });
 });
 

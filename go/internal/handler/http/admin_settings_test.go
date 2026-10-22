@@ -104,7 +104,8 @@ func TestGetSettingsTypeGroups(t *testing.T) {
 			name:      "basic 分组",
 			typeParam: "basic",
 			mustHave: []string{
-				"site_name", "admin_email", "comment_auto_approve",
+				"site_name", "admin_email", "verify_base_url", "email_verify_enabled",
+				"comment_auto_approve",
 				"comment_spam_keywords", "comment_spam_max_links",
 				"comment_spam_min_length", "comment_spam_duplicate_window",
 				"blogger_badge_enabled", "blogger_badge_text",
