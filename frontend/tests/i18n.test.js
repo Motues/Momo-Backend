@@ -70,6 +70,7 @@ const CONTRACT_KEYS = [
 	'emojiStale',
 	'emojiPartial',
 	'linkDormantTip',
+	'networkError',
 ];
 
 afterEach(() => {

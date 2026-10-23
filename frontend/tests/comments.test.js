@@ -154,20 +154,28 @@ describe('Comments —— 加载失败处理', () => {
 		await waitFor(() => expect(container.textContent).toContain('HTTP 404'));
 	});
 
-	it('fetch 抛错时展示异常消息', async () => {
+	it('fetch 抛错时只显示本地化的网络提示，不混入英文原文', async () => {
 		fetchMock(async () => {
 			throw new Error('network down');
 		});
 		const { container } = renderComments();
-		await waitFor(() => expect(container.textContent).toContain('network down'));
+		await waitFor(() => expect(container.textContent).toContain('请检查网络连接'));
+		expect(container.textContent).not.toContain('network down');
 	});
 
-	it('错误态下不再渲染评论列表（"加载失败"与文案之间没有分隔符，见最终报告）', async () => {
+	it('错误态下不再渲染评论列表（状态码与文案同属当前语言）', async () => {
 		fetchMock(async () => jsonResponse({}, { ok: false, status: 500 }));
 		const { container } = renderComments();
 		await waitFor(() => expect(container.textContent).toContain('加载失败'));
-		expect(container.textContent).toContain('加载失败HTTP 500');
+		expect(container.textContent).toContain('加载失败 (HTTP 500)');
 		expect(container.textContent).not.toContain('条评论');
+	});
+
+	it('英文界面下错误提示不出现中文', async () => {
+		fetchMock(async () => jsonResponse({}, { ok: false, status: 500 }));
+		const { container } = renderComments({ language: 'en' });
+		await waitFor(() => expect(container.textContent).toContain('Failed to load (HTTP 500)'));
+		expect(container.textContent).not.toContain('加载失败');
 	});
 
 	it('加载失败后提交评论成功会重新加载并清除错误态', async () => {
@@ -179,15 +187,15 @@ describe('Comments —— 加载失败处理', () => {
 			return jsonResponse(listBody([makeComment()]));
 		});
 		const { container } = renderComments();
-		await waitFor(() => expect(container.textContent).toContain('network down'));
+		await waitFor(() => expect(container.textContent).toContain('请检查网络连接'));
 
 		fail = false;
 		await submitMainForm(container);
 		await waitFor(() => expect(container.textContent).toContain('1 条评论'));
-		expect(container.textContent).not.toContain('network down');
+		expect(container.textContent).not.toContain('加载失败');
 	});
 
-	it('JSON 解析失败（响应体损坏）时不抛错', async () => {
+	it('JSON 解析失败（响应体损坏）时按加载失败处理，不显示英文异常原文', async () => {
 		vi.stubGlobal(
 			'fetch',
 			vi.fn(async () => ({
@@ -199,7 +207,8 @@ describe('Comments —— 加载失败处理', () => {
 			}))
 		);
 		const { container } = renderComments();
-		await waitFor(() => expect(container.textContent).toContain('bad json'));
+		await waitFor(() => expect(container.textContent).toContain('加载失败'));
+		expect(container.textContent).not.toContain('bad json');
 	});
 });
 
@@ -243,14 +252,14 @@ describe('Comments —— 加载更多', () => {
 		});
 		const { container } = renderComments();
 		// 首次失败 -> 错误态；随后成功一次恢复列表
-		await waitFor(() => expect(container.textContent).toContain('boom-1'));
+		await waitFor(() => expect(container.textContent).toContain('请检查网络连接'));
 
 		cleanup();
 		calls = 1;
 		const second = renderComments();
 		await waitFor(() => expect(second.container.textContent).toContain('1 条评论'));
 		await fireEvent.click(findButton(second.container, '加载更多'));
-		await waitFor(() => expect(second.container.textContent).toContain('page2-failed'));
+		await waitFor(() => expect(second.container.textContent).toContain('请检查网络连接'));
 		// 现状：加载更多失败会把已渲染的列表整体替换成错误提示
 		expect(second.container.textContent).not.toContain('条评论');
 	});
