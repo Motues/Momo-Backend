@@ -408,3 +408,41 @@ describe('Users - 网站链接状态筛选', () => {
 		expect(wrapper.text()).toContain('未找到匹配的用户');
 	});
 });
+
+describe('Users - 行点击进入用户详情', () => {
+	it('点击桌面端整行跳转到 /user-comments，并带上昵称与邮箱', async () => {
+		await mountUsers([makeUser()]);
+		await wrapper.get('[data-test="user-row"]').trigger('click');
+		await flushPromises();
+
+		expect(router.currentRoute.value.path).toBe('/user-comments');
+		expect(router.currentRoute.value.query).toMatchObject({
+			author: '张三',
+			email: 'zhangsan@example.com',
+		});
+	});
+
+	it('点击行内操作按钮不会触发整行跳转（拉黑/确认安全仍留在列表页）', async () => {
+		await mountUsers([makeUser({ url: 'https://zhangsan.example.com', urlDormant: true })]);
+		await wrapper.get('[data-test="user-trust-button"]').trigger('click');
+		await flushPromises();
+
+		expect(router.currentRoute.value.path).toBe('/users');
+	});
+
+	it('点击休眠链接（外链）不会触发整行跳转', async () => {
+		await mountUsers([makeUser({ url: 'https://zhangsan.example.com', urlDormant: true })]);
+		await wrapper.get('[data-test="user-link-status"]').trigger('click');
+		await flushPromises();
+
+		expect(router.currentRoute.value.path).toBe('/users');
+	});
+
+	it('移动端卡片点击同样进入详情页', async () => {
+		await mountUsers([makeUser()]);
+		await wrapper.get('[data-test="user-card"]').trigger('click');
+		await flushPromises();
+
+		expect(router.currentRoute.value.path).toBe('/user-comments');
+	});
+});

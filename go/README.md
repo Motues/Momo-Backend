@@ -111,6 +111,15 @@ docker run -d \
 数据目录说明：
 - `/app/data` — 数据库文件，需挂载持久化存储
 
+健康检查：镜像内置 `HEALTHCHECK`，每 30s 请求 `http://127.0.0.1:${PORT:-3000}/health`（同时探测 SQLite 连接）。
+也可以手动验证：
+
+```bash
+curl -i http://localhost:3000/health
+# 200 {"code":200,"message":"ok","data":{"status":"ok","database":"ok"}}
+# 503 {"code":503,"message":"database unavailable","data":{"status":"error","database":"error"}}
+```
+
 ## 邮件模板
 
 可以自定义自己的邮件模板，支持的参数如下

@@ -13,6 +13,9 @@ type CommentRepository interface {
 	UpdateStatus(ctx context.Context, id int64, status string) error
 	UpdateComment(ctx context.Context, id int64, fields map[string]interface{}) error
 	Delete(ctx context.Context, id int64) error
+	// Ping 健康检查用的轻量探针：只确认数据库连接可用，不查业务表。
+	// 由 GET /health 调用（容器 HEALTHCHECK / 编排探针）。
+	Ping(ctx context.Context) error
 
 	// Stats methods
 	GetStatsOverview(ctx context.Context, rangeParam string) (*model.StatsOverview, error)

@@ -148,7 +148,7 @@ const pageTitle = computed(() => {
     '/': '数据统计',
     '/comments': '评论列表',
     '/users': '用户列表',
-    '/user-comments': '用户评论',
+    '/user-comments': '用户详情',
     '/verify-records': '认证记录',
     '/mails': '邮件管理',
     '/settings': '系统设置',

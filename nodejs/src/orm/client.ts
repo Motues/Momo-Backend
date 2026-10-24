@@ -29,4 +29,5 @@ sqlite.pragma("journal_mode = WAL");
 initializeDatabase(sqlite);
 
 export const db = drizzle(sqlite, { schema });
-export { schema };
+// sqlite：健康检查（GET /health）需要一条绕过 ORM 的轻量探针，见 api/health.ts
+export { schema, sqlite };

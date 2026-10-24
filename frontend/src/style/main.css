@@ -35,7 +35,12 @@
   height: 1.25em;
   max-width: none;
   margin: 0 1px;
-  vertical-align: -0.2em;
+  /*
+   * 垂直居中：正文行高 1.625em、表情 1.25em，-0.25em 让图片盒中心与行盒中心重合
+   * （原来的 -0.2em 实测偏高约 0.05em）。宿主想微调时可覆盖 --momo-emoji-align，
+   * 例如：--momo-emoji-align: middle;
+   */
+  vertical-align: var(--momo-emoji-align, -0.25em);
   border-radius: 2px;
   object-fit: contain;
 }

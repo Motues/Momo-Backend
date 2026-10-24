@@ -4,6 +4,7 @@
 
 | 方法 | 路由 | 功能 |
 | --- | --- | --- |
+| GET | `/health` | 健康检查（容器探针；含数据库探测，无需认证） |
 | POST | `/api/comments` | 提交评论 |
 | GET | `/api/comments` | 获取评论 |
 | GET | `/api/verify-email/verify` | 验证邮箱（从邮件链接访问，返回 HTML 页面） |
@@ -62,6 +63,37 @@
 | 404 | 资源不存在 | 资源不存在场景 |
 | 429 | 请求过于频繁 | 评论频率超过限制（同一 IP 60 秒一条，`admin_email` 不受限）、公开评论列表请求过于频繁 |
 | 500 | 服务器内部错误 | 未捕获异常、数据库错误等 |
+| 503 | 服务不可用 | 健康检查发现数据库不可用（`GET /health`） |
+
+## 健康检查
+
+### 健康检查（GET `/health`）
+
+供容器 `HEALTHCHECK`、docker-compose 或反向代理探针使用，**不需要认证**。
+三端（Node / Go / Worker）响应结构与语义完全一致：
+
+- **数据库可用** → HTTP `200`
+
+```json
+{
+  "code": 200,
+  "message": "ok",
+  "data": { "status": "ok", "database": "ok" }
+}
+```
+
+- **进程活着但数据库不可用** → HTTP `503`（避免流量被送进只会 500 的实例）
+
+```json
+{
+  "code": 503,
+  "message": "database unavailable",
+  "data": { "status": "error", "database": "error" }
+}
+```
+
+> Go 镜像内置 `HEALTHCHECK`（每 30s 探测一次，`start-period` 10s）；
+> Worker 部署没有容器，但同样可以把这个地址配给外部监控。
 
 ## 用户接口
 

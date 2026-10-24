@@ -25,6 +25,11 @@ func NewCommentRepository(db *sqlx.DB) repository.CommentRepository {
 	return &commentRepo{db: db}
 }
 
+// Ping 健康检查探针：只确认数据库连接可用（GET /health 调用）。
+func (r *commentRepo) Ping(ctx context.Context) error {
+	return r.db.PingContext(ctx)
+}
+
 // InitSchema 初始化数据库表结构
 func InitSchema(db *sqlx.DB) error {
 	// 启用外键约束

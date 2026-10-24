@@ -78,6 +78,13 @@ npm install -g pm2
 pm2 start dist/app.js --name momo-backend
 ```
 
+健康检查：`GET /health`（无需认证，含 SQLite 探测）。可用于反向代理/监控探针：
+
+```bash
+curl -i http://localhost:3000/health
+# 200 正常 / 503 数据库不可用（响应结构见 doc/api.md）
+```
+
 #### 4.修改系统参数
 
 如果显示后端管理页面并可以正常登录则部署成功。**默认用户和密码均为`momo`，首次进入需要修改用户名和密码**，系统参数可以在右侧的系统参数中修改，可以参考[系统参数](##系统参数)。

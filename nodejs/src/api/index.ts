@@ -27,6 +27,7 @@ import { exportSettings, exportComments } from "./admin/dataExport";
 import verifyOverview from "./admin/verifyOverview";
 import verifyRecords from "./admin/verifyRecords";
 import mailList from "./admin/mailList";
+import health from "./health";
 
 export { getCommentBySlug, postComment, verifyEmail, verifyChallenge, verifySolution, linkSyncConfirm, linkDormantNoticePage, linkDormantNoticeConfirm, linkDormantNoticeUpdate };
-export { getAllComments, changeCommentStatus, updateComment, login, getStatsOverview, getUserList, getUserComments, getSettings, updateSettings, changePassword, logout, testEmail, importComments, importSettings, exportSettings, exportComments, addUserToBlacklist, removeUserFromBlacklist, addLinkTrust, removeLinkTrust, verifyOverview, verifyRecords, mailList };
+export { getAllComments, changeCommentStatus, updateComment, login, getStatsOverview, getUserList, getUserComments, getSettings, updateSettings, changePassword, logout, testEmail, importComments, importSettings, exportSettings, exportComments, addUserToBlacklist, removeUserFromBlacklist, addLinkTrust, removeLinkTrust, verifyOverview, verifyRecords, mailList, health };

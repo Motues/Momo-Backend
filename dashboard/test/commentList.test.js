@@ -243,3 +243,117 @@ describe('CommentList - 分页', () => {
 		expect(pagerButtons(wrapper)).toHaveLength(2);
 	});
 });
+
+describe('CommentList - 批量审核勾选', () => {
+	const threeComments = () => [
+		makeComment({ id: 1 }),
+		makeComment({ id: 2 }),
+		makeComment({ id: 3 }),
+	];
+
+	it('默认不渲染工具栏，勾选一条后出现并显示数量', async () => {
+		const wrapper = mountList({ data: threeComments() });
+		expect(wrapper.find('[data-test="batch-action-bar"]').exists()).toBe(false);
+
+		await wrapper.findAll('[data-test="comment-select"]')[0].trigger('change');
+		const bar = wrapper.get('[data-test="batch-action-bar"]');
+		expect(bar.exists()).toBe(true);
+		expect(bar.text()).toContain('1');
+	});
+
+	it('表头全选勾上当前页全部，再次点击清空', async () => {
+		const wrapper = mountList({ data: threeComments() });
+		await wrapper.get('[data-test="comments-select-all"]').trigger('change');
+		expect(wrapper.get('[data-test="batch-count"]').text()).toBe('3');
+
+		await wrapper.get('[data-test="comments-select-all"]').trigger('change');
+		expect(wrapper.find('[data-test="batch-action-bar"]').exists()).toBe(false);
+	});
+
+	it('勾选部分时全选框为 indeterminate', async () => {
+		const wrapper = mountList({ data: threeComments() });
+		await wrapper.findAll('[data-test="comment-select"]')[0].trigger('change');
+		expect(wrapper.get('[data-test="comments-select-all"]').element.indeterminate).toBe(true);
+	});
+
+	it('点击批量通过 emit batch-update(ids, approved)', async () => {
+		const wrapper = mountList({ data: threeComments() });
+		await wrapper.get('[data-test="comments-select-all"]').trigger('change');
+		await wrapper.get('[data-test="batch-approve"]').trigger('click');
+
+		expect(wrapper.emitted('batch-update')).toEqual([[[1, 2, 3], 'approved']]);
+	});
+
+	it('批量删除 emit 的是 deleted（级联语义由后端单条接口保证）', async () => {
+		const wrapper = mountList({ data: threeComments() });
+		await wrapper.findAll('[data-test="comment-select"]')[1].trigger('change');
+		await wrapper.get('[data-test="batch-delete"]').trigger('click');
+
+		expect(wrapper.emitted('batch-update')).toEqual([[[2], 'deleted']]);
+	});
+
+	it('数据刷新后自动移出已不存在的勾选', async () => {
+		const wrapper = mountList({ data: threeComments() });
+		await wrapper.get('[data-test="comments-select-all"]').trigger('change');
+
+		await wrapper.setProps({ data: [makeComment({ id: 1 })] });
+		expect(wrapper.get('[data-test="batch-count"]').text()).toBe('1');
+	});
+
+	it('暴露 clearSelection / setSelection，供父组件在批量操作后回填失败项', async () => {
+		const wrapper = mountList({ data: threeComments() });
+		await wrapper.get('[data-test="comments-select-all"]').trigger('change');
+
+		wrapper.vm.setSelection([2, 99]);
+		await wrapper.vm.$nextTick();
+		expect(wrapper.get('[data-test="batch-count"]').text()).toBe('1');
+
+		wrapper.vm.clearSelection();
+		await wrapper.vm.$nextTick();
+		expect(wrapper.find('[data-test="batch-action-bar"]').exists()).toBe(false);
+	});
+
+	it('批量处理中禁用三个动作按钮', async () => {
+		const wrapper = mountList({ data: threeComments(), batchLoading: true });
+		await wrapper.get('[data-test="comments-select-all"]').trigger('change');
+
+		for (const name of ['batch-approve', 'batch-pending', 'batch-delete']) {
+			expect(wrapper.get(`[data-test="${name}"]`).attributes('disabled')).toBeDefined();
+		}
+	});
+});
+
+describe('CommentList - 来源文章列', () => {
+	it('表头在「评论内容」与「状态」之间新增「来源文章」', () => {
+		const wrapper = mountList({ data: [makeComment()] });
+		expect(wrapper.findAll('thead th').map((th) => th.text())).toEqual([
+			'',
+			'作者',
+			'评论内容',
+			'来源文章',
+			'状态',
+			'管理',
+		]);
+	});
+
+	it('展示文章 slug，并用 title 提示可点击筛选', () => {
+		const wrapper = mountList({ data: [makeComment({ postSlug: 'blog/2026/hello-world' })] });
+		const cell = wrapper.get('tbody [data-test="comment-post-slug"]');
+		expect(cell.text()).toBe('blog/2026/hello-world');
+		expect(cell.attributes('title')).toContain('blog/2026/hello-world');
+		expect(cell.classes()).toEqual(expect.arrayContaining(['truncate', 'max-w-[180px]']));
+	});
+
+	it('点击来源文章 emit filter-slug，且不会打开详情弹窗', async () => {
+		const wrapper = mountList({ data: [makeComment({ postSlug: 'blog/2026/hello-world' })] });
+		await wrapper.get('tbody [data-test="comment-post-slug"]').trigger('click');
+
+		expect(wrapper.emitted('filter-slug')).toEqual([['blog/2026/hello-world']]);
+		expect(modal(wrapper).props('visible')).toBe(false);
+	});
+
+	it('没有文章标识时显示占位符', () => {
+		const wrapper = mountList({ data: [makeComment({ postSlug: '' })] });
+		expect(wrapper.get('tbody [data-test="comment-post-slug-empty"]').text()).toBe('—');
+	});
+});

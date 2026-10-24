@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, waitFor, cleanup } from '@testing-library/svelte';
 import EmojiPicker from '../src/emoji/EmojiPicker.svelte';
 import { EMOJI_CACHE_PREFIX, resetEmojiSetCache } from '../src/emoji/owo';
+import { stubMatchMedia } from './helpers.js';
 
 const CDN = 'https://cdn.example.com/emoji/owo.json';
 const OTHER_CDN = 'https://other.example.com/owo.json';
@@ -36,9 +37,31 @@ function renderPicker(props = {}) {
 }
 
 const trigger = (container) => container.querySelector('[data-test="emoji-trigger"]');
-const panel = (container) => container.querySelector('[data-test="emoji-panel"]');
-const tabs = (container) => [...container.querySelectorAll('[data-test="emoji-tab"]')];
-const items = (container) => [...container.querySelectorAll('[data-test="emoji-item"]')];
+// 面板被 portal 到 document.body（脱离宿主的 overflow-hidden 裁剪盒与层叠上下文），
+// 因此面板内部节点只能从 document 上查，不在组件 container 里。
+const panel = () => document.querySelector('[data-test="emoji-panel"]');
+const tabs = () => [...document.querySelectorAll('[data-test="emoji-tab"]')];
+const items = () => [...document.querySelectorAll('[data-test="emoji-item"]')];
+const byTest = (name) => document.querySelector(`[data-test="${name}"]`);
+
+/** 替身可视视口（模拟窄屏 / 软键盘弹出后的 visualViewport） */
+function stubVisualViewport({ width, height, offsetLeft = 0, offsetTop = 0 }) {
+	const original = window.visualViewport;
+	Object.defineProperty(window, 'visualViewport', {
+		configurable: true,
+		value: {
+			width,
+			height,
+			offsetLeft,
+			offsetTop,
+			addEventListener() {},
+			removeEventListener() {},
+		},
+	});
+	return () => {
+		Object.defineProperty(window, 'visualViewport', { configurable: true, value: original });
+	};
+}
 
 beforeEach(() => {
 	localStorage.clear();
@@ -193,6 +216,38 @@ describe('EmojiPicker —— 标签与选择', () => {
 	});
 });
 
+describe('EmojiPicker —— 移动端选完即收', () => {
+	it('移动端选中表情后自动收起面板（把屏幕还给输入区）', async () => {
+		const restore = stubMatchMedia(true);
+		try {
+			fetchMock(async () => jsonResponse(OWO));
+			const { container } = renderPicker();
+			await fireEvent.click(trigger(container));
+			await waitFor(() => expect(items(container).length).toBeGreaterThan(0));
+
+			await fireEvent.click(items(container)[0]);
+			await waitFor(() => expect(panel(container)).toBeNull());
+		} finally {
+			restore();
+		}
+	});
+
+	it('桌面端选中表情后保持面板打开，可连续选', async () => {
+		const restore = stubMatchMedia(false);
+		try {
+			fetchMock(async () => jsonResponse(OWO));
+			const { container } = renderPicker();
+			await fireEvent.click(trigger(container));
+			await waitFor(() => expect(items(container).length).toBeGreaterThan(0));
+
+			await fireEvent.click(items(container)[0]);
+			expect(panel(container)).toBeTruthy();
+		} finally {
+			restore();
+		}
+	});
+});
+
 describe('EmojiPicker —— 加载状态', () => {
 	it('请求返回前面板显示加载中', async () => {
 		let resolveFetch;
@@ -218,11 +273,11 @@ describe('EmojiPicker —— 加载状态', () => {
 		});
 		const { container } = renderPicker();
 		await fireEvent.click(trigger(container));
-		await waitFor(() => expect(container.querySelector('[data-test="emoji-retry"]')).toBeTruthy());
+		await waitFor(() => expect(byTest('emoji-retry')).toBeTruthy());
 		expect(panel(container).textContent).toContain('表情加载失败');
 		expect(items(container)).toEqual([]);
 
-		await fireEvent.click(container.querySelector('[data-test="emoji-retry"]'));
+		await fireEvent.click(byTest('emoji-retry'));
 		await waitFor(() => expect(items(container).map((item) => item.dataset.insert)).toEqual(['OωO']));
 		expect(fetch.calls.length).toBe(2);
 	});
@@ -238,7 +293,7 @@ describe('EmojiPicker —— 加载状态', () => {
 		const { container } = renderPicker();
 		await fireEvent.click(trigger(container));
 
-		await waitFor(() => expect(container.querySelector('[data-test="emoji-stale"]')).toBeTruthy());
+		await waitFor(() => expect(byTest('emoji-stale')).toBeTruthy());
 		expect(items(container).map((item) => item.dataset.insert)).toEqual(['OωO']);
 		expect(panel(container).textContent).toContain('本地缓存');
 	});
@@ -251,14 +306,14 @@ describe('EmojiPicker —— 加载状态', () => {
 		const { container } = renderPicker({ cdnUrls: [CDN, OTHER_CDN] });
 		await fireEvent.click(trigger(container));
 
-		await waitFor(() => expect(container.querySelector('[data-test="emoji-partial"]')).toBeTruthy());
+		await waitFor(() => expect(byTest('emoji-partial')).toBeTruthy());
 		// 成功来源照常渲染，且没有 stale（不是回退缓存）
 		expect(items(container).map((item) => item.dataset.insert)).toEqual(['OωO']);
-		expect(container.querySelector('[data-test="emoji-stale"]')).toBeNull();
+		expect(byTest('emoji-stale')).toBeNull();
 		expect(panel(container).textContent).toContain('部分来源加载失败');
 
 		// 重试入口会强制重新拉取全部来源
-		await fireEvent.click(container.querySelector('[data-test="emoji-partial"]'));
+		await fireEvent.click(byTest('emoji-partial'));
 		await waitFor(() => expect(fetch.calls.length).toBe(4));
 	});
 
@@ -268,7 +323,7 @@ describe('EmojiPicker —— 加载状态', () => {
 		await fireEvent.click(trigger(container));
 
 		await waitFor(() => expect(tabs(container).length).toBe(3));
-		expect(container.querySelector('[data-test="emoji-partial"]')).toBeNull();
+		expect(byTest('emoji-partial')).toBeNull();
 	});
 
 	it('没有可渲染的表情时显示空态', async () => {
@@ -276,7 +331,7 @@ describe('EmojiPicker —— 加载状态', () => {
 		const { container } = renderPicker();
 		await fireEvent.click(trigger(container));
 
-		await waitFor(() => expect(container.querySelector('[data-test="emoji-empty"]')).toBeTruthy());
+		await waitFor(() => expect(byTest('emoji-empty')).toBeTruthy());
 		expect(panel(container).textContent).toContain('暂无可用的表情');
 		expect(items(container)).toEqual([]);
 	});
@@ -286,8 +341,8 @@ describe('EmojiPicker —— 加载状态', () => {
 		const { container } = renderPicker();
 		await fireEvent.click(trigger(container));
 
-		await waitFor(() => expect(container.querySelector('[data-test="emoji-retry"]')).toBeTruthy());
-		expect(container.querySelector('[data-test="emoji-empty"]')).toBeNull();
+		await waitFor(() => expect(byTest('emoji-retry')).toBeTruthy());
+		expect(byTest('emoji-empty')).toBeNull();
 	});
 });
 
@@ -316,31 +371,59 @@ describe('EmojiPicker —— 面板布局', () => {
 		expect(path.getAttribute('d').startsWith('M11.99 2C6.47 2')).toBe(true);
 	});
 
-	it('面板开在按钮下方（top-full），不与输入框争位置', async () => {
+	it('面板被 portal 到 body：脱离 overflow-hidden 裁剪盒与祖先层叠上下文', async () => {
 		fetchMock(async () => jsonResponse(OWO));
 		const { container } = renderPicker();
 		await fireEvent.click(trigger(container));
-		await waitFor(() => expect(panel(container)).toBeTruthy());
+		await waitFor(() => expect(panel()).toBeTruthy());
 
-		expect(panel(container).className).toContain('top-full');
-		expect(panel(container).className).not.toContain('bottom-full');
-		expect(panel(container).className).toContain('mt-2');
+		// 二级回复外面套着 overflow-hidden 的容器（CommentItem 的回复列表），
+		// absolute 面板会被裁掉；只有挂到 body 才能同时摆脱裁剪和 z-index 比较范围
+		expect(panel().parentElement).toBe(document.body);
+		expect(container.querySelector('[data-test="emoji-panel"]')).toBeNull();
+		// fixed 定位由 JS 写入（不再依赖 top-full / mt-2 / absolute）
+		expect(panel().className).toContain('fixed');
+		expect(panel().className).not.toContain('absolute');
+		expect(panel().style.position).toBe('fixed');
 		// 圆角比原来的 rounded-lg（0.5rem）更小
-		expect(panel(container).className).toContain('rounded ');
-		expect(panel(container).className).not.toContain('rounded-lg');
+		expect(panel().className).toContain('rounded ');
+		expect(panel().className).not.toContain('rounded-lg');
 	});
 
-	it('视口下方空间充足时面板高度用上限封顶', async () => {
+	it('默认向下展开：top 取按钮底边 + 间距，视口下方空间充足时高度用上限封顶', async () => {
 		fetchMock(async () => jsonResponse(OWO));
 		const { container } = renderPicker();
 		await fireEvent.click(trigger(container));
-		await waitFor(() => expect(panel(container)).toBeTruthy());
+		await waitFor(() => expect(panel()).toBeTruthy());
 
 		// happy-dom 里 getBoundingClientRect 全为 0，等价于按钮就在视口顶部
-		expect(panel(container).style.maxHeight).toBe('256px');
+		expect(panel().dataset.placement).toBe('bottom');
+		expect(panel().style.maxHeight).toBe('256px');
+		expect(panel().style.top).toBe('8px'); // 0 (按钮底边) + 8 (间距)
 	});
 
-	it('页面底部空间不足时按剩余空间压低面板高度', async () => {
+	it('窄屏时面板宽度与左边缘被夹进可视视口，不会从右边溢出被裁掉', async () => {
+		fetchMock(async () => jsonResponse(OWO));
+		const restoreViewport = stubVisualViewport({ width: 390, height: 700 });
+		const restoreRect = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
+			top: 300, bottom: 360, left: 100, right: 140, width: 40, height: 60, x: 100, y: 300,
+		});
+		try {
+			const { container } = renderPicker();
+			await fireEvent.click(trigger(container));
+			await waitFor(() => expect(panel()).toBeTruthy());
+
+			// 宽度 = min(24rem, 390 - 24) = 366；左边缘被夹到 12（左留白），右边缘 = 378 < 390
+			expect(panel().style.width).toBe('366px');
+			expect(panel().style.left).toBe('12px');
+			expect(12 + 366).toBeLessThanOrEqual(390);
+		} finally {
+			restoreRect.mockRestore();
+			restoreViewport();
+		}
+	});
+
+	it('下方连最小高度都放不下且上方更宽裕时，翻到按钮上方展开', async () => {
 		fetchMock(async () => jsonResponse(OWO));
 		const { container } = renderPicker();
 		vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
@@ -348,14 +431,31 @@ describe('EmojiPicker —— 面板布局', () => {
 		});
 
 		await fireEvent.click(trigger(container));
-		await waitFor(() => expect(panel(container)).toBeTruthy());
+		await waitFor(() => expect(panel()).toBeTruthy());
 
-		// 768 - 660 - 8（mt-2）- 12（视口留白）= 88 → 取最小高度 96
-		const expected = Math.round(
-			Math.min(256, Math.max(96, window.innerHeight - 660 - 20))
-		);
-		expect(expected).toBeLessThan(256);
-		expect(panel(container).style.maxHeight).toBe(`${expected}px`);
+		// 下方只剩 768 - 660 - 8 - 12 = 88 < 96，上方有 580：翻上去，底边贴在按钮上方
+		expect(panel().dataset.placement).toBe('top');
+		expect(panel().style.maxHeight).toBe('256px');
+		expect(panel().style.bottom).toBe(`${window.innerHeight - (600 - 8)}px`);
+		expect(panel().style.top).toBe('');
+	});
+
+	it('页面滚动时面板跟随按钮重新定位', async () => {
+		fetchMock(async () => jsonResponse(OWO));
+		const rectSpy = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
+			top: 0, bottom: 60, left: 0, right: 40, width: 40, height: 60, x: 0, y: 0,
+		});
+		const { container } = renderPicker();
+		await fireEvent.click(trigger(container));
+		await waitFor(() => expect(panel(container)).toBeTruthy());
+		expect(panel(container).style.top).toBe('68px');
+
+		rectSpy.mockReturnValue({
+			top: 200, bottom: 260, left: 0, right: 40, width: 40, height: 60, x: 0, y: 200,
+		});
+		window.dispatchEvent(new Event('scroll'));
+		await new Promise((resolve) => setTimeout(resolve, 40));
+		expect(panel(container).style.top).toBe('268px');
 	});
 
 	it('颜文字按内容自适应排布，图片表情仍用等宽网格', async () => {
@@ -389,11 +489,11 @@ describe('EmojiPicker —— 面板布局', () => {
 		await fireEvent.click(trigger(container));
 		await waitFor(() => expect(tabs(container).length).toBe(2));
 
-		const tablist = container.querySelector('[role="tablist"]');
+		const tablist = byTest('emoji-tablist');
 		expect(tablist.className).not.toContain('overflow-x-auto');
 		expect(tablist.className).toContain('flex-wrap');
 
-		const list = container.querySelector('[data-test="emoji-list"]');
+		const list = byTest('emoji-list');
 		expect(list.className).toContain('overflow-x-hidden');
 		expect(list.className).toContain('overflow-y-auto');
 

@@ -180,6 +180,13 @@ cd ../worker
 
 将后端域名填写到博客的配置文件中即可使用评论功能。当然也可以使用自定义域名，注意不要使用三级域名，即`*.*.example.com`。
 
+健康检查：部署完成后可直接访问 `GET /health`（无需认证，含 D1 探测），可配给外部监控：
+
+```bash
+curl -i https://momo-backend-worker.xxx.workers.dev/health
+# 200 {"code":200,"message":"ok","data":{"status":"ok","database":"ok"}}
+```
+
 ## 系统参数
 
 部分系统参数如下所示，如果不使用邮箱服务可以关闭。

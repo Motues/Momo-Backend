@@ -24,6 +24,11 @@ RUN mkdir -p /app/data /app/config
 
 EXPOSE 3000
 
+# 容器健康探测：打公开的 /health（同时检查 SQLite 连接）。
+# 用 busybox wget（alpine 自带）；PORT 可被运行时环境变量覆盖，默认 3000。
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD wget -q -O /dev/null "http://127.0.0.1:${PORT:-3000}/health" || exit 1
+
 VOLUME ["/app/data", "/app/config"]
 
 CMD ["./momo-backend"]

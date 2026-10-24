@@ -7,3 +7,10 @@ services:
       - "3000:3000"
     volumes:
       - ./data:/app/data      # 数据库文件
+    healthcheck:
+      # 探针在容器内执行：$${PORT:-3000} 交给容器 shell 展开，避免 compose 在宿主机插值
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:$${PORT:-3000}/health || exit 1"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s

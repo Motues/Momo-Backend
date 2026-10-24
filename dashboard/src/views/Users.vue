@@ -47,7 +47,9 @@
 
         <!-- Mobile: card layout -->
         <div class="md:hidden divide-y divide-gray-100">
-          <div v-for="user in users" :key="user.author + user.email" class="p-4">
+          <div v-for="user in users" :key="user.author + user.email" @click="viewUserComments(user)"
+            data-test="user-card"
+            class="p-4 cursor-pointer transition-colors hover:bg-blue-50/40">
             <div class="space-y-3">
               <div class="flex items-start justify-between gap-2">
                 <div class="flex-1 min-w-0">
@@ -76,7 +78,7 @@
                       <i class="fa-solid fa-link-slash mr-1"></i>无链接
                     </span>
                     <a v-else-if="linkStatus(user) === 'dormant'" data-test="user-link-badge" :href="user.url"
-                      target="_blank" rel="noopener noreferrer" :title="user.url"
+                      target="_blank" rel="noopener noreferrer" :title="user.url" @click.stop
                       class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 text-amber-600 border border-amber-200 whitespace-nowrap">
                       <i class="fa-solid fa-moon mr-1"></i>休眠
                     </a>
@@ -88,7 +90,8 @@
                   </div>
                   <span class="text-xs block truncate text-gray-400">{{ user.email }}</span>
                 </div>
-                <div class="flex flex-col gap-1.5 flex-shrink-0">
+                <!-- 操作区阻断冒泡：否则点「拉黑 / 确认安全」会连带触发整行跳转 -->
+                <div class="flex flex-col gap-1.5 flex-shrink-0" @click.stop>
                   <button v-if="linkStatus(user) === 'dormant'" @click="trustLink(user)"
                     data-test="user-trust-button"
                     class="px-3 py-1 text-xs font-medium rounded-lg bg-emerald-50 text-emerald-600 hover:bg-emerald-600 hover:text-white transition-all">
@@ -150,7 +153,9 @@
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-100">
-              <tr v-for="user in users" :key="user.author + user.email" class="hover:bg-gray-50 transition-colors">
+              <tr v-for="user in users" :key="user.author + user.email" @click="viewUserComments(user)"
+                data-test="user-row"
+                class="hover:bg-blue-50/40 transition-colors cursor-pointer">
                 <td class="px-4 py-3">
                   <div class="flex items-center gap-2">
                     <span class="text-sm font-medium text-gray-800 max-w-[160px] truncate">{{ user.author }}</span>
@@ -183,6 +188,7 @@
                     class="text-sm text-gray-400">无链接</span>
                   <a v-else-if="linkStatus(user) === 'dormant'" data-test="user-link-status" :href="user.url"
                     target="_blank" rel="noopener noreferrer" :title="`${user.url}（点击在新窗口打开，确认安全后可人工放行）`"
+                    @click.stop
                     class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-600 border border-amber-200 whitespace-nowrap hover:bg-amber-100 transition-colors">
                     <i class="fa-solid fa-moon mr-1"></i>休眠
                   </a>
@@ -203,7 +209,7 @@
                 <td class="px-4 py-3 text-sm text-amber-600">{{ user.pendingCount }}</td>
                 <td class="px-4 py-3 text-sm text-red-600">{{ user.deletedCount }}</td>
                 <td class="px-4 py-3 text-sm text-gray-500">{{ formatDate(user.lastCommentDate) }}</td>
-                <td class="px-4 py-3 text-right whitespace-nowrap">
+                <td class="px-4 py-3 text-right whitespace-nowrap" @click.stop>
                   <div class="flex items-center justify-end gap-2">
                     <button v-if="linkStatus(user) === 'dormant'" @click="trustLink(user)"
                       data-test="user-trust-button" title="人工确认该链接安全：确认期内不再标记为休眠"
@@ -266,6 +272,7 @@ import request from '../utils/request';
 import toast from '../utils/toast';
 import AdminLayout from '../components/AdminLayout.vue';
 import SelectMenu from '../components/SelectMenu.vue';
+import { LINK_UNKNOWN_TITLE, linkStatus, trustTitle } from '../utils/userLink';
 
 const router = useRouter();
 const loading = ref(false);
@@ -336,37 +343,15 @@ const removeFromBlacklist = async (user) => {
   }
 };
 
+/**
+ * 每行（移动端每张卡片）点击都进入该用户的详情页：
+ * 沿用既有的 /user-comments（用户信息 + 该用户评论 + 单条审核），详情页顶部再展示概要卡片。
+ */
 const viewUserComments = (user) => {
   router.push({
     path: '/user-comments',
     query: { author: user.author, email: user.email }
   });
-};
-
-/**
- * 个人网站链接状态：
- * - 'unknown' 后端压根没下发 url 字段（老版本后端）—— 与「没有链接」含义不同，必须区分展示
- * - 'none'    没有留下过链接（字段在、但值为空）
- * - 'trusted' 管理员人工确认过该链接且未过期（doc/link_security.md §2.4；后端同时会把 urlDormant 置 false）
- * - 'dormant' 链接休眠（doc/link_security.md §2；仅在 url 非空且功能开启时后端才置 true）
- * - 'normal'  正常链接
- */
-const LINK_UNKNOWN_TITLE = '后端版本过旧，未下发该字段（请升级/重启后端）';
-
-const linkStatus = (user) => {
-  if (user.url === undefined || user.url === null) return 'unknown';
-  if (!user.url) return 'none';
-  if (user.urlTrustedUntil) return 'trusted';
-  return user.urlDormant ? 'dormant' : 'normal';
-};
-
-/**
- * 「已确认」的说明文案：区分「管理员人工确认」与「评论者本人从提醒邮件里确认仍在用」
- * （后端用 urlTrustedSource 区分，老后端不下发该字段时按人工确认展示）。
- */
-const trustTitle = (user) => {
-  const who = user.urlTrustedSource === 'self' ? '本人已确认仍在使用' : '已人工确认安全';
-  return `${who}，${formatDateTime(user.urlTrustedUntil)} 到期；到期后若无新评论会自动恢复休眠`;
 };
 
 /**

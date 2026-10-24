@@ -49,11 +49,39 @@ function fetchMock(handler) {
 	return mock;
 }
 
+/**
+ * 后台预取走 requestIdleCallback；测试里让它同步执行，避免依赖真实空闲时机。
+ * 返回还原函数。
+ */
+function stubIdleCallback() {
+	const hadOwn = Object.prototype.hasOwnProperty.call(window, 'requestIdleCallback');
+	const original = window.requestIdleCallback;
+	Object.defineProperty(window, 'requestIdleCallback', {
+		configurable: true,
+		writable: true,
+		value: (callback) => {
+			callback({ didTimeout: false, timeRemaining: () => 50 });
+			return 1;
+		},
+	});
+	return () => {
+		if (hadOwn) {
+			window.requestIdleCallback = original;
+		} else {
+			delete window.requestIdleCallback;
+		}
+	};
+}
+
+let restoreIdleCallback;
+
 beforeEach(() => {
 	localStorage.clear();
+	restoreIdleCallback = stubIdleCallback();
 });
 
 afterEach(() => {
+	restoreIdleCallback?.();
 	vi.unstubAllGlobals();
 	vi.restoreAllMocks();
 	cleanup();
@@ -556,22 +584,51 @@ describe('Comments —— 后端下发的展示配置', () => {
 		expect(fetch.calls.length).toBe(1);
 	});
 
-	it('缓存过期时首屏不水合（短代码保持纯文本），也没有额外请求', async () => {
+	it('缓存过期时不再等面板：空闲时段自动预取 owo.json 并水合', async () => {
 		const cdn = 'https://cdn.example.com/owo.json';
+		const png = 'https://cdn.example.com/a.png';
 		localStorage.setItem(
 			`${EMOJI_CACHE_PREFIX}${JSON.stringify([cdn])}`,
 			JSON.stringify({
 				savedAt: Date.now() - 8 * 24 * 60 * 60 * 1000,
-				packs: { Bilibili: { type: 'image', container: [{ icon: `<img src="https://cdn.example.com/a.png">`, text: 'doge' }] } },
+				packs: { Bilibili: { type: 'image', container: [{ icon: `<img src="${png}">`, text: 'doge' }] } },
 			})
 		);
+		const fetch = fetchMock(async (url) => {
+			if (url === cdn) {
+				return jsonResponse({
+					Bilibili: { type: 'image', container: [{ icon: `<img src="${png}">`, text: 'doge' }] },
+				});
+			}
+			return jsonResponse(
+				listBody([makeComment({ contentHtml: '<p>看这个 :doge: 表情</p>' })], { emoji_cdn_urls: [cdn] })
+			);
+		});
+		const { container } = renderComments();
+
+		// 预取完成后自动把短代码升级成表情，全程没有打开过表情面板
+		await waitFor(() => expect(container.querySelector('img.momo-emoji')).toBeTruthy());
+		expect(container.querySelector('img.momo-emoji').getAttribute('src')).toBe(png);
+		expect(fetch.calls.map((call) => call.url)).toEqual([
+			`${API_URL}/api/comments?post_slug=${encodeURIComponent(POST_SLUG)}&nested=true&page=1&limit=20`,
+			cdn,
+		]);
+
+		// 之后打开面板复用同一份缓存，不会重复请求 owo.json
+		await fireEvent.click(container.querySelector('[data-test="emoji-trigger"]'));
+		await waitFor(() => expect(document.querySelector('[data-test="emoji-item"]')).toBeTruthy());
+		expect(fetch.calls.length).toBe(2);
+	});
+
+	it('正文没有 :name: 短代码时不预取 owo.json（纯阅读页仍是零第三方请求）', async () => {
+		const cdn = 'https://cdn.example.com/owo.json';
 		const fetch = fetchMock(async () =>
-			jsonResponse(listBody([makeComment({ contentHtml: '<p>看这个 :doge: 表情</p>' })], { emoji_cdn_urls: [cdn] }))
+			jsonResponse(listBody([makeComment({ contentHtml: '<p>普通评论，没有表情</p>' })], { emoji_cdn_urls: [cdn] }))
 		);
 		const { container } = renderComments();
 
-		await waitFor(() => expect(container.textContent).toContain('看这个 :doge: 表情'));
-		expect(container.querySelector('img.momo-emoji')).toBeNull();
+		await waitFor(() => expect(container.textContent).toContain('普通评论，没有表情'));
+		await new Promise((resolve) => setTimeout(resolve, 30));
 		expect(fetch.calls.length).toBe(1);
 	});
 });

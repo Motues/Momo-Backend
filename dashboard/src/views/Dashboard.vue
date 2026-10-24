@@ -30,23 +30,32 @@
       </div>
 
       <CommentList
+        ref="commentListRef"
         :data="tableData"
         :pagination="pagination"
+        :batch-loading="batchLoading"
         @page-change="handlePageChange"
         @update="updateStatus"
         @edit="editComment"
+        @batch-update="handleBatchUpdate"
+        @filter-slug="applySlugFilter"
       />
     </template>
   </AdminLayout>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, nextTick } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import request from '../utils/request';
 import toast from '../utils/toast';
 import AdminLayout from '../components/AdminLayout.vue';
 import CommentList from '../components/CommentList.vue';
+import {
+  BATCH_CASCADE_STATUSES,
+  BATCH_STATUS_LABELS,
+  updateCommentsStatus,
+} from '../utils/batchModeration';
 
 const router = useRouter();
 const route = useRoute();
@@ -57,6 +66,8 @@ const apiUrl = ref(localStorage.getItem('apiUrl') || window.location.origin);
 const currentStatus = ref('');
 /** 按文章标识精确筛选（数据统计页跳转带上 `?slug=`），空串表示不筛选 */
 const currentSlug = ref('');
+const batchLoading = ref(false);
+const commentListRef = ref(null);
 
 const statusTabs = [
   { label: '全部', value: '' },
@@ -93,6 +104,20 @@ const switchFilter = (status) => {
   fetchComments(1);
 };
 
+/**
+ * 点表格里的「来源文章」按该文章筛选：
+ * 与统计页跳转过来的 `?slug=` 走同一条路径（地址栏保留，可直接分享/刷新）。
+ */
+const applySlugFilter = (slug) => {
+  const value = String(slug || '').trim();
+  if (!value) return;
+  currentSlug.value = value;
+  pagination.value.page = 1;
+  const query = { ...(currentStatus.value ? { status: currentStatus.value } : {}), slug: value };
+  router.replace({ path: '/comments', query });
+  fetchComments(1);
+};
+
 /** 清除文章筛选：地址栏与列表一起回到「全部文章」 */
 const clearSlugFilter = () => {
   currentSlug.value = '';
@@ -108,6 +133,36 @@ const updateStatus = async (id, status) => {
     fetchComments(pagination.value.page);
   } catch (error) {
     toast.error('更新失败');
+  }
+};
+
+/**
+ * 批量审核：确认后逐条调用既有单条接口（有限并发），再刷新当前页。
+ * 失败项保留勾选，方便直接重试；`deleted` / `pending` 会级联到子孙回复，确认框里明确提示。
+ */
+const handleBatchUpdate = async (ids, status) => {
+  if (!ids || ids.length === 0) return;
+  const label = BATCH_STATUS_LABELS[status] || status;
+  const cascadeTip = BATCH_CASCADE_STATUSES.includes(status)
+    ? `\n\n注意：${label}会连同这些评论下的所有回复一起生效。`
+    : '';
+  if (!window.confirm(`确定批量${label}选中的 ${ids.length} 条评论吗？${cascadeTip}`)) return;
+
+  batchLoading.value = true;
+  try {
+    const result = await updateCommentsStatus(ids, status);
+    if (result.succeeded > 0) {
+      const failedTip = result.failed.length > 0 ? `，${result.failed.length} 条失败` : '';
+      toast.success(`已${label} ${result.succeeded} 条${failedTip}`);
+    } else {
+      toast.error(`批量${label}失败，请重试`);
+    }
+    await fetchComments(pagination.value.page);
+    // 刷新时列表被 loading 占位替换过，等新列表挂载后再回填「失败项」
+    await nextTick();
+    commentListRef.value?.setSelection(result.failedIds);
+  } finally {
+    batchLoading.value = false;
   }
 };
 

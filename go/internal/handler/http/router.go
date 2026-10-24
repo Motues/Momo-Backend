@@ -36,6 +36,10 @@ func AuthMiddleware() gin.HandlerFunc {
 }
 
 func RegisterRoutes(r *gin.Engine, h *CommentHandler) {
+	// 0. 健康检查：给容器 HEALTHCHECK / 编排探针用，公开、无认证。
+	//    必须显式注册，否则会被下面的 SPA NoRoute 兜底成 index.html。
+	r.GET("/health", h.Health)
+
 	// 1. 用户端公开接口
 	api := r.Group("/api")
 	{

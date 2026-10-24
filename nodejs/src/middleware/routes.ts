@@ -34,11 +34,16 @@ import {
   verifyOverview,
   verifyRecords,
   mailList,
+  health,
 } from "../api/index"; // admin
 import fs from "fs";
 import path from "path";
 
 const router = new Hono();
+
+// 健康检查（容器 HEALTHCHECK / 编排探针）：公开、无认证。
+// 必须注册在静态文件与 SPA fallback 之前，否则会被 index.html 兜底。
+router.get("/health", health);
 
 // Public API
 router.get("/api/comments", getCommentBySlug);

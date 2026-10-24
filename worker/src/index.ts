@@ -28,8 +28,12 @@ import { addUserToBlacklist, removeUserFromBlacklist } from './api/admin/userBla
 import { trustLink, revokeLinkTrust } from './api/admin/linkTrust'
 import { exportSettings, exportComments } from './api/admin/dataExport'
 import { importComments, importSettings } from './api/admin/dataImport'
+import { health } from './api/health'
 
 const app = new Hono<{ Bindings: Bindings }>()
+
+// 健康检查：注册在自迁移中间件之前，探针不应该被迁移/设置读取拖慢或拖垮
+app.get('/health', health)
 
 // 幂等启动自迁移：每个 isolate 只执行一次，失败仅记录日志不阻断请求
 app.use('*', async (c, next) => {
