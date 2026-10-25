@@ -158,6 +158,17 @@ describe('SilentVerify —— 后端关闭验证时放行', () => {
 		expect(solutionCallCount(fetch)).toBe(0);
 	});
 
+	it('成功态挂 verify-success（颜色走 --verify-success-* 主题变量），加载态不挂', async () => {
+		const onTicket = vi.fn();
+		fetchMock(challengeDisabled);
+		const { container } = renderVerify({ onTicket });
+		await waitFor(() => expect(container.textContent).toContain('验证成功'));
+		const box = container.querySelector('.verify-box');
+		expect(box.classList.contains('verify-success')).toBe(true);
+		// 颜色由 CSS 变量决定，不应再有写死的 tailwind 绿色类
+		expect([...box.classList].some((name) => name.startsWith('text-green'))).toBe(false);
+	});
+
 	it('solution 返回 data.enabled === false 时同样放行', async () => {
 		const onTicket = vi.fn();
 		fetchMock(async (url) => {

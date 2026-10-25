@@ -7,13 +7,40 @@
   --button-border-color: var(--momo-button-border-color, #e5e5e5);
   --button-hover-bg-color: var(--momo-button-hover-bg-color, #f5f5f5);
   --link-color: var(--momo-link-color, #003b6e);
+  /*
+   * 无感验证「验证成功」框的绿色。浅色主题用深绿（白底上对比度足够），
+   * 深色主题用亮绿（深底上不发灰）—— 同一个颜色在两种背景上不可能都清晰，
+   * 所以拆成两个变量，宿主可用 --momo-verify-success-color 覆盖。
+   */
+  --verify-success-color: var(--momo-verify-success-color, #15803d);
+  --verify-success-border-color: var(--momo-verify-success-border-color, rgba(22, 163, 74, 0.5));
 }
-:global([data-theme="dark"]) .comment-container {
+
+[data-theme="dark"] .comment-container {
   --text-color: var(--momo-text-color, #ffffff);
   --text-color-70: var(--momo-text-color, #ffffff);
   --button-border-color: var(--momo-button-border-color, #3d3d3d);
   --button-hover-bg-color: var(--momo-button-hover-bg-color, #262626);
   --link-color: var(--momo-link-color, #57ace7);
+  --verify-success-color: var(--momo-verify-success-color, #4ade80);
+  --verify-success-border-color: var(--momo-verify-success-border-color, rgba(74, 222, 128, 0.45));
+}
+
+/*
+ * 没有显式主题标记时跟随系统（宿主在 html/body 上挂 data-theme 时以它为准）。
+ * 注意 `[data-theme="light"]` 这条兜底：宿主显式声明浅色时，即使系统是深色
+ * 也要锁回浅色，否则「浅色站点 + 系统深色」会拿到深色主题的亮绿。
+ */
+@media (prefers-color-scheme: dark) {
+  .comment-container {
+    --verify-success-color: var(--momo-verify-success-color, #4ade80);
+    --verify-success-border-color: var(--momo-verify-success-border-color, rgba(74, 222, 128, 0.45));
+  }
+
+  [data-theme="light"] .comment-container {
+    --verify-success-color: var(--momo-verify-success-color, #15803d);
+    --verify-success-border-color: var(--momo-verify-success-border-color, rgba(22, 163, 74, 0.5));
+  }
 }
 
 

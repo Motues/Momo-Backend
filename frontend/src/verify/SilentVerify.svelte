@@ -288,7 +288,7 @@
   <div
     class="verify-box relative flex items-center gap-1.5 rounded px-2.5 h-[38px] border text-sm select-none
       {status === 'success'
-        ? 'border-green-500/60 text-green-600 dark:text-green-400'
+        ? 'verify-success'
         : 'border-[var(--button-border-color)] text-[var(--text-color)]/70'}"
     role="status"
     aria-live="polite"
@@ -339,5 +339,15 @@
     opacity: 0;
     pointer-events: none;
     z-index: -1;
+  }
+
+  /*
+   * 「验证成功」的绿色：取值来自 `--verify-success-*`（定义在 style/main.css 的
+   * `.comment-container` 上，浅色 / 深色 / 系统深色各一套），这里只做兜底 ——
+   * 组件被挂在 `.comment-container` 之外时也不会退回写死的单一颜色。
+   */
+  .verify-success {
+    color: var(--verify-success-color, #15803d);
+    border-color: var(--verify-success-border-color, rgba(22, 163, 74, 0.5));
   }
 </style>

@@ -42,7 +42,9 @@
 
 ## 自定义样式
 
-目前可以修改评论组件的颜色，后续会推出自定义样式的功能。颜色通过设置全局变量来修改，并且支持黑暗模式。
+目前可以修改评论组件的颜色，后续会推出自定义样式的功能。颜色通过设置全局变量来修改，并且支持黑暗模式：
+在 `html` / `body` 上挂 `[data-theme="dark"]` 即可，组件自带一套深色默认值（白字、深色边框、亮色链接），
+下面这些 `--momo-*` 变量只是覆盖默认值。
 
 ```css
 :root {
@@ -50,6 +52,9 @@
     --momo-button-border-color: #e5e5e5;   /* 按钮边框颜色 */
     --momo-button-hover-bg-color: #f5f5f5; /* 按钮背景颜色（hover 状态）*/
     --momo-link-color: #003b6e;            /* 链接颜色 */
+    /* 无感验证「验证成功」的绿色（文字 / 边框），可选 */
+    --momo-verify-success-color: #15803d;
+    --momo-verify-success-border-color: rgba(22, 163, 74, 0.5);
 }
 /* 暗色模式 */
 [data-theme="dark"] { 
@@ -57,8 +62,15 @@
     --momo-button-border-color: #2e2e2e;
     --momo-button-hover-bg-color: #3c3c3c;
     --momo-link-color: #fff;
+    --momo-verify-success-color: #4ade80;
+    --momo-verify-success-border-color: rgba(74, 222, 128, 0.45);
 }
 ```
+
+> **无感验证的绿色跟随主题**：默认浅色用深绿、深色用亮绿，两者都通过 `--momo-verify-success-color` /
+> `--momo-verify-success-border-color` 覆盖。没有挂 `data-theme` 的页面会跟随系统的
+> `prefers-color-scheme`；如果站点本身只有浅色、而访客系统是深色，请显式挂 `data-theme="light"`
+> 锁定浅色，否则会用到深色主题的亮绿。
 
 ## 表情
 
