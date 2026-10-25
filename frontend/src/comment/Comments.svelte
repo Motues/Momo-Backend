@@ -2,7 +2,7 @@
   import { onMount, tick } from 'svelte';
   import CommentItem from './CommentItem.svelte';
   import EmojiPicker from '../emoji/EmojiPicker.svelte';
-  import { getCachedEmojiSet, loadEmojiSet, containsShortcode, type EmojiSet } from '../emoji/owo';
+  import { getCachedEmojiSet, loadEmojiSet, revalidateEmojiSet, emojiCacheNeedsRevalidation, containsShortcode, type EmojiSet } from '../emoji/owo';
   import { emojify } from '../emoji/render';
   import SilentVerify from '../verify/SilentVerify.svelte';
   import i18nit from '../i18n/translation';
@@ -200,7 +200,7 @@
   $: emojiImages = emojiAvailable ? emojiSet?.images ?? null : null;
 
   /**
-   * 首屏水合（第一层）：**同步、零请求**，只读本地缓存（7 天 TTL，键是**整个地址列表**的 JSON）。
+   * 首屏水合（第一层）：**同步、零请求**，只读本地缓存（7 天可用期，键是**整个地址列表**的 JSON）。
    * 缓存命中时打开页面立刻就是表情；缺失/过期时先保留 `:name:` 文本，
    * 由 `scheduleEmojiPrefetch()` 在空闲时补齐（见下）。
    */
@@ -208,8 +208,8 @@
     emojiSet = emojiUsable(emojiEnabled, emojiCdnUrls) ? getCachedEmojiSet({ cdnUrls: emojiCdnUrls }) : null;
   }
 
-  /** 已经安排过预取的地址列表（JSON）：翻页/加载更多时不重复触发 */
-  let emojiPrefetchKey = '';
+  /** 本页已经安排过刷新的地址列表（JSON）：翻页/加载更多时不重复触发 */
+  let emojiRefreshKey = '';
 
   /** 评论树里是否真的出现了 `:name:` 短代码：没有就不为首屏拉第三方 owo.json */
   function commentsUseShortcode(list: any[]): boolean {
@@ -228,32 +228,52 @@
   }
 
   /**
-   * 首屏水合（第二层）：缓存缺失/过期时，在首屏渲染后的空闲时段**预取一次** owo.json，
-   * 到达后自动把正文里的 `:name:` 升级成表情 —— 不必再等用户点开表情面板。
+   * 首屏水合（第二层）：缓存缺失/过期时补齐，命中缓存但「到点」时后台校验。
    *
-   * - 与面板共用 `loadEmojiSet` 的模块级缓存/并发去重，因此不会重复请求；
-   * - 页面里没有短代码时完全不发第三方请求（纯阅读页仍是零第三方请求）；
-   * - 预取失败静默降级为文字，面板打开时仍会重试并给出错误提示。
+   * - 没有可用缓存 + 正文里有短代码 → 空闲时段拉一次（原有预取行为）；
+   * - 有缓存 + 正文里有短代码 + 缓存超过 `EMOJI_REVALIDATE_MS`（6 小时）→ 空闲时段静默校验，
+   *   owo.json 内容变了才替换（`revalidateEmojiSet` 返回新集合时才赋值），没变/失败保持原样；
+   * - 正文里**没有**短代码时什么都不做：纯阅读页仍是零第三方请求，等用户打开面板时再刷新；
+   * - 与面板共用 `loadEmojiSet` / `revalidateEmojiSet` 的模块级缓存与并发去重，不会重复请求。
    */
   function scheduleEmojiPrefetch() {
     if (!emojiUsable(emojiEnabled, emojiCdnUrls)) return;
-    // 本地新鲜缓存已经同步水合过了，不需要再拉
-    if (emojiSet && emojiSet.images.size > 0) return;
+    // 正文里没有短代码：不为「正文水合」拉第三方文件（面板打开时会自己刷新）
     if (!commentsUseShortcode(comments)) return;
 
     const key = JSON.stringify(emojiCdnUrls);
-    if (emojiPrefetchKey === key) return;
-    emojiPrefetchKey = key;
+    if (emojiRefreshKey === key) return;
+
+    // 有缓存 → 只有到点才校验；没有缓存（含已过 7 天可用期）→ 正常拉一次
+    const mode: 'load' | 'revalidate' | null =
+      (emojiSet?.images.size ?? 0) > 0
+        ? emojiCacheNeedsRevalidation({ cdnUrls: emojiCdnUrls })
+          ? 'revalidate'
+          : null
+        : 'load';
+    if (!mode) return;
+    emojiRefreshKey = key;
 
     const run = () => {
       if (!emojiUsable(emojiEnabled, emojiCdnUrls)) return;
-      loadEmojiSet({ cdnUrls: emojiCdnUrls })
-        .then((set) => {
-          // 期间用户可能已打开面板：只接受图片不少于当前的结果，避免覆盖更全的集合
-          if (set.images.size >= (emojiSet?.images.size ?? 0)) emojiSet = set;
+      if (mode === 'load') {
+        loadEmojiSet({ cdnUrls: emojiCdnUrls })
+          .then((set) => {
+            // 期间用户可能已打开面板：只接受图片不少于当前的结果，避免覆盖更全的集合
+            if (set.images.size >= (emojiSet?.images.size ?? 0)) emojiSet = set;
+          })
+          .catch(() => {
+            /* 静默失败：面板打开时会重试 */
+          });
+        return;
+      }
+      revalidateEmojiSet({ cdnUrls: emojiCdnUrls })
+        .then((next) => {
+          // null = 内容没变或有来源失败：保持当前界面（缓存里的表情照常显示）
+          if (next) emojiSet = next;
         })
         .catch(() => {
-          /* 静默失败：面板打开时会重试 */
+          /* 静默失败：下次到点或打开面板时再试 */
         });
     };
 

@@ -631,6 +631,58 @@ describe('Comments —— 后端下发的展示配置', () => {
 		await new Promise((resolve) => setTimeout(resolve, 30));
 		expect(fetch.calls.length).toBe(1);
 	});
+
+	it('缓存到点（6 小时）且正文有短代码：首屏水合后自动后台校验，换了图也能更新', async () => {
+		const cdn = 'https://cdn.example.com/owo.json';
+		const oldPng = 'https://cdn.example.com/emoji/old-doge.png';
+		const newPng = 'https://cdn.example.com/emoji/new-doge.png';
+		const listUrl = `${API_URL}/api/comments?post_slug=${encodeURIComponent(POST_SLUG)}&nested=true&page=1&limit=20`;
+		localStorage.setItem(
+			`${EMOJI_CACHE_PREFIX}${JSON.stringify([cdn])}`,
+			JSON.stringify({
+				savedAt: Date.now() - 60 * 60 * 1000,
+				revalidatedAt: Date.now() - 7 * 60 * 60 * 1000,
+				packs: { Bilibili: { type: 'image', container: [{ icon: `<img src="${oldPng}">`, text: 'doge' }] } },
+			})
+		);
+		const fetch = fetchMock(async (url) => {
+			if (url === cdn) {
+				return jsonResponse({
+					Bilibili: { type: 'image', container: [{ icon: `<img src="${newPng}">`, text: 'doge' }] },
+				});
+			}
+			return jsonResponse(
+				listBody([makeComment({ contentHtml: '<p>看这个 :doge: 表情</p>' })], { emoji_cdn_urls: [cdn] })
+			);
+		});
+		const { container } = renderComments();
+
+		// 先用缓存水合，再被后台校验的结果替换成新图（图片刷新见 emoji/render.ts）
+		await waitFor(() => expect(container.querySelector('img.momo-emoji')?.getAttribute('src')).toBe(newPng));
+		expect(fetch.calls.map((call) => call.url)).toEqual([listUrl, cdn]);
+		expect(fetch.calls[1].init.cache).toBe('no-cache');
+	});
+
+	it('缓存刚校验过时不为正文再拉一次（零第三方请求）', async () => {
+		const cdn = 'https://cdn.example.com/owo.json';
+		const png = 'https://cdn.example.com/emoji/doge.png';
+		localStorage.setItem(
+			`${EMOJI_CACHE_PREFIX}${JSON.stringify([cdn])}`,
+			JSON.stringify({
+				savedAt: Date.now() - 60 * 60 * 1000,
+				revalidatedAt: Date.now() - 60 * 1000,
+				packs: { Bilibili: { type: 'image', container: [{ icon: `<img src="${png}">`, text: 'doge' }] } },
+			})
+		);
+		const fetch = fetchMock(async () =>
+			jsonResponse(listBody([makeComment({ contentHtml: '<p>看这个 :doge: 表情</p>' })], { emoji_cdn_urls: [cdn] }))
+		);
+		const { container } = renderComments();
+
+		await waitFor(() => expect(container.querySelector('img.momo-emoji')).toBeTruthy());
+		await new Promise((resolve) => setTimeout(resolve, 30));
+		expect(fetch.calls.length).toBe(1);
+	});
 });
 
 describe('Comments —— 提交评论', () => {

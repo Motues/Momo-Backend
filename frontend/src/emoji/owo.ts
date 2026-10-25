@@ -7,6 +7,11 @@
  * 旧的单地址 `emoji_cdn_url` 只在数组为空时作为回落（调用方归一化成数组后传进来）。
  * v1 的「自定义表情包」与本站公开表情接口已整体删除，这里不再有任何指向本站的表情请求。
  *
+ * 缓存策略（stale-while-revalidate，见 doc/emoji.md 第 6 节）：
+ *  - `EMOJI_CACHE_TTL_MS`（7 天）是**可用期**：期内首屏可以直接用缓存同步水合；
+ *  - `EMOJI_REVALIDATE_MS`（6 小时）是**校验间隔**：到点后由 `revalidateEmojiSet` 静默拉一次，
+ *    内容变了才替换界面，没变/失败都保留缓存（源站没有 ETag，校验只能整份重下）。
+ *
  * 多来源合并口径（doc/emoji.md 第 3.3 节）：
  *  - 顶层标签按「首次出现」的顺序排列；
  *  - 后面的来源出现同名标签时，把它的 `container` **追加**进已有标签（不新建标签页）；
@@ -69,6 +74,15 @@ export interface EmojiSet {
 }
 
 export const EMOJI_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * 后台校验（stale-while-revalidate）的间隔：缓存照常用，但超过这个时间就静默拉一次来源。
+ *
+ * 7 天的 `EMOJI_CACHE_TTL_MS` 是「离线可用期」，不是「新鲜期」——只靠它的话，管理员换了
+ * owo.json 内容，老访客最多要等 7 天。默认 6 小时与源站 `cache-control: max-age=3600`
+ * 同一量级（见 doc/emoji.md 第 6 节）；源站没有 ETag/Last-Modified，校验只能整份重下，
+ * 所以间隔不能压到几分钟，否则纯阅读成本会高到失去「懒加载」的意义。
+ */
+export const EMOJI_REVALIDATE_MS = 6 * 60 * 60 * 1000;
 export const EMOJI_CACHE_PREFIX = 'momo_emoji_cache_v1:';
 export const EMOJI_MAX_TEXT_LENGTH = 64;
 export const EMOJI_MAX_REMOTE_URL = 2048;
@@ -232,6 +246,11 @@ function cacheKey(cdnUrlsKey: string): string {
 
 interface EmojiCacheEntry {
 	savedAt: number;
+	/**
+	 * 最近一次向来源校验成功（或尝试过）的时间。
+	 * 旧缓存没有这个字段时回落到 `savedAt`，因此不需要换 `EMOJI_CACHE_PREFIX` 版本。
+	 */
+	revalidatedAt?: number;
 	packs: OwoShape;
 }
 
@@ -249,32 +268,75 @@ export function readEmojiCache(cdnUrl: string, storage: Storage | null = safeSto
 		const parsed = JSON.parse(raw);
 		if (!parsed || typeof parsed !== 'object') return null;
 		if (!Number.isFinite(parsed.savedAt) || !isPlainObject(parsed.packs)) return null;
-		return { savedAt: parsed.savedAt, packs: sanitizePacks(parsed.packs) };
+		const entry: EmojiCacheEntry = { savedAt: parsed.savedAt, packs: sanitizePacks(parsed.packs) };
+		if (Number.isFinite(parsed.revalidatedAt)) entry.revalidatedAt = parsed.revalidatedAt;
+		return entry;
 	} catch {
 		return null;
 	}
 }
 
-/** 写入 owo.json 缓存（存储被禁用时静默失败）；`cdnUrl` 同样是地址列表的 JSON */
+/**
+ * 写入 owo.json 缓存（存储被禁用时静默失败）；`cdnUrl` 同样是地址列表的 JSON。
+ *
+ * `revalidatedAt` 默认等于写入时间：写入的语义就是「刚从来源拿到了内容」。
+ * 只更新时间、不改内容时请用 `touchEmojiCache`。
+ */
 export function writeEmojiCache(
 	cdnUrl: string,
 	packs: OwoShape,
 	storage: Storage | null = safeStorage(),
-	now = Date.now()
+	now = Date.now(),
+	revalidatedAt = now
 ): boolean {
 	if (!cdnUrl || !storage) return false;
 	try {
-		storage.setItem(cacheKey(cdnUrl), JSON.stringify({ savedAt: now, packs }));
+		storage.setItem(cacheKey(cdnUrl), JSON.stringify({ savedAt: now, revalidatedAt, packs }));
 		return true;
 	} catch {
 		return false;
 	}
 }
 
+/**
+ * 只把「最近校验时间」推到 `revalidatedAt`（内容与 `savedAt` 都不动）。
+ *
+ * 用于后台校验拿到「内容没变」或「校验失败」的情况：既不重写 40KB 的包体语义，
+ * 又让下一次校验落在 `EMOJI_REVALIDATE_MS` 之后，避免同一个访客每个页面都重试一次。
+ */
+export function touchEmojiCache(
+	cdnUrl: string,
+	storage: Storage | null = safeStorage(),
+	revalidatedAt = Date.now()
+): boolean {
+	const entry = readEmojiCache(cdnUrl, storage);
+	if (!entry) return false;
+	return writeEmojiCache(cdnUrl, entry.packs, storage, entry.savedAt, revalidatedAt);
+}
+
 export function isEmojiCacheFresh(entry: EmojiCacheEntry | null, now = Date.now()): boolean {
 	if (!entry) return false;
 	const age = now - entry.savedAt;
 	return age >= 0 && age < EMOJI_CACHE_TTL_MS;
+}
+
+/**
+ * 缓存是否「到点该向来源校验了」。
+ *
+ * 与 `isEmojiCacheFresh` 是两件事：后者决定**首屏还能不能同步水合**（7 天可用期），
+ * 这里决定**要不要在后台再拉一次**（6 小时间隔）。没有缓存时返回 true ——
+ * 但调用方应当走正常加载（`loadEmojiSet`），而不是后台校验。
+ */
+export function needsRevalidation(
+	entry: EmojiCacheEntry | null,
+	now = Date.now(),
+	after = EMOJI_REVALIDATE_MS
+): boolean {
+	if (!entry) return true;
+	const checkedAt = entry.revalidatedAt ?? entry.savedAt;
+	const age = now - checkedAt;
+	// 时钟倒退（age < 0）也当作到点：否则一次错乱的时间戳会让缓存永远不再校验
+	return !(age >= 0 && age < after);
 }
 
 function safeStorage(): Storage | null {
@@ -287,8 +349,12 @@ function safeStorage(): Storage | null {
 	}
 }
 
-async function fetchJson(url: string, fetchImpl: typeof fetch): Promise<unknown> {
-	const res = await fetchImpl(url, { headers: { Accept: 'application/json' } });
+async function fetchJson(url: string, fetchImpl: typeof fetch, cache?: RequestCache): Promise<unknown> {
+	const init: RequestInit = { headers: { Accept: 'application/json' } };
+	// 只有「强制重拉 / 后台校验」才指定 cache：'no-cache' 表示绕过浏览器 HTTP 缓存
+	// （源站没有 ETag/Last-Modified，校验只能整份重下，光靠 max-age=3600 会拿到旧内容）
+	if (cache) init.cache = cache;
+	const res = await fetchImpl(url, init);
 	if (!res || !res.ok) throw new Error(`HTTP ${res?.status ?? '??'}`);
 	return res.json();
 }
@@ -303,17 +369,38 @@ export interface OwoLoadResult {
 }
 
 /** 拉取单个来源并做形状净化；不是合法 owo.json（没有任何标签）视为该来源失败 */
-async function fetchPack(url: string, fetchImpl: typeof fetch): Promise<OwoShape> {
-	const raw = await fetchJson(url, fetchImpl);
+async function fetchPack(url: string, fetchImpl: typeof fetch, cache?: RequestCache): Promise<OwoShape> {
+	const raw = await fetchJson(url, fetchImpl, cache);
 	const packs = sanitizePacks(raw);
 	if (Object.keys(packs).length === 0) throw new Error('owo.json 结构不正确');
 	return packs;
+}
+
+/** 并发拉取全部来源并按数组顺序合并；失败的来源只记进 `errors`，不短路其他来源 */
+async function fetchAllPacks(
+	urls: string[],
+	fetchImpl: typeof fetch,
+	cache?: RequestCache
+): Promise<{ packs: OwoShape; errors: unknown[] }> {
+	// Promise.allSettled 不会短路：一个来源失败不影响其他来源
+	const settled = await Promise.allSettled(urls.map((url) => fetchPack(url, fetchImpl, cache)));
+	const merged: OwoShape = {};
+	const errors: unknown[] = [];
+	for (const result of settled) {
+		if (result.status === 'fulfilled') {
+			mergePacks(merged, result.value);
+		} else {
+			errors.push(result.reason);
+		}
+	}
+	return { packs: merged, errors };
 }
 
 /**
  * 拉取配置的 owo.json（可多个来源，按数组顺序并发拉取后合并）。
  *
  * - 命中 7 天内的缓存（键 = 整个地址列表的 JSON）不发请求；
+ * - `force` 时绕过缓存，并且用 `cache: 'no-cache'` 绕开浏览器 HTTP 缓存（手动刷新要拿到真正的最新内容）；
  * - 全部来源成功 → 合并结果（`partial: false`）；部分成功 → 合并成功的那几个并标 `partial: true`；
  * - 全部失败 → 回退旧缓存（标 `stale: true`）；连缓存都没有则抛错（由面板显示错误态）。
  */
@@ -335,20 +422,10 @@ export async function loadDefaultPacks(
 		throw new Error('当前环境不支持 fetch');
 	}
 
-	// 并发拉取：一个来源失败不影响其他来源（Promise.allSettled 不会短路）
-	const settled = await Promise.allSettled(urls.map((url) => fetchPack(url, fetchImpl)));
-	const merged: OwoShape = {};
-	const errors: unknown[] = [];
-	for (const result of settled) {
-		if (result.status === 'fulfilled') {
-			mergePacks(merged, result.value);
-		} else {
-			errors.push(result.reason);
-		}
-	}
+	const { packs: merged, errors } = await fetchAllPacks(urls, fetchImpl, force ? 'no-cache' : undefined);
 
 	// 全部失败：回退旧缓存（哪怕已过期），没有缓存才抛错
-	if (errors.length === settled.length) {
+	if (errors.length === urls.length) {
 		if (cached) return { packs: cached.packs, fromCache: true, stale: true, partial: false };
 		const first = errors[0];
 		throw first instanceof Error ? first : new Error('owo.json 加载失败');
@@ -442,13 +519,38 @@ export function getCachedEmojiSet(
 	return buildEmojiSet(packs);
 }
 
+/**
+ * 同步判断「本地缓存是否到点该后台校验了」。
+ *
+ * **没有缓存时返回 false**：那种情况应当走正常加载（`loadEmojiSet`），而不是后台校验 ——
+ * 校验的语义是「手上已经有一份可用的，去确认一下有没有变」。
+ */
+export function emojiCacheNeedsRevalidation(
+	options: {
+		cdnUrls?: string | string[];
+		cdnUrl?: string | string[];
+		storage?: Storage | null;
+		now?: number;
+		revalidateAfter?: number;
+	} = {}
+): boolean {
+	const { storage = safeStorage(), now = Date.now(), revalidateAfter = EMOJI_REVALIDATE_MS } = options;
+	const urls = normalizeCdnUrls(options.cdnUrls ?? options.cdnUrl ?? []);
+	if (urls.length === 0) return false;
+	const entry = readEmojiCache(JSON.stringify(urls), storage);
+	return entry ? needsRevalidation(entry, now, revalidateAfter) : false;
+}
+
 let moduleCache: { key: string; set: EmojiSet } | null = null;
 let inflight: { key: string; promise: Promise<EmojiSet> } | null = null;
+/** 后台校验的并发去重（返回值语义与 `inflight` 不同，单独记一份） */
+let revalidateInflight: { key: string; promise: Promise<EmojiSet | null> } | null = null;
 
 /** 测试用：清掉模块级缓存 */
 export function resetEmojiSetCache(): void {
 	moduleCache = null;
 	inflight = null;
+	revalidateInflight = null;
 }
 
 /**
@@ -491,5 +593,66 @@ export async function loadEmojiSet(options: {
 		return set;
 	} finally {
 		if (inflight?.key === key) inflight = null;
+	}
+}
+
+/**
+ * 后台校验（stale-while-revalidate）：手上已有缓存时，静默向来源确认一次。
+ *
+ * 返回值就是「要不要换界面」：
+ *  - `null` —— 内容没变 / 有来源失败 / 没有缓存可作为基线：调用方**保持现有界面不动**；
+ *  - `EmojiSet` —— 内容确实变了：调用方直接替换，无需再判空。
+ *
+ * 规则：
+ *  - 没有缓存时返回 `null`（没基线可比，交给 `loadEmojiSet` 正常首载）；
+ *  - 用 `cache: 'no-cache'` 请求：源站只有 `max-age=3600` 且没有 ETag，不加这个会直接吃
+ *    浏览器 HTTP 缓存，白刷一遍还拿到旧内容；
+ *  - **任一来源失败就不换界面**：合并结果缺标签，换上去会让面板「少了一整包」；
+ *    失败同样把 `revalidatedAt` 推到当前时间，让重试节奏回到 `EMOJI_REVALIDATE_MS`（避免每页重试风暴）；
+ *  - 内容变化用 `JSON.stringify` 比较（两侧都经过 `sanitizePacks`，键序稳定，40KB 量级的比较成本可忽略），
+ *    没变时只 `touchEmojiCache`，不重写包体、不触发无意义的重新水合。
+ */
+export async function revalidateEmojiSet(options: {
+	cdnUrls: string | string[];
+	fetchImpl?: typeof fetch;
+	storage?: Storage | null;
+	now?: number;
+}): Promise<EmojiSet | null> {
+	const { cdnUrls = [], fetchImpl = globalThis.fetch, storage = safeStorage(), now = Date.now() } = options;
+	const urls = normalizeCdnUrls(cdnUrls);
+	if (urls.length === 0) return null;
+
+	const key = JSON.stringify(urls);
+	const cached = readEmojiCache(key, storage);
+	if (!cached) return null;
+	if (typeof fetchImpl !== 'function') return null;
+
+	if (revalidateInflight && revalidateInflight.key === key) return revalidateInflight.promise;
+
+	const promise = (async () => {
+		const { packs, errors } = await fetchAllPacks(urls, fetchImpl, 'no-cache');
+
+		if (errors.length > 0) {
+			touchEmojiCache(key, storage, now);
+			return null;
+		}
+
+		if (JSON.stringify(packs) === JSON.stringify(cached.packs)) {
+			touchEmojiCache(key, storage, now);
+			return null;
+		}
+
+		writeEmojiCache(key, packs, storage, now);
+		const set = buildEmojiSet(packs);
+		// 模块级缓存同步成最新，后续 loadEmojiSet / 面板不会再退回旧集合
+		if (moduleCache && moduleCache.key === key) moduleCache = { key, set };
+		return set;
+	})();
+
+	revalidateInflight = { key, promise };
+	try {
+		return await promise;
+	} finally {
+		if (revalidateInflight && revalidateInflight.key === key) revalidateInflight = null;
 	}
 }

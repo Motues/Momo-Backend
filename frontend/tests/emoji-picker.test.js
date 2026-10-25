@@ -473,6 +473,8 @@ describe('EmojiPicker —— 面板布局', () => {
 		expect(items(container)[0].className).toContain('max-w-full');
 		// 颜文字字号比图片网格里的文本更小
 		expect(items(container)[0].className).toContain('text-sm');
+		// 深色模式：颜文字自带文字色，不靠从宿主 body 继承（面板已 portal 到 body）
+		expect(items(container)[0].className).toContain('text-[var(--text-color)]');
 		// 超长颜文字在按钮内部换行，不会顶出横向滚动
 		expect(items(container)[0].querySelector('span').className).toContain('break-all');
 
@@ -550,5 +552,111 @@ describe('EmojiPicker —— 跨标签重名（动图不被同名静图顶掉）
 
 		await fireEvent.click(items(container)[0]);
 		expect(onPick).toHaveBeenLastCalledWith(':doge-2:');
+	});
+});
+
+describe('EmojiPicker —— 缓存更新（后台校验 / 手动刷新）', () => {
+	const HOUR = 60 * 60 * 1000;
+	const NEW_OWO = { 新标签: { type: 'emoticon', container: [{ icon: '🆕' }] } };
+
+	/** 预置一份本地缓存；`revalidatedAt` 缺省时按 savedAt 计算（旧缓存格式） */
+	function seedCache(packs, { savedAt, revalidatedAt } = {}) {
+		const entry = { savedAt, packs };
+		if (revalidatedAt !== undefined) entry.revalidatedAt = revalidatedAt;
+		localStorage.setItem(cacheStorageKey([CDN]), JSON.stringify(entry));
+	}
+
+	it('缓存已到点：先用缓存立刻渲染，再静默校验一次（内容变了自动替换）', async () => {
+		seedCache(OWO, { savedAt: Date.now() - HOUR, revalidatedAt: Date.now() - 7 * HOUR });
+		const fetch = fetchMock(async () => jsonResponse(NEW_OWO));
+		const { container } = renderPicker();
+
+		await fireEvent.click(trigger(container));
+		// 缓存里的表情先出现，不闪「正在加载表情...」
+		await waitFor(() => expect(tabs(container).length).toBe(2));
+		expect(panel(container).textContent).not.toContain('正在加载表情...');
+
+		await waitFor(() => expect(tabs(container).map((tab) => tab.textContent.trim())).toEqual(['新标签']));
+		expect(fetch.calls.length).toBe(1);
+		expect(fetch.calls[0].url).toBe(CDN);
+		// 源站只有 max-age=3600 且没有 ETag：不指定 no-cache 会吃到老内容
+		expect(fetch.calls[0].init.cache).toBe('no-cache');
+	});
+
+	it('缓存未到点（刚校验过）时一个请求都不发', async () => {
+		seedCache(OWO, { savedAt: Date.now() - HOUR, revalidatedAt: Date.now() - HOUR });
+		const fetch = fetchMock(async () => jsonResponse(NEW_OWO));
+		const { container } = renderPicker();
+
+		await fireEvent.click(trigger(container));
+		await waitFor(() => expect(items(container).length).toBeGreaterThan(0));
+		expect(fetch.calls).toEqual([]);
+		expect(tabs(container).map((tab) => tab.textContent.trim())).toEqual(['颜文字', 'Bilibili']);
+	});
+
+	it('后台校验拿到的内容没变时界面不动，也不会清空表情', async () => {
+		seedCache(OWO, { savedAt: Date.now() - HOUR, revalidatedAt: Date.now() - 7 * HOUR });
+		const fetch = fetchMock(async () => jsonResponse(OWO));
+		const { container } = renderPicker();
+
+		await fireEvent.click(trigger(container));
+		await waitFor(() => expect(fetch.calls.length).toBe(1));
+		await new Promise((resolve) => setTimeout(resolve, 20));
+
+		expect(tabs(container).map((tab) => tab.textContent.trim())).toEqual(['颜文字', 'Bilibili']);
+		expect(items(container).map((item) => item.dataset.insert)).toEqual(['OωO']);
+		expect(panel(container).textContent).not.toContain('表情加载失败');
+	});
+
+	it('后台校验失败时保留缓存里的表情，不显示错误、不变成空态', async () => {
+		seedCache(OWO, { savedAt: Date.now() - HOUR, revalidatedAt: Date.now() - 7 * HOUR });
+		const fetch = fetchMock(async () => {
+			throw new Error('network down');
+		});
+		const { container } = renderPicker();
+
+		await fireEvent.click(trigger(container));
+		await waitFor(() => expect(fetch.calls.length).toBe(1));
+		await new Promise((resolve) => setTimeout(resolve, 20));
+
+		expect(tabs(container).length).toBe(2);
+		expect(items(container).map((item) => item.dataset.insert)).toEqual(['OωO']);
+		expect(panel(container).textContent).not.toContain('表情加载失败');
+		expect(byTest('emoji-empty')).toBeNull();
+	});
+
+	it('手动刷新入口：缓存再新也能强拉一次（no-cache），成功后替换面板', async () => {
+		seedCache(OWO, { savedAt: Date.now(), revalidatedAt: Date.now() });
+		const fetch = fetchMock(async () => jsonResponse(NEW_OWO));
+		const { container } = renderPicker();
+
+		await fireEvent.click(trigger(container));
+		await waitFor(() => expect(tabs(container).length).toBe(2));
+		expect(fetch.calls).toEqual([]);
+
+		const refreshButton = byTest('emoji-refresh');
+		expect(refreshButton).toBeTruthy();
+		expect(refreshButton.getAttribute('aria-label')).toBe('刷新表情');
+
+		await fireEvent.click(refreshButton);
+		await waitFor(() => expect(tabs(container).map((tab) => tab.textContent.trim())).toEqual(['新标签']));
+		expect(fetch.calls.length).toBe(1);
+		expect(fetch.calls[0].init.cache).toBe('no-cache');
+	});
+
+	it('手动刷新失败时保留已有表情并用 stale 提示（不整块变错误页）', async () => {
+		seedCache(OWO, { savedAt: Date.now(), revalidatedAt: Date.now() });
+		fetchMock(async () => {
+			throw new Error('network down');
+		});
+		const { container } = renderPicker();
+
+		await fireEvent.click(trigger(container));
+		await waitFor(() => expect(tabs(container).length).toBe(2));
+
+		await fireEvent.click(byTest('emoji-refresh'));
+		await waitFor(() => expect(byTest('emoji-stale')).toBeTruthy());
+		expect(items(container).map((item) => item.dataset.insert)).toEqual(['OωO']);
+		expect(panel(container).textContent).not.toContain('表情加载失败');
 	});
 });

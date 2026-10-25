@@ -62,6 +62,7 @@ const translation: Translation = {
         emojiEmpty: "暂无可用的表情",
         emojiStale: "表情来自本地缓存，点击重试",
         emojiPartial: "部分来源加载失败（可重试）",
+        emojiRefresh: "刷新表情",
         emojiClose: "关闭表情面板",
         linkDormantTip: "该评论已经休眠，暂时无法由本站跳转访问",
     },

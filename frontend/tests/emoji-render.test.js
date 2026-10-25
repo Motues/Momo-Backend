@@ -67,6 +67,21 @@ describe('emoji/render —— hydrateEmojis', () => {
 		expect(root.querySelectorAll('img.momo-emoji').length).toBe(1);
 	});
 
+	it('表情包更新后已水合的图片换成新地址（同名短代码换了图）', () => {
+		const root = container('<p>:doge:</p>');
+		hydrateEmojis(root, images());
+		const img = root.querySelector('img.momo-emoji');
+		expect(img.getAttribute('src')).toBe(PNG);
+
+		// owo.json 更新 → 同一短代码指向新图片：文本节点早已被替换，靠图片刷新兜住
+		expect(hydrateEmojis(root, images([['doge', PNG2]]))).toBe(1);
+		expect(img.getAttribute('src')).toBe(PNG2);
+		expect(img.getAttribute('alt')).toBe(':doge:');
+		expect(root.querySelectorAll('img.momo-emoji').length).toBe(1);
+		// 幂等：地址已经一致，再跑一次不改
+		expect(hydrateEmojis(root, images([['doge', PNG2]]))).toBe(0);
+	});
+
 	it('images 为 null / 空 Map / 空容器时是安全的空操作', () => {
 		const root = container('<p>:doge:</p>');
 		expect(hydrateEmojis(root, undefined)).toBe(0);

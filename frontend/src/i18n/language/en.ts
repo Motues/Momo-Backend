@@ -62,6 +62,7 @@ const translation: Translation = {
         emojiEmpty: "No emoji available",
         emojiStale: "Emoji came from local cache, click to retry",
         emojiPartial: "Some emoji sources failed to load (click to retry)",
+        emojiRefresh: "Refresh emoji",
         emojiClose: "Close emoji panel",
         linkDormantTip: "This comment's link is dormant and cannot be opened from this site for now",
     },

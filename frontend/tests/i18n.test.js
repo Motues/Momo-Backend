@@ -69,6 +69,7 @@ const CONTRACT_KEYS = [
 	'emojiRetry',
 	'emojiStale',
 	'emojiPartial',
+	'emojiRefresh',
 	'linkDormantTip',
 	'networkError',
 ];

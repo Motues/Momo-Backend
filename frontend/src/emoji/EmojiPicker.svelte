@@ -2,8 +2,10 @@
   import { onMount } from 'svelte';
   import i18nit from '../i18n/translation';
   import {
+    emojiCacheNeedsRevalidation,
     getCachedEmojiSet,
     loadEmojiSet,
+    revalidateEmojiSet,
     type EmojiSet,
   } from './owo';
 
@@ -51,6 +53,8 @@
 
   let open = false;
   let loading = false;
+  /** 后台静默校验中（不遮面板、不清空表情，只在刷新按钮上转圈） */
+  let refreshing = false;
   let error = '';
   let stale = false;
   /** 部分来源加载失败（成功的那几个照常渲染，底部提示可重试） */
@@ -84,23 +88,49 @@
    */
   $: activeTabIsText = activeTabItems.length > 0 && activeTabItems.every((item) => !item.shortcode);
 
+  /** 换上一份新集合：统一维护选中标签与提示位（加载/刷新/回传父组件都走这里） */
+  function applySet(set: EmojiSet) {
+    emojiSet = set;
+    error = '';
+    stale = Boolean(set.stale);
+    partial = Boolean(set.partial);
+    if (!activeTabId || !set.tabs.some((tab) => tab.id === activeTabId)) {
+      activeTabId = set.tabs[0]?.id ?? '';
+    }
+  }
+
   async function ensureLoaded(force = false) {
     if (unavailable) return;
     if (loading) return;
     loading = true;
     error = '';
     try {
-      const set = await loadEmojiSet({ cdnUrls: urlList, force });
-      emojiSet = set;
-      stale = Boolean(set.stale);
-      partial = Boolean(set.partial);
-      if (!activeTabId || !set.tabs.some((tab) => tab.id === activeTabId)) {
-        activeTabId = set.tabs[0]?.id ?? '';
-      }
+      applySet(await loadEmojiSet({ cdnUrls: urlList, force }));
     } catch (e) {
       error = t('comments.emojiLoadFailed');
+      // 有旧表情可看时不要把面板变成错误页：保留列表，用 stale 提示「这是缓存」
+      if (emojiSet && emojiSet.tabs.length > 0) stale = true;
     } finally {
       loading = false;
+    }
+  }
+
+  /**
+   * 后台校验：缓存照常显示，静默确认一次来源。
+   *
+   * 只有内容真的变了（`revalidateEmojiSet` 返回非 null）才替换面板；
+   * 没变、部分来源失败、网络挂了都保持现状 —— 用户感知不到，但也不会看到旧表情以为没更新。
+   */
+  async function refreshQuietly() {
+    if (unavailable || refreshing) return;
+    refreshing = true;
+    try {
+      const next = await revalidateEmojiSet({ cdnUrls: urlList });
+      if (next) applySet(next);
+    } catch {
+      /* 静默：下次到点或用户手动刷新时再试 */
+    } finally {
+      refreshing = false;
     }
   }
 
@@ -225,7 +255,11 @@
     // 先算好位置再渲染，面板不会先闪在错误位置再跳过去
     updatePanelPosition();
     open = true;
-    void ensureLoaded(false);
+    // 缓存「到点」→ 静默校验（不显示加载态）；否则走正常加载
+    // （无缓存、或缓存已过 7 天可用期时，走正常加载才能拿到 loading / stale / 错误态）
+    const hydratedFromCache = emojiSet.tabs.length > 0;
+    if (hydratedFromCache && emojiCacheNeedsRevalidation({ cdnUrls: urlList })) void refreshQuietly();
+    else void ensureLoaded(false);
   }
 
   function close() {
@@ -319,11 +353,11 @@
       data-test="emoji-panel"
       data-placement={panelAbove ? 'top' : 'bottom'}
     >
-      <!-- 标签栏：宽度不够时换行，不做横向滚动（避免出现横向滚动条） -->
-      {#if emojiSet && emojiSet.tabs.length > 0}
-        <div class="flex flex-wrap items-center gap-1 border-b border-[var(--button-border-color)] px-1 pt-1"
+      <!-- 头部：标签栏 + 手动刷新（标签多时换行，不做横向滚动） -->
+      <div class="flex items-start gap-1 border-b border-[var(--button-border-color)] px-1 pt-1">
+        <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1"
           role="tablist" data-test="emoji-tablist">
-          {#each emojiSet.tabs as tab}
+          {#each emojiSet?.tabs ?? [] as tab}
             <button type="button" role="tab"
               aria-selected={activeTab?.id === tab.id}
               class="whitespace-nowrap rounded-t px-2.5 py-1.5 text-xs text-[var(--text-color)]/80"
@@ -335,7 +369,20 @@
             </button>
           {/each}
         </div>
-      {/if}
+        <!-- 手动刷新：后台校验间隔（默认 6 小时）内用户想立刻拿最新表情时的出口 -->
+        <button type="button"
+          class="emoji-hoverable ml-auto shrink-0 rounded p-1 leading-none text-[var(--text-color)]/60 transition-colors hover:text-[var(--link-color)] disabled:cursor-not-allowed"
+          title={t('comments.emojiRefresh')}
+          aria-label={t('comments.emojiRefresh')}
+          disabled={loading || refreshing}
+          data-test="emoji-refresh"
+          on:click={() => ensureLoaded(true)}>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" class="h-4 w-4"
+            class:animate-spin={loading || refreshing} aria-hidden="true">
+            <path fill="currentColor" d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+          </svg>
+        </button>
+      </div>
 
       <!-- 表情区：占满面板剩余高度，只纵向滚动（横向一律不滚，宽度按面板自适应换行） -->
       <div class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto p-2" data-test="emoji-list">
@@ -347,7 +394,7 @@
             <div class="flex flex-wrap gap-1">
               {#each activeTab.items as item}
                 <button type="button"
-                  class="emoji-hoverable emoji-text-item flex min-h-[2rem] min-w-[2rem] max-w-full items-center justify-center rounded px-2 py-1 text-sm leading-none"
+                  class="emoji-hoverable emoji-text-item flex min-h-[2rem] min-w-[2rem] max-w-full items-center justify-center rounded px-2 py-1 text-sm leading-none text-[var(--text-color)]"
                   title={item.title}
                   data-test="emoji-item"
                   data-insert={item.insert}
@@ -370,7 +417,7 @@
                     <img src={item.preview} alt={item.insert} class="momo-emoji" loading="lazy" decoding="async"
                       referrerpolicy="no-referrer" />
                   {:else}
-                    <span class="text-base leading-none">{item.preview}</span>
+                    <span class="text-base leading-none text-[var(--text-color)]">{item.preview}</span>
                   {/if}
                 </button>
               {/each}
@@ -423,6 +470,12 @@
    */
   .emoji-panel {
     background-color: var(--momo-panel-bg, var(--button-hover-bg-color));
+    /*
+     * 面板被 portal 到 body，已经不在 `.comment-container` 里：
+     * 自定义属性会随内联样式带过来，但 `color` 是**继承属性**，会从宿主 body 继承
+     * （深色站点常见 body 仍是黑色）。这里显式落一次，颜文字等未单独设色的文字才不会发黑。
+     */
+    color: var(--text-color);
     z-index: 9999;
     /* JS 会写入精确的 px 宽度；这里只是定位脚本没有跑起来时的兜底 */
     max-width: calc(100vw - 1.5rem);

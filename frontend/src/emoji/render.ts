@@ -76,6 +76,26 @@ function hydrateTextNode(node: Text, images: Map<string, string>): void {
 }
 
 /**
+ * 表情包更新后，已经水合过的 `<img>` 也要跟着换图。
+ *
+ * 短代码在第一次水合时就已经变成 `<img>` 了，后续再跑文本水合根本碰不到它；
+ * 如果管理员换掉了同名表情的图片地址（`owo.json` 更新），正文会一直停在旧图上。
+ * 这里只认 `alt = :name:` 且 `src` 确实变了的节点，因此重复调用是幂等的。
+ */
+function refreshHydratedImages(root: HTMLElement, images: Map<string, string>): number {
+	let updated = 0;
+	for (const image of root.querySelectorAll<HTMLImageElement>('img.momo-emoji')) {
+		const name = (image.alt || '').replace(/^:/, '').replace(/:$/, '');
+		const url = images.get(name);
+		if (url && image.getAttribute('src') !== url) {
+			image.src = url;
+			updated += 1;
+		}
+	}
+	return updated;
+}
+
+/**
  * 就地水合一个容器内的所有文本节点。
  * 幂等：已替换过的位置不再有 `:name:` 文本，重复调用不会重复插图片。
  */
@@ -102,7 +122,7 @@ export function hydrateEmojis(root: HTMLElement, images?: Map<string, string>): 
 			replaced += 1;
 		}
 	}
-	return replaced;
+	return replaced + refreshHydratedImages(root, images);
 }
 
 /**

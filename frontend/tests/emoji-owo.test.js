@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
 	EMOJI_CACHE_PREFIX,
 	EMOJI_CACHE_TTL_MS,
+	EMOJI_REVALIDATE_MS,
 	buildEmojiSet,
 	codePointLength,
 	containsShortcode,
+	emojiCacheNeedsRevalidation,
 	findShortcodes,
 	fnv1aHex,
 	getCachedEmojiSet,
@@ -12,12 +14,15 @@ import {
 	loadDefaultPacks,
 	loadEmojiSet,
 	mergePacks,
+	needsRevalidation,
 	normalizeCdnUrls,
 	normalizeShortcode,
 	readEmojiCache,
 	resetEmojiSetCache,
+	revalidateEmojiSet,
 	safeImageUrl,
 	sanitizePacks,
+	touchEmojiCache,
 	writeEmojiCache,
 } from '../src/emoji/owo';
 
@@ -718,5 +723,159 @@ describe('emoji/owo —— loadEmojiSet 模块级缓存与并发去重', () => {
 		await loadEmojiSet({ cdnUrls: [CDN], storage: null });
 		await loadEmojiSet({ cdnUrls: [CDN], storage: null, force: true });
 		expect(fetch.calls.length).toBe(2);
+	});
+});
+
+describe('emoji/owo —— 后台校验（stale-while-revalidate）', () => {
+	const packOld = owo({ 旧: { type: 'emoticon', container: [{ icon: 'OωO' }] } });
+	const packNew = owo({ 新: { type: 'emoticon', container: [{ icon: '🙂' }] } });
+
+	it('needsRevalidation：到点、时钟倒退、没有缓存都算需要校验', () => {
+		expect(needsRevalidation(null)).toBe(true);
+
+		const entry = { savedAt: 1000, packs: {} };
+		expect(needsRevalidation(entry, 1000)).toBe(false);
+		expect(needsRevalidation(entry, 1000 + EMOJI_REVALIDATE_MS - 1)).toBe(false);
+		expect(needsRevalidation(entry, 1000 + EMOJI_REVALIDATE_MS)).toBe(true);
+		expect(needsRevalidation(entry, 999)).toBe(true); // 时钟倒退
+		expect(needsRevalidation(entry, 2000, 500)).toBe(true); // 自定义间隔
+
+		// revalidatedAt 优先于 savedAt：校验过之后，可用期锚点不动
+		const touched = { savedAt: 1000, revalidatedAt: 9000, packs: {} };
+		expect(needsRevalidation(touched, 9000)).toBe(false);
+		expect(needsRevalidation(touched, 9000 + EMOJI_REVALIDATE_MS)).toBe(true);
+	});
+
+	it('emojiCacheNeedsRevalidation：没有缓存时返回 false（交给正常加载），空地址也返回 false', () => {
+		const now = 1_000_000;
+		expect(emojiCacheNeedsRevalidation({ cdnUrls: [CDN], storage: localStorage, now })).toBe(false);
+		expect(emojiCacheNeedsRevalidation({ cdnUrls: [], storage: localStorage, now })).toBe(false);
+
+		writeEmojiCache(listKey([CDN]), sanitizePacks(packOld), localStorage, now - EMOJI_REVALIDATE_MS);
+		expect(emojiCacheNeedsRevalidation({ cdnUrls: [CDN], storage: localStorage, now })).toBe(true);
+
+		touchEmojiCache(listKey([CDN]), localStorage, now);
+		expect(emojiCacheNeedsRevalidation({ cdnUrls: [CDN], storage: localStorage, now })).toBe(false);
+	});
+
+	it('touchEmojiCache 只推校验时间：内容与 savedAt 都不动', () => {
+		const now = 1_000_000;
+		writeEmojiCache(listKey([CDN]), sanitizePacks(packOld), localStorage, now - 1000);
+		expect(touchEmojiCache(listKey([CDN]), localStorage, now)).toBe(true);
+
+		const entry = readEmojiCache(listKey([CDN]), localStorage);
+		expect(entry.savedAt).toBe(now - 1000);
+		expect(entry.revalidatedAt).toBe(now);
+		expect(Object.keys(entry.packs)).toEqual(['旧']);
+
+		expect(touchEmojiCache(listKey([OTHER_CDN]), localStorage, now)).toBe(false);
+		expect(touchEmojiCache('', localStorage, now)).toBe(false);
+	});
+
+	it('内容没变时返回 null，只推校验时间（不重写包体）', async () => {
+		const now = 1_000_000;
+		const savedAt = now - 2 * EMOJI_REVALIDATE_MS;
+		writeEmojiCache(listKey([CDN]), sanitizePacks(packOld), localStorage, savedAt);
+		const fetch = fetchMock(async () => jsonResponse(packOld));
+
+		expect(await revalidateEmojiSet({ cdnUrls: [CDN], storage: localStorage, now })).toBeNull();
+		expect(fetch.calls.length).toBe(1);
+		// 绕过浏览器 HTTP 缓存：源站只有 max-age，不指定 cache 会拿到旧内容
+		expect(fetch.calls[0].init.cache).toBe('no-cache');
+
+		const entry = readEmojiCache(listKey([CDN]), localStorage);
+		expect(entry.revalidatedAt).toBe(now);
+		expect(entry.savedAt).toBe(savedAt);
+	});
+
+	it('内容变了时返回新的集合并覆盖缓存', async () => {
+		const now = 1_000_000;
+		writeEmojiCache(listKey([CDN]), sanitizePacks(packOld), localStorage, now - EMOJI_REVALIDATE_MS);
+		fetchMock(async () => jsonResponse(packNew));
+
+		const set = await revalidateEmojiSet({ cdnUrls: [CDN], storage: localStorage, now });
+		expect(set).toBeTruthy();
+		expect(set.tabs.map((tab) => tab.label)).toEqual(['新']);
+		expect(Object.keys(readEmojiCache(listKey([CDN]), localStorage).packs)).toEqual(['新']);
+		expect(readEmojiCache(listKey([CDN]), localStorage).revalidatedAt).toBe(now);
+	});
+
+	it('没有缓存时返回 null 且不发请求（没有基线可比，交给正常首载）', async () => {
+		const fetch = fetchMock(async () => jsonResponse(packNew));
+		expect(await revalidateEmojiSet({ cdnUrls: [CDN], storage: localStorage })).toBeNull();
+		expect(fetch.calls).toEqual([]);
+		expect(await revalidateEmojiSet({ cdnUrls: [], storage: localStorage })).toBeNull();
+	});
+
+	it('有来源失败时不换界面（避免面板少一整包），但记一次校验时间避免每页重试', async () => {
+		const now = 1_000_000;
+		writeEmojiCache(listKey([CDN, OTHER_CDN]), sanitizePacks(packOld), localStorage, now - EMOJI_REVALIDATE_MS);
+		const fetch = fetchMock(async (url) => {
+			if (url === OTHER_CDN) throw new Error('network down');
+			return jsonResponse(packNew);
+		});
+
+		expect(await revalidateEmojiSet({ cdnUrls: [CDN, OTHER_CDN], storage: localStorage, now })).toBeNull();
+		expect(fetch.calls.length).toBe(2);
+		// 缓存内容保持原样（缺标签的结果不能写回去）
+		expect(Object.keys(readEmojiCache(listKey([CDN, OTHER_CDN]), localStorage).packs)).toEqual(['旧']);
+		expect(readEmojiCache(listKey([CDN, OTHER_CDN]), localStorage).revalidatedAt).toBe(now);
+	});
+
+	it('全部来源失败时同样保持缓存并返回 null', async () => {
+		const now = 1_000_000;
+		writeEmojiCache(listKey([CDN]), sanitizePacks(packOld), localStorage, now - EMOJI_REVALIDATE_MS);
+		fetchMock(async () => {
+			throw new Error('network down');
+		});
+
+		expect(await revalidateEmojiSet({ cdnUrls: [CDN], storage: localStorage, now })).toBeNull();
+		expect(Object.keys(readEmojiCache(listKey([CDN]), localStorage).packs)).toEqual(['旧']);
+	});
+
+	it('并发校验共享同一次请求，内容变了也只替换一次', async () => {
+		const now = 1_000_000;
+		writeEmojiCache(listKey([CDN]), sanitizePacks(packOld), localStorage, now - EMOJI_REVALIDATE_MS);
+		let resolveFetch;
+		const fetch = fetchMock(
+			() =>
+				new Promise((resolve) => {
+					resolveFetch = () => resolve(jsonResponse(packNew));
+				})
+		);
+
+		const a = revalidateEmojiSet({ cdnUrls: [CDN], storage: localStorage, now });
+		const b = revalidateEmojiSet({ cdnUrls: [CDN], storage: localStorage, now });
+		expect(fetch.calls.length).toBe(1);
+
+		resolveFetch();
+		const [setA, setB] = await Promise.all([a, b]);
+		expect(setA).toBe(setB);
+		expect(setA.tabs.map((tab) => tab.label)).toEqual(['新']);
+		expect(fetch.calls.length).toBe(1);
+	});
+
+	it('校验到变化时同步更新模块级缓存，后续 loadEmojiSet 不会退回旧集合', async () => {
+		const now = 1_000_000;
+		writeEmojiCache(listKey([CDN]), sanitizePacks(packOld), localStorage, now - EMOJI_REVALIDATE_MS);
+		fetchMock(async () => jsonResponse(packNew));
+
+		const before = await loadEmojiSet({ cdnUrls: [CDN], storage: localStorage, now: now - EMOJI_REVALIDATE_MS });
+		expect(before.tabs.map((tab) => tab.label)).toEqual(['旧']);
+
+		const set = await revalidateEmojiSet({ cdnUrls: [CDN], storage: localStorage, now });
+		expect(set.tabs.map((tab) => tab.label)).toEqual(['新']);
+
+		const after = await loadEmojiSet({ cdnUrls: [CDN], storage: localStorage, now });
+		expect(after).toBe(set);
+	});
+
+	it('force 拉取用 cache: no-cache 绕开浏览器 HTTP 缓存；普通首载不指定 cache', async () => {
+		const fetch = fetchMock(async () => jsonResponse(packOld));
+		await loadDefaultPacks([CDN], { storage: localStorage });
+		await loadDefaultPacks([CDN], { force: true, storage: localStorage });
+
+		expect(fetch.calls[0].init.cache).toBeUndefined();
+		expect(fetch.calls[1].init.cache).toBe('no-cache');
 	});
 });

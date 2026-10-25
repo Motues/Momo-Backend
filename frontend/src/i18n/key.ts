@@ -60,6 +60,7 @@ export interface Translation {
         emojiEmpty: string;
         emojiStale: string;
         emojiPartial: string;
+        emojiRefresh: string;
         emojiClose: string;
         linkDormantTip: string;
     },
