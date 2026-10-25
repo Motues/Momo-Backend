@@ -105,8 +105,17 @@ jobs:
           mkdir -p nodejs/public worker/public
           cp -r $DIST_PATH/* nodejs/public/
           cp -r $DIST_PATH/* worker/public/
+
+          # Worker 本地配置文件不随包分发：
+          # - wrangler.jsonc 可能含 D1 / KV 的 id，改名为 wrangler.example.jsonc 供使用者复制后填写
+          # - wrangler.e2e.jsonc 仅用于本地端到端验证，直接排除
+          cp worker/wrangler.jsonc worker/wrangler.example.jsonc
+          rm -f worker/wrangler.jsonc worker/wrangler.e2e.jsonc
+          rm -f worker/.env worker/.dev.vars worker/.dev.vars.*
           zip -r nodejs.zip nodejs/ -x "*.git*"
-          zip -r worker.zip worker/ -x "*.git*"
+          zip -r worker.zip worker/ -x "*.git*" \
+            -x "worker/wrangler.jsonc" \
+            -x "worker/wrangler.e2e.jsonc"
 
           # 3. 打包 frontend 编译产物 (直接包含 dist 内容，不包含路径)
           cd $(pwd)/downloads/frontend-dist

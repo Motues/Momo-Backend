@@ -111,6 +111,12 @@ KV 命名空间的绑定与数据类似。左侧选择 `KV命名空间`，然后
 	pnpm install
 	```
 
+> 从 Release 下载的压缩包内**不包含** `wrangler.jsonc`，而是示例配置 `wrangler.example.jsonc`。部署前请先复制一份：
+> ```bash
+> cp wrangler.example.jsonc wrangler.jsonc
+> ```
+> 克隆仓库的方式则已包含 `wrangler.jsonc`，无需此步骤。
+
 如果你选择克隆仓库的方式，则需要先编译后端管理页面的代码，位于 `/dashboard` 目录下。编译完成后，复制到 `./public` 目录下
 
 ```bash
