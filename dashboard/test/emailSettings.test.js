@@ -266,6 +266,13 @@ describe('EmailSettings - 保存载荷', () => {
 });
 
 describe('EmailSettings - 测试邮件', () => {
+	it('按钮固定宽度、不换行（右侧说明文字很长，不能被压成两行）', async () => {
+		await mountSettings();
+		const button = wrapper.get('[data-test="test-email-button"]');
+		expect(button.classes()).toEqual(expect.arrayContaining(['shrink-0', 'whitespace-nowrap']));
+		expect(button.classes()).toContain('min-w-[152px]');
+	});
+
 	it('点击后 POST /admin/settings/test-email', async () => {
 		await mountSettings();
 		await testEmailButton().trigger('click');

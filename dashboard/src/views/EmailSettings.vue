@@ -65,8 +65,13 @@
         </div>
 
         <div class="mt-4 flex items-center gap-3 pt-4 border-t border-gray-100">
+          <!--
+            按钮固定不换行、不参与收缩：右侧说明文字很长，CJK 文本可在任意字符间断行，
+            按钮作为 flex 项会被压窄成两行（「发送测试 / 邮件」），这里显式给足宽度。
+          -->
           <button @click="handleTestEmail" :disabled="testingEmail"
-            class="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors text-sm font-medium flex items-center gap-2">
+            data-test="test-email-button"
+            class="px-5 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors text-sm font-medium flex items-center justify-center gap-2 shrink-0 whitespace-nowrap min-w-[152px]">
             <i v-if="testingEmail" class="fa-solid fa-circle-notch animate-spin"></i>
             <i v-else class="fa-solid fa-paper-plane"></i>
             {{ testingEmail ? '发送中...' : '发送测试邮件' }}
