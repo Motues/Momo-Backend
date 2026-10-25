@@ -62,7 +62,14 @@
 
       <div class="p-4 border-t text-[10px] uppercase tracking-widest text-center border-gray-200 text-gray-500">
         <VersionBadge class="mb-2" />
-        Powered by Momo-Backend
+        Powered by
+        <a
+          href="https://github.com/Motues/Momo-Backend"
+          target="_blank"
+          rel="noopener noreferrer"
+          title="在 GitHub 上查看 Momo-Backend"
+          class="text-gray-600 underline decoration-gray-300 underline-offset-2 transition-colors hover:text-blue-600 hover:decoration-blue-400"
+        >Momo-Backend</a>
       </div>
     </aside>
 

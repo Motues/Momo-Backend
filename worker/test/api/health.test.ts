@@ -12,7 +12,14 @@ describe('GET /health', () => {
     expect(res.body).toEqual({
       code: 200,
       message: 'ok',
-      data: { status: 'ok', database: 'ok' },
+      data: {
+        status: 'ok',
+        database: 'ok',
+        runtime: 'worker',
+        container: false,
+        os: 'cloudflare',
+        arch: 'unknown',
+      },
     });
   });
 

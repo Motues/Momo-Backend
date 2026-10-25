@@ -21,10 +21,12 @@ import {
 	normalizeVersion,
 	parseVersion,
 	readCache,
+	releaseTagUrl,
 	writeCache,
 } from '../src/utils/version.js';
 import { useVersionCheck } from '../src/composables/useVersionCheck.js';
 import VersionBadge from '../src/components/VersionBadge.vue';
+import UpdateGuideModal from '../src/components/UpdateGuideModal.vue';
 import AdminLayout from '../src/components/AdminLayout.vue';
 
 /** 由当前版本派生「更新 / 更旧」的版本号，避免版本号变更后这些用例失效 */
@@ -96,6 +98,17 @@ describe('版本号解析与比较', () => {
 		expect(normalizeVersion('1.6.1-beta.2')).toBe('1.6.1-beta.2');
 	});
 
+	it('releaseTagUrl 按仓库 v 前缀拼出对应 Release，非法版本退回列表', () => {
+		expect(releaseTagUrl('1.6.2')).toBe(
+			'https://github.com/Motues/Momo-Backend/releases/tag/v1.6.2'
+		);
+		expect(releaseTagUrl('v1.6')).toBe(
+			'https://github.com/Motues/Momo-Backend/releases/tag/v1.6.0'
+		);
+		expect(releaseTagUrl('latest')).toBe(RELEASE_PAGE_URL);
+		expect(releaseTagUrl('')).toBe(RELEASE_PAGE_URL);
+	});
+
 	it('按数值比较而不是字典序', () => {
 		expect(compareVersions('1.10.0', '1.9.9')).toBe(1);
 		expect(compareVersions('1.9.9', '1.10.0')).toBe(-1);
@@ -165,7 +178,7 @@ describe('fetchLatestVersion', () => {
 		expect(fetchImpl.calls).toHaveLength(1);
 	});
 
-	it('GitHub 失败时回退 jsDelivr/npm', async () => {
+	it('GitHub 失败时回退 jsDelivr/npm，并拼出对应版本的 Release 页面', async () => {
 		const fetchImpl = mockFetch({
 			[GITHUB_LATEST_RELEASE_URL]: () => Promise.reject(new Error('network')),
 			[FALLBACK_LATEST_VERSION_URL]: jsonResponse({ version: '1.6.2' }),
@@ -173,7 +186,7 @@ describe('fetchLatestVersion', () => {
 		const result = await fetchLatestVersion({ fetchImpl });
 		expect(result.version).toBe('1.6.2');
 		expect(result.source).toBe('jsdelivr');
-		expect(result.url).toBe(RELEASE_PAGE_URL);
+		expect(result.url).toBe('https://github.com/Motues/Momo-Backend/releases/tag/v1.6.2');
 	});
 
 	it('HTTP 非 200 或缺少版本号都视为该源失败', async () => {
@@ -315,24 +328,26 @@ describe('VersionBadge 组件', () => {
 		expect(wrapper.find('[data-test="version-update-emoji"]').exists()).toBe(false);
 	});
 
-	it('挂载后自动检查，发现新版本显示小表情与提示链接', async () => {
+	it('挂载后自动检查，发现新版本显示小表情与提示按钮', async () => {
 		vi.stubGlobal('fetch', mockFetch({ [GITHUB_LATEST_RELEASE_URL]: githubOk(`v${NEWER_VERSION}`) }));
 		const wrapper = mountBadge();
 		await flushPromises();
 
 		expect(wrapper.find('[data-test="version-update-emoji"]').exists()).toBe(true);
-		const link = wrapper.get('[data-test="version-update-link"]');
-		expect(link.text()).toContain(`v${NEWER_VERSION}`);
-		expect(link.attributes('href')).toContain(`/releases/tag/v${NEWER_VERSION}`);
-		expect(link.attributes('target')).toBe('_blank');
+		const button = wrapper.get('[data-test="version-update-button"]');
+		expect(button.text()).toContain(`v${NEWER_VERSION}`);
+
+		await button.trigger('click');
+		expect(wrapper.findComponent(UpdateGuideModal).props('visible')).toBe(true);
+		wrapper.unmount();
 	});
 
-	it('已是最新时不显示表情与链接', async () => {
+	it('已是最新时不显示表情与提示按钮', async () => {
 		vi.stubGlobal('fetch', mockFetch({ [GITHUB_LATEST_RELEASE_URL]: githubOk(`v${SAME_VERSION}`) }));
 		const wrapper = mountBadge();
 		await flushPromises();
 		expect(wrapper.find('[data-test="version-update-emoji"]').exists()).toBe(false);
-		expect(wrapper.find('[data-test="version-update-link"]').exists()).toBe(false);
+		expect(wrapper.find('[data-test="version-update-button"]').exists()).toBe(false);
 	});
 
 	it('拿到更旧的版本号同样不算有更新', async () => {
@@ -373,7 +388,7 @@ describe('VersionBadge 组件', () => {
 		expect(wrapper.find('[data-test="version-update-emoji"]').exists()).toBe(true);
 	});
 
-	it('有新版时点击版本号打开 Release 页', async () => {
+	it('有新版时点击版本号打开更新指南浮窗，而不是直接跳转', async () => {
 		vi.stubGlobal('fetch', mockFetch({ [GITHUB_LATEST_RELEASE_URL]: githubOk(`v${NEWER_VERSION}`) }));
 		const openSpy = vi.fn();
 		vi.stubGlobal('open', openSpy);
@@ -381,11 +396,15 @@ describe('VersionBadge 组件', () => {
 		await flushPromises();
 
 		await wrapper.get('[data-test="version-badge"]').trigger('click');
-		expect(openSpy).toHaveBeenCalledWith(
-			`https://github.com/Motues/Momo-Backend/releases/tag/v${NEWER_VERSION}`,
-			'_blank',
-			'noopener'
-		);
+		expect(openSpy).not.toHaveBeenCalled();
+
+		const modal = wrapper.findComponent(UpdateGuideModal);
+		expect(modal.exists()).toBe(true);
+		expect(modal.props('visible')).toBe(true);
+		expect(modal.props('currentVersion')).toBe(APP_VERSION);
+		expect(modal.props('latestVersion')).toBe(NEWER_VERSION);
+		expect(modal.props('releaseUrl')).toContain(`/releases/tag/v${NEWER_VERSION}`);
+		wrapper.unmount();
 	});
 
 	it('无新版时点击版本号强制重新检查', async () => {
@@ -398,6 +417,25 @@ describe('VersionBadge 组件', () => {
 		await wrapper.get('[data-test="version-badge"]').trigger('click');
 		await flushPromises();
 		expect(fetchImpl.calls).toHaveLength(2);
+	});
+
+	it('手动检查时才发现新版本，会直接弹出升级指南', async () => {
+		let call = 0;
+		vi.stubGlobal(
+			'fetch',
+			mockFetch({
+				[GITHUB_LATEST_RELEASE_URL]: () =>
+					githubOk(call++ === 0 ? `v${SAME_VERSION}` : `v${NEWER_VERSION}`),
+			})
+		);
+		const wrapper = mountBadge();
+		await flushPromises();
+		expect(wrapper.find('[data-test="version-update-emoji"]').exists()).toBe(false);
+
+		await wrapper.get('[data-test="version-badge"]').trigger('click');
+		await flushPromises();
+		expect(wrapper.findComponent(UpdateGuideModal).props('visible')).toBe(true);
+		wrapper.unmount();
 	});
 });
 
@@ -426,8 +464,17 @@ describe('AdminLayout 侧边栏底部', () => {
 		// 徽标之后只剩 "Powered by Momo-Backend"，即它位于侧边栏底部区域
 		const footer = badge.element.closest('aside > div:last-child');
 		expect(footer).not.toBeNull();
-		expect(footer.textContent).toContain('Powered by Momo-Backend');
+		expect(footer.textContent).toContain('Powered by');
+		expect(footer.textContent).toContain('Momo-Backend');
 		expect(footer.textContent).toContain(`v${APP_VERSION}`);
 		expect(footer.textContent).toContain(`v${NEWER_VERSION}`);
+
+		const repoLink = footer.querySelector(
+			'a[href="https://github.com/Motues/Momo-Backend"]'
+		);
+		expect(repoLink).not.toBeNull();
+		expect(repoLink.textContent.trim()).toBe('Momo-Backend');
+		expect(repoLink.getAttribute('target')).toBe('_blank');
+		expect(repoLink.getAttribute('rel')).toContain('noopener');
 	});
 });

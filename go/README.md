@@ -116,7 +116,7 @@ docker run -d \
 
 ```bash
 curl -i http://localhost:3000/health
-# 200 {"code":200,"message":"ok","data":{"status":"ok","database":"ok"}}
+# 200 {"code":200,"message":"ok","data":{"status":"ok","database":"ok","runtime":"go","container":false,"os":"linux","arch":"amd64"}}
 # 503 {"code":503,"message":"database unavailable","data":{"status":"error","database":"error"}}
 ```
 

@@ -9,10 +9,19 @@ describe("GET /health", () => {
   it("数据库可用时返回 200 与统一结构", async () => {
     const res = await router.request("/health");
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({
+    const body = await res.json();
+
+    expect(body).toMatchObject({
       code: 200,
       message: "ok",
-      data: { status: "ok", database: "ok" },
+      data: {
+        status: "ok",
+        database: "ok",
+        runtime: "node",
+        container: expect.any(Boolean),
+        os: process.platform === "win32" ? "windows" : process.platform,
+        arch: process.arch === "x64" ? "amd64" : process.arch === "ia32" ? "386" : process.arch,
+      },
     });
   });
 

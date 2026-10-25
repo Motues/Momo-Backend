@@ -20,16 +20,16 @@
       <i v-if="checking" class="fa-solid fa-arrows-rotate fa-spin text-[10px]"></i>
     </button>
 
-    <a
+    <button
       v-if="hasUpdate"
-      :href="linkUrl"
-      target="_blank"
-      rel="noopener noreferrer"
+      type="button"
       class="text-[10px] text-blue-600 hover:underline"
-      data-test="version-update-link"
+      title="查看升级指南"
+      data-test="version-update-button"
+      @click="openGuide"
     >
       发现新版本 v{{ latestVersion }}
-    </a>
+    </button>
     <button
       v-else-if="error"
       type="button"
@@ -39,13 +39,22 @@
     >
       检查更新失败，点击重试
     </button>
+
+    <UpdateGuideModal
+      :visible="showGuide"
+      :current-version="currentVersion"
+      :latest-version="latestVersion"
+      :release-url="linkUrl"
+      @close="showGuide = false"
+    />
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useVersionCheck } from '../composables/useVersionCheck';
-import { RELEASE_PAGE_URL } from '../utils/version';
+import { releaseTagUrl } from '../utils/version';
+import UpdateGuideModal from './UpdateGuideModal.vue';
 
 const props = defineProps({
   /** 是否在挂载后自动检查（测试里可关掉，避免意外请求） */
@@ -55,24 +64,36 @@ const props = defineProps({
 const { currentVersion, latestVersion, releaseUrl, checking, error, hasUpdate, check } =
   useVersionCheck();
 
-const linkUrl = computed(() => releaseUrl.value || RELEASE_PAGE_URL);
+const linkUrl = computed(() => releaseUrl.value || releaseTagUrl(latestVersion.value));
+const showGuide = ref(false);
 
 const title = computed(() => {
-  if (hasUpdate.value) return `发现新版本 v${latestVersion.value}，点击查看`;
+  if (hasUpdate.value) return `发现新版本 v${latestVersion.value}，点击查看升级指南`;
   if (checking.value) return '正在检查更新...';
   return '点击检查更新';
 });
 
+const openGuide = () => {
+  if (hasUpdate.value) showGuide.value = true;
+};
+
 const checkNow = () => check({ force: true });
 
-const handleClick = () => {
-  // 有新版时这一步是「去看新版」，否则是手动重新检查
+const handleClick = async () => {
+  // 有新版时打开升级指南；没有新版时这一步是手动重新检查。
+  // 如果重新检查后发现了新版本，直接把指南弹出来，省一次点击。
   if (hasUpdate.value) {
-    window.open?.(linkUrl.value, '_blank', 'noopener');
+    openGuide();
     return;
   }
-  checkNow();
+  const foundUpdate = await checkNow();
+  if (foundUpdate) showGuide.value = true;
 };
+
+watch(hasUpdate, (value) => {
+  // 版本被追平时不要让浮窗停在旧结论上
+  if (!value) showGuide.value = false;
+});
 
 onMounted(() => {
   if (props.autoCheck) check();

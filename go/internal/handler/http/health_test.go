@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"net/http/httptest"
+	"runtime"
 	"testing"
 
 	"momo-backend-go/internal/repository/sqlite"
@@ -26,8 +27,12 @@ func TestHealth(t *testing.T) {
 			Code    int    `json:"code"`
 			Message string `json:"message"`
 			Data    struct {
-				Status   string `json:"status"`
-				Database string `json:"database"`
+				Status    string `json:"status"`
+				Database  string `json:"database"`
+				Runtime   string `json:"runtime"`
+				Container bool   `json:"container"`
+				OS        string `json:"os"`
+				Arch      string `json:"arch"`
 			} `json:"data"`
 		}
 		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
@@ -38,6 +43,12 @@ func TestHealth(t *testing.T) {
 		}
 		if body.Data.Status != "ok" || body.Data.Database != "ok" {
 			t.Fatalf("data = %+v, want ok/ok", body.Data)
+		}
+		if body.Data.Runtime != "go" {
+			t.Fatalf("runtime = %q, want go", body.Data.Runtime)
+		}
+		if body.Data.OS != runtime.GOOS || body.Data.Arch != runtime.GOARCH {
+			t.Fatalf("os/arch = %q/%q, want %q/%q", body.Data.OS, body.Data.Arch, runtime.GOOS, runtime.GOARCH)
 		}
 	})
 
@@ -69,6 +80,9 @@ func TestHealth(t *testing.T) {
 			Code int `json:"code"`
 			Data struct {
 				Database string `json:"database"`
+				Runtime  string `json:"runtime"`
+				OS       string `json:"os"`
+				Arch     string `json:"arch"`
 			} `json:"data"`
 		}
 		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
@@ -76,6 +90,9 @@ func TestHealth(t *testing.T) {
 		}
 		if body.Code != 503 || body.Data.Database != "error" {
 			t.Fatalf("body = %+v, want code 503 / database error", body)
+		}
+		if body.Data.Runtime != "go" || body.Data.OS != runtime.GOOS || body.Data.Arch != runtime.GOARCH {
+			t.Fatalf("503 也应带运行时字段，实际 %+v", body.Data)
 		}
 	})
 }

@@ -22,6 +22,7 @@ export const GITHUB_LATEST_RELEASE_URL =
 export const FALLBACK_LATEST_VERSION_URL =
 	'https://data.jsdelivr.com/v1/packages/npm/@motues/momo-comment/resolved?specifier=latest';
 export const RELEASE_PAGE_URL = 'https://github.com/Motues/Momo-Backend/releases';
+export const RELEASE_TAG_PAGE_URL = `${RELEASE_PAGE_URL}/tag/`;
 
 /** 检查结果缓存：6 小时内不重复请求 */
 export const CACHE_KEY = 'momo_update_check';
@@ -53,6 +54,12 @@ export function normalizeVersion(raw) {
 	if (!parsed) return '';
 	const base = `${parsed.major}.${parsed.minor}.${parsed.patch}`;
 	return parsed.pre ? `${base}-${parsed.pre}` : base;
+}
+
+/** 拼出对应版本的 Release 页面；版本号不可用时退回 Releases 列表 */
+export function releaseTagUrl(version) {
+	const normalized = normalizeVersion(version);
+	return normalized ? `${RELEASE_TAG_PAGE_URL}v${normalized}` : RELEASE_PAGE_URL;
 }
 
 /**
@@ -140,7 +147,8 @@ const VERSION_SOURCES = [
 	{
 		name: 'jsdelivr',
 		url: FALLBACK_LATEST_VERSION_URL,
-		pick: (data) => ({ version: data?.version, url: RELEASE_PAGE_URL }),
+		// jsDelivr 只给版本号；按仓库的 tag 约定拼出对应 Release 页面
+		pick: (data) => ({ version: data?.version, url: releaseTagUrl(data?.version) }),
 	},
 ];
 

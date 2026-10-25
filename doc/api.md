@@ -78,7 +78,14 @@
 {
   "code": 200,
   "message": "ok",
-  "data": { "status": "ok", "database": "ok" }
+  "data": {
+    "status": "ok",
+    "database": "ok",
+    "runtime": "node",
+    "container": false,
+    "os": "linux",
+    "arch": "amd64"
+  }
 }
 ```
 
@@ -88,9 +95,29 @@
 {
   "code": 503,
   "message": "database unavailable",
-  "data": { "status": "error", "database": "error" }
+  "data": {
+    "status": "error",
+    "database": "error",
+    "runtime": "node",
+    "container": false,
+    "os": "linux",
+    "arch": "amd64"
+  }
 }
 ```
+
+运行时字段（三端一致，公开、不含敏感信息）：
+
+| 字段 | 取值 | 说明 |
+| --- | --- | --- |
+| `runtime` | `node` / `go` / `worker` | 当前后端实现 |
+| `container` | `true` / `false` | 是否运行在 Docker / Podman 容器中；Worker 恒为 `false` |
+| `os` | `linux` / `windows` / `darwin` / `cloudflare` / 其他 | 服务端操作系统；Worker 为 `cloudflare` |
+| `arch` | `amd64` / `arm64` / `386` / `unknown` / 其他 | 服务端架构；Worker 为 `unknown` |
+
+> 管理面板用这四个字段自动识别当前部署方式，只展示对应的升级步骤。
+> 数据库不可用时（503）也会带上这些字段，因此面板仍能给出正确的升级提示。
+> 旧版后端不返回这些字段时，面板会退化为手动选择部署方式。
 
 > Go 镜像内置 `HEALTHCHECK`（每 30s 探测一次，`start-period` 10s）；
 > Worker 部署没有容器，但同样可以把这个地址配给外部监控。

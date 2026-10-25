@@ -184,7 +184,7 @@ cd ../worker
 
 ```bash
 curl -i https://momo-backend-worker.xxx.workers.dev/health
-# 200 {"code":200,"message":"ok","data":{"status":"ok","database":"ok"}}
+# 200 {"code":200,"message":"ok","data":{"status":"ok","database":"ok","runtime":"worker","container":false,"os":"cloudflare","arch":"unknown"}}
 ```
 
 ## 系统参数
