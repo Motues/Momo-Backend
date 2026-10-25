@@ -499,6 +499,52 @@ func TestExportSettings(t *testing.T) {
 	}
 }
 
+// TestExportSettingsIncludesDefaults 空库导出必须是完整快照：
+// 47 个可写设置键全部出现，表情等「从没保存过」的设置按生效默认值补全。
+func TestExportSettingsIncludesDefaults(t *testing.T) {
+	resetState(t)
+	token := adminToken(t)
+
+	w := callWithToken(t, "GET", "/admin/data/export/settings", "", token)
+	requireStatus(t, w, 200)
+
+	var payload exportSettingsPayload
+	decodeInto(t, w, &payload)
+
+	if len(payload.Data.Settings) != 47 {
+		t.Fatalf("空库导出应包含 47 个键，实际 %d", len(payload.Data.Settings))
+	}
+	if payload.Data.Settings["emoji_enabled"] != "true" {
+		t.Errorf("表情默认应为启用，实际 %q", payload.Data.Settings["emoji_enabled"])
+	}
+
+	var urls []string
+	if err := json.Unmarshal([]byte(payload.Data.Settings["emoji_cdn_urls"]), &urls); err != nil {
+		t.Fatalf("emoji_cdn_urls 应是 JSON 数组: %v", err)
+	}
+	if len(urls) != 1 || urls[0] != "https://open.motues.top/emoji/owo.json" {
+		t.Errorf("表情默认来源不对: %v", urls)
+	}
+	if payload.Data.Settings["site_name"] != "Momo Blog" {
+		t.Errorf("site_name 默认值应为 Momo Blog，实际 %q", payload.Data.Settings["site_name"])
+	}
+	if payload.Data.Settings["email_secure"] != "false" {
+		t.Errorf("email_secure 生效默认值应为 false，实际 %q", payload.Data.Settings["email_secure"])
+	}
+	if payload.Data.Settings["link_dormant_notice_enabled"] != "false" {
+		t.Errorf("休眠提醒邮件默认应关闭，实际 %q", payload.Data.Settings["link_dormant_notice_enabled"])
+	}
+
+	// 导出 → 导入 往返必须成功：补全的默认值不能触发写入校验
+	// （空 notify_email / 空数组 / "false" 开关都必须被接受）
+	importBody, err := json.Marshal(payload.Data.Settings)
+	if err != nil {
+		t.Fatalf("序列化导出内容失败: %v", err)
+	}
+	imported := callWithToken(t, "POST", "/admin/data/import/settings", string(importBody), token)
+	requireStatus(t, imported, 200)
+}
+
 func TestImportSettings(t *testing.T) {
 	resetState(t)
 	token := adminToken(t)

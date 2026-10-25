@@ -29,6 +29,10 @@ const RESET_KEYS = [
   "admin_comment_key",
   "admin_comment_key_enabled",
   "trust_proxy",
+  // 导出快照里的表情默认值：本文件有用例会改写它们，必须一起清理
+  "emoji_enabled",
+  "emoji_cdn_url",
+  "emoji_cdn_urls",
 ];
 
 beforeEach(() => {
@@ -380,6 +384,34 @@ describe("GET /admin/data/export/settings", () => {
     const token = await loginToken();
     const body = await json(await api("/admin/data/export/settings", { token }));
     expect(body.data.sensitiveOmitted).toEqual([]);
+  });
+
+  it("空库导出是完整快照：47 个键全部出现，表情按生效默认值补全", async () => {
+    const token = await loginToken();
+    const body = await json(await api("/admin/data/export/settings", { token }));
+    const settings = body.data.settings as Record<string, string>;
+
+    expect(Object.keys(settings)).toHaveLength(47);
+    // 从没在面板里保存过表情设置 —— 过去这里完全没有 emoji_*，备份看不出表情状态
+    expect(settings.emoji_enabled).toBe("true");
+    expect(JSON.parse(settings.emoji_cdn_urls)).toEqual([
+      "https://open.motues.top/emoji/owo.json",
+    ]);
+    // 其它未保存过的设置同样补默认值（而不是消失）
+    expect(settings.site_name).toBe("Momo Blog");
+    expect(settings.email_secure).toBe("false");
+    expect(settings.link_dormant_notice_enabled).toBe("false");
+  });
+
+  it("库里的值覆盖默认值，未存的键仍补齐", async () => {
+    const token = await loginToken();
+    await setSetting("emoji_enabled", "false");
+    await setSetting("emoji_cdn_urls", '["https://cdn.example.com/owo.json"]');
+
+    const body = await json(await api("/admin/data/export/settings", { token }));
+    expect(body.data.settings.emoji_enabled).toBe("false");
+    expect(body.data.settings.emoji_cdn_urls).toBe('["https://cdn.example.com/owo.json"]');
+    expect(Object.keys(body.data.settings)).toHaveLength(47);
   });
 });
 

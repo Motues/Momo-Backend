@@ -206,6 +206,33 @@ Worker `worker/test/unit/vectors.stats-distribution-v1.test.ts`；接口层（�
 动态流的条数与排序）由 `nodejs/test/api.admin.stats.test.ts`、
 `go/internal/handler/http/admin_users_test.go`、`worker/test/api/admin.stats.test.ts` 各自验证。
 
+### `settings-export-v1.json`
+
+系统设置导出的**完整快照**口径。
+
+背景：导出过去只输出数据库里真实存在的键，于是从没在面板保存过的设置（典型是表情：
+`emoji_*` 一直走默认值）在备份文件里完全看不到 —— 看不出表情到底开没开、来源是什么。
+
+现在导出会先铺一遍全部 **47 个可写设置键**的生效默认值，再用库里的值覆盖，最后把敏感键置空：
+
+- `defaults`：每个键的**生效默认值**（后端读取时的实际行为，不是面板输入框的初值。
+  例如 `email_secure` 缺省是 `"false"`，`email_enabled` / `comment_auto_approve` 缺省是 `"true"`）；
+- `sensitiveBlanked`：`email_password` / `admin_comment_key` 统一置空并登记进 `sensitiveOmitted`；
+- 表情是唯一的**跨键回落**：`emoji_cdn_urls` 为空时生效的是「旧单地址键 `emoji_cdn_url` → 内置默认源」，
+  所以缺 `emoji_cdn_urls` 时导出解析后的生效列表，避免导入时把旧单地址覆盖掉。
+
+导入端不变：仍只写文件里出现的键。口径说明另见 [`doc/api.md`](../api.md) 的「导出系统设置」。
+
+> 这份 fixture **手工维护**（没有生成脚本）：默认值就是各端读取路径的实际默认行为，
+> 新增 / 调整设置键时必须同时改这里与 Node `utils/settingsExport.ts`、
+> Go `settings_export.go`、Worker `utils/settingsExport.ts`，三端测试会逐键比对。
+
+三端各自复算：Node `nodejs/test/vectors.settings-export-v1.test.ts`、
+Go `go/internal/pkg/utils/settings_export_vectors_test.go`、
+Worker `worker/test/unit/vectors.settings-export-v1.test.ts`；接口层由
+`nodejs/test/api.data.test.ts`、`go/internal/handler/http/data_transfer_test.go`、
+`worker/test/api/admin.data.test.ts` 验证「空库导出也是 47 个键」。
+
 ## 重新生成
 
 **只有在有意修改协议时才需要重新生成**，并且必须同步更新所有语言的测试与 `doc/api.md`：

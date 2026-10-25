@@ -2031,10 +2031,21 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
 
 > 导出系统设置，不含 `admin_password`/`comment_verify_secret`。
 >
+> **导出的是完整快照**：全部 47 个可写设置键都会出现在 `settings` 里。数据库里没有的键
+> （从没在面板保存过）按**生效默认值**补全 —— 例如表情的三个键即使从未保存过，
+> 也会以 `emoji_enabled: "true"`、`emoji_cdn_urls: ["https://open.motues.top/emoji/owo.json"]`
+> 出现在文件里，备份能看出实际生效的配置。默认值口径由
+> [`vectors/settings-export-v1.json`](./vectors/settings-export-v1.json) 在三端钉死
+> （默认值是后端读取该键时的实际行为，**不是**面板输入框的初值，例如 `email_secure` 缺省为 `"false"`）。
+>
 > **敏感字段会被置空**：`email_password` 与 `admin_comment_key` 出于安全考虑统一导出为空字符串，
 > 响应中的 `sensitiveOmitted` 会列出被置空的字段名，导入后需要手工补填。
 >
 > `admin_name`（管理员用户名）会正常导出，保证「导出 → 导入」往返后管理员身份不丢失。
+>
+> **表情的跨键回落**：`emoji_cdn_urls` 为空时实际生效的是「旧单地址键 `emoji_cdn_url` → 内置默认源」，
+> 因此缺少 `emoji_cdn_urls` 时导出的是**解析后的生效列表**，而不是直接写默认源
+> （否则导入时列表优先，会把旧的单地址覆盖掉）。
 
 **查询参数**：无
 
@@ -2063,13 +2074,22 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
       "email_verify_enabled": "false",
       "verify_base_url": "https://api.example.com",
       "reply_template": "...",
-      "notification_template": "..."
+      "notification_template": "...",
+      "emoji_enabled": "true",
+      "emoji_cdn_url": "",
+      "emoji_cdn_urls": "[\"https://open.motues.top/emoji/owo.json\"]",
+      "link_security_enabled": "false",
+      "link_dormant_days": "30",
+      "link_sync_enabled": "false",
+      "link_dormant_notice_enabled": "false",
+      "...": "其余键按默认值补全，共 47 个"
     }
   }
 }
 ```
 
-> 导入时，`email_password` / `admin_comment_key` 为空字符串表示「未修改」，不会覆盖数据库中已有的值。
+> 导入时，`email_password` / `admin_comment_key` 为空字符串表示「未修改」，不会覆盖数据库中已有的值；
+> 其余键只写文件里出现的（导入端不补默认值，也不删除文件里没有的键）。
 
 ---
 

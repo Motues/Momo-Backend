@@ -16,7 +16,11 @@
         <h2 class="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
           <i class="fa-solid fa-download text-emerald-500"></i> 导出数据
         </h2>
-        <p class="text-sm text-gray-500 mb-5">将数据导出为 JSON 文件，可用于备份或迁移。出于安全考虑，SMTP 密码与博主密钥等敏感字段会被置空，导入后需手工补填。</p>
+        <p class="text-sm text-gray-500 mb-5">
+          将数据导出为 JSON 文件，可用于备份或迁移。系统设置导出的是<strong>完整快照</strong>：
+          全部可配置项都会写进文件，从没改过的项按生效默认值补全（例如表情开关与表情来源），
+          备份能直接看出实际生效的配置。出于安全考虑，SMTP 密码与博主密钥等敏感字段会被置空，导入后需手工补填。
+        </p>
         <div class="flex flex-wrap gap-4">
           <button @click="exportComments" :disabled="exportingComments"
             class="flex items-center gap-2 px-5 py-2.5 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 disabled:opacity-50 transition-colors text-sm font-medium">

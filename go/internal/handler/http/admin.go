@@ -1024,69 +1024,12 @@ func normalizeSettingsWrite(body map[string]string) (map[string]string, string) 
 }
 
 // ExportSettings 导出系统设置（含 admin_name 与置空后的 email_password/admin_comment_key，不含 admin_password）
+//
+// 导出的是**完整快照**：全部 47 个可写设置键都会出现，库里没有的键按生效默认值补全
+// （口径见 utils/settings_export.go 与 doc/vectors/settings-export-v1.json）。
 func (h *CommentHandler) ExportSettings(c *gin.Context) {
-	all := utils.GetAllSettings()
-	filtered := make(map[string]string)
-	sensitiveExportKeys := map[string]bool{
-		"email_password":    true,
-		"admin_comment_key": true,
-	}
-	sensitiveOmitted := []string{}
-	allowList := map[string]bool{
-		// admin_name 也一并导出：否则「导出 → 导入」往返后管理员用户名会丢失（C12）
-		"site_name": true, "admin_email": true, "admin_emails": true, "notify_email": true, "admin_name": true,
-		"smtp_host": true, "smtp_port": true, "email_user": true, "email_password": true, "email_secure": true,
-		"admin_comment_key": true,
-		"allow_origin":      true, "email_enabled": true,
-		"reply_template": true, "notification_template": true,
-		"ip_blacklist":                   true,
-		"email_blacklist":                true,
-		"blogger_badge_enabled":          true,
-		"blogger_badge_text":             true,
-		"placeholder_name":               true,
-		"placeholder_email":              true,
-		"placeholder_content":            true,
-		"placeholder_url":                true,
-		"email_verify_enabled":           true,
-		"verify_base_url":                true,
-		// 外发邮件日志保留天数（非敏感）：0 = 永久保留
-		"mail_log_retention_days": true,
-		"comment_auto_approve":    true,
-		"comment_spam_keywords":   true,
-		"comment_spam_max_links":         true,
-		"comment_spam_min_length":        true,
-		"comment_spam_duplicate_window":  true,
-		"admin_comment_key_enabled":      true,
-		"comment_verify_enabled":         true,
-		"comment_verify_difficulty":      true,
-		"comment_verify_instr_enabled":   true,
-		"comment_verify_block_automated": true,
-		"comment_verify_domain_enabled":  true,
-		"comment_verify_retention_days":  true,
-		"comment_verify_log_challenge":   true,
-		"trust_proxy":                    true,
-		// 表情设置：是否启用 + 来源地址数组（+ 兼容用的旧单地址键），非敏感，正常导出
-		"emoji_cdn_urls": true, "emoji_cdn_url": true, "emoji_enabled": true,
-		// 链接安全审查：四个非敏感开关/阈值
-		"link_security_enabled": true, "link_dormant_days": true, "link_sync_enabled": true,
-		"link_dormant_notice_enabled": true,
-	}
-	for key := range allowList {
-		if val, ok := all[key]; ok {
-			// 敏感字段导出时置空：避免 SMTP 密码 / 博主密钥以明文落盘
-			if sensitiveExportKeys[key] {
-				filtered[key] = ""
-				if val != "" {
-					sensitiveOmitted = append(sensitiveOmitted, key)
-				}
-			} else {
-				filtered[key] = val
-			}
-		}
-	}
-	if _, ok := filtered["email_enabled"]; !ok {
-		filtered["email_enabled"] = "true"
-	}
+	// 完整快照：先铺全部键的生效默认值，再用库里的值覆盖，最后置空敏感键
+	filtered, sensitiveOmitted := utils.BuildExportedSettings(utils.GetAllSettings())
 
 	c.JSON(http.StatusOK, gin.H{
 		"code":    200,

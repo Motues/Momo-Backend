@@ -52,6 +52,29 @@ describe('GET /admin/data/export/settings', () => {
 		expect(res.body.data.settings.email_enabled).toBe('true');
 	});
 
+	it('空库导出是完整快照：47 个键全部出现，表情按生效默认值补全', async () => {
+		const res = await api('/admin/data/export/settings', { headers: authed() });
+		const settings = res.body.data.settings as Record<string, string>;
+
+		expect(Object.keys(settings)).toHaveLength(47);
+		// 从没在面板里保存过表情设置 —— 过去这里完全没有 emoji_*
+		expect(settings.emoji_enabled).toBe('true');
+		expect(JSON.parse(settings.emoji_cdn_urls)).toEqual([
+			'https://open.motues.top/emoji/owo.json',
+		]);
+		expect(settings.site_name).toBe('Momo Blog');
+		expect(settings.email_secure).toBe('false');
+		expect(settings.link_dormant_notice_enabled).toBe('false');
+	});
+
+	it('库里的值覆盖默认值，未存的键仍补齐', async () => {
+		await seedSettings({ emoji_enabled: 'false', emoji_cdn_urls: '["https://cdn.example.com/owo.json"]' });
+		const res = await api('/admin/data/export/settings', { headers: authed() });
+		expect(res.body.data.settings.emoji_enabled).toBe('false');
+		expect(res.body.data.settings.emoji_cdn_urls).toBe('["https://cdn.example.com/owo.json"]');
+		expect(Object.keys(res.body.data.settings)).toHaveLength(47);
+	});
+
 	it('comment_verify_domain_enabled 在导出白名单内（导出 → 导入往返一致）', async () => {
 		await seedSettings({ comment_verify_domain_enabled: 'true' });
 		const exported = (await api('/admin/data/export/settings', { headers: authed() })).body.data
