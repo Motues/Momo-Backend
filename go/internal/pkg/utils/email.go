@@ -173,6 +173,7 @@ func (s *EmailService) SendCommentReplyNotification(
 
 // defaultReplyNotificationHTML 内置回复通知模板：正文用**渲染后的 HTML**（原评论 + 回复），
 // 其余字段照旧 HTML 转义。抽成函数是为了让测试能直接断言「图片/链接/表情出现在邮件里」。
+// 面板预览（dashboard/src/utils/mailTemplates.js）照抄了这份默认模板：改动时请同步更新（doc/mail.md 第 7 节）。
 func defaultReplyNotificationHTML(toName, replyAuthor, postTitle, postUrl, parentCommentHtml, replyContentHtml string) string {
 	return fmt.Sprintf(`
 		      <div style="background-color: #f4f7f9; padding: 20px 10px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
@@ -243,6 +244,7 @@ func (s *EmailService) SendCommentNotification(
 
 // defaultCommentNotificationHTML 内置新评论通知模板：正文用**渲染后的 HTML**，
 // 其余字段照旧 HTML 转义。
+// 面板预览（dashboard/src/utils/mailTemplates.js）照抄了这份默认模板：改动时请同步更新（doc/mail.md 第 7 节）。
 func defaultCommentNotificationHTML(commentAuthor, postTitle, postUrl, commentContentHtml string) string {
 	return fmt.Sprintf(`
 		       <div style="background-color: #f6f8fa; padding: 40px 20px; min-height: 100%%; font-family: 'PingFang SC', 'Microsoft YaHei', Helvetica, Arial, sans-serif;">

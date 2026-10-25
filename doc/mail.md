@@ -100,10 +100,32 @@
   `GET /admin/mails` 也只返回窗口内的行并下发 `retentionDays`（`0` 时不设时间下限）；
 - 面板按状态/类型筛选、按收件人或主题搜索。
 
-## 7. 实现位置
+## 7. 管理面板的模板预览（本地渲染）
+
+面板「邮件通知设置 → 邮件模板」的「预览」按钮可以直接看效果，**不新增后端接口**：
+
+| 项 | 口径 |
+|---|---|
+| 渲染位置 | **浏览器本地**（`dashboard/src/utils/mailTemplates.js`）：预览本身不发请求、不落库、不发信（首次打开只会读一次站点名称，见「邮件主题」） |
+| 预览内容 | 输入框里**当前（可能还没保存）**的模板；改完不保存也能看 |
+| 模板为空 | 回落**内置默认模板**，并在弹窗里标注「正在预览默认模板」 |
+| 空串 vs 空白串 | 与三端 `getTemplate(key, "")` 的 `t \|\| fallback` 一致：**只有空串**回落默认模板，纯空白串按自定义模板渲染 |
+| 占位符 | 与第 2 节完全一致：纯文本先替换并 HTML 转义，`*Html` 后替换且原样插入，未匹配的 `{{...}}` 保持原样 |
+| 演示数据 | 固定的一组示例（含 `&` / `<` 的昵称、原评论 / 回复 / 新评论的渲染后 HTML、内联 SVG 示例图） |
+| 邮件主题 | 用站点名称拼出（`site_name` 从「基本设置」惰性拉取一次；拉不到回落 `Momo Blog`） |
+| 展示方式 | `sandbox=""` 的 iframe（模板是管理员自己写的 HTML，预览也不能执行脚本 / 提交表单），可切桌面 640px / 手机 375px |
+| 表情短代码 | **不水合**：面板不拉 owo.json，`:name:` 在预览里仍是文字；真实发信时才会替换成表情图（第 4 节） |
+
+> **默认模板以 Node 为准**：三端的内置默认模板正文结构一致，只有页脚字号 / 换行位置等细微差别，
+> 面板预览照抄 `nodejs/src/utils/email.ts` 的那一份。
+> **改动任一端的内置默认模板时，请同步更新 `dashboard/src/utils/mailTemplates.js`**，
+> 否则管理员看到的预览会和真正发出去的邮件不一样。
+
+## 8. 实现位置
 
 | 端 | 文件 |
 |---|---|
 | Node | `nodejs/src/utils/emailEmoji.ts`（拉取/缓存/水合）、`utils/email.ts`（模板与占位符）、`utils/mailLog.ts`（外发邮件日志） |
 | Go | `go/internal/pkg/utils/email_emoji.go`、`utils/email.go`、`utils/mail_log.go` |
 | Worker | `worker/src/utils/emailEmoji.ts`、`utils/email.ts`、`utils/mailLog.ts` |
+| Dashboard | `dashboard/src/utils/mailTemplates.js`（预览渲染：占位符 + 默认模板 + 演示数据）、`components/MailPreviewModal.vue`（预览弹窗） |

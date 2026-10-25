@@ -115,11 +115,20 @@
         <h2 class="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
           <i class="fa-solid fa-pen-to-square text-teal-500"></i> 邮件模板
         </h2>
-        <p class="text-sm text-gray-500 mb-4">留空则使用默认模板。</p>
+        <p class="text-sm text-gray-500 mb-4">
+          留空则使用默认模板。每一份模板都可以点「预览」用演示数据看渲染效果 —— 预览在浏览器里完成，
+          不会保存设置，也不会发送邮件。
+        </p>
 
         <div class="space-y-6">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">回复通知模板</label>
+            <div class="flex items-center justify-between gap-3 mb-1">
+              <label class="block text-sm font-medium text-gray-700">回复通知模板</label>
+              <button type="button" @click="openPreview('reply')" data-test="preview-reply-template"
+                class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-teal-600 border border-teal-200 rounded-md hover:bg-teal-50 transition-colors shrink-0">
+                <i class="fa-solid fa-eye"></i> 预览
+              </button>
+            </div>
             <p class="text-xs text-gray-400 mb-2">
               发送给评论作者，通知其评论被回复。可用占位符：
             </p>
@@ -141,7 +150,13 @@
               placeholder="留空使用默认模板"></textarea>
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">新评论通知模板</label>
+            <div class="flex items-center justify-between gap-3 mb-1">
+              <label class="block text-sm font-medium text-gray-700">新评论通知模板</label>
+              <button type="button" @click="openPreview('notification')" data-test="preview-notification-template"
+                class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-teal-600 border border-teal-200 rounded-md hover:bg-teal-50 transition-colors shrink-0">
+                <i class="fa-solid fa-eye"></i> 预览
+              </button>
+            </div>
             <p class="text-xs text-gray-400 mb-2">
               发送给站长，通知有新评论。可用占位符：
             </p>
@@ -162,6 +177,10 @@
         </div>
       </section>
     </div>
+
+    <!-- 模板预览（纯前端渲染，sandbox iframe 里展示） -->
+    <MailPreviewModal v-if="previewKind" :kind="previewKind" :title="previewTitle"
+      :template="previewTemplate" :site-name="siteName" @close="closePreview" />
   </AdminLayout>
 </template>
 
@@ -171,7 +190,9 @@ import { useRouter, onBeforeRouteLeave } from 'vue-router'
 import request from '../utils/request'
 import toast from '../utils/toast'
 import AdminLayout from '../components/AdminLayout.vue'
+import MailPreviewModal from '../components/MailPreviewModal.vue'
 import SelectMenu from '../components/SelectMenu.vue'
+import { MAIL_TEMPLATE_KINDS } from '../utils/mailTemplates'
 
 const router = useRouter()
 const apiUrl = ref(localStorage.getItem('apiUrl') || window.location.origin)
@@ -289,6 +310,48 @@ const handleTestEmail = async () => {
   } finally {
     testingEmail.value = false
   }
+}
+
+/* ---------- 模板预览 ---------- */
+
+/** 当前打开预览的模板类型（null = 关闭）；预览用面板里**还没保存**的内容 */
+const previewKind = ref(null)
+/** 站点名称只用于邮件主题预览；打开预览时惰性拉一次（邮件设置组里没有 site_name） */
+const siteName = ref('')
+let siteNameLoaded = false
+
+const previewTitle = computed(() =>
+  previewKind.value ? `${MAIL_TEMPLATE_KINDS[previewKind.value].label}预览` : ''
+)
+
+/** 预览跟随输入框实时变化：不保存也能看效果 */
+const previewTemplate = computed(() => {
+  if (previewKind.value === 'reply') return form.reply_template
+  if (previewKind.value === 'notification') return form.notification_template
+  return ''
+})
+
+const ensureSiteName = async () => {
+  if (siteNameLoaded) return
+  siteNameLoaded = true
+  try {
+    const res = await request.get('/admin/settings', { params: { type: 'basic' } })
+    if (res?.code === 200 && res.data) {
+      siteName.value = res.data.site_name || ''
+    }
+  } catch (e) {
+    // 主题里的站点名只是锦上添花，拉不到就用预览工具里的兜底名称
+    console.error('Failed to load site name for mail preview:', e)
+  }
+}
+
+const openPreview = async (kind) => {
+  previewKind.value = kind
+  await ensureSiteName()
+}
+
+const closePreview = () => {
+  previewKind.value = null
 }
 
 const logout = () => {

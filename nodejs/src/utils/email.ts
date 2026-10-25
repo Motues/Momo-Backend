@@ -170,6 +170,8 @@ export async function sendCommentReplyNotification({
     const parentHtml = parentCommentHtml || htmlEscape(parentComment).replace(/\r?\n/g, '<br>');
     const replyHtml = replyContentHtml || htmlEscape(replyContent).replace(/\r?\n/g, '<br>');
     const template = await getTemplate("reply_template", "");
+    // 面板预览（dashboard/src/utils/mailTemplates.js）照抄了下面这份默认模板：
+    // 改动默认模板时请同步更新，见 doc/mail.md 第 7 节。
     const htmlContent = template
       ? applyTemplate(
           template,
@@ -275,6 +277,8 @@ export async function sendCommentNotification({
   try {
     const contentHtml = commentContentHtml || htmlEscape(commentContent).replace(/\r?\n/g, '<br>');
     const template = await getTemplate("notification_template", "");
+    // 面板预览（dashboard/src/utils/mailTemplates.js）照抄了下面这份默认模板：
+    // 改动默认模板时请同步更新，见 doc/mail.md 第 7 节。
     const htmlContent = template
       ? applyTemplate(
           template,

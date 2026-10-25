@@ -14,6 +14,7 @@ vi.mock('../src/utils/request.js', () => ({ default: requestMock }));
 vi.mock('../src/utils/toast.js', () => ({ default: toastMock }));
 
 import EmailSettings from '../src/views/EmailSettings.vue';
+import MailPreviewModal from '../src/components/MailPreviewModal.vue';
 import { createTestRouter, AdminLayoutStub, pickSelectOption } from './support/harness.js';
 
 const DEFAULT_FORM = {
@@ -353,6 +354,108 @@ describe('EmailSettings - 模板占位符说明', () => {
 		const link = section.findAll('a').find((a) => a.attributes('href') === '/mails');
 		expect(link).toBeTruthy();
 		expect(link.text()).toContain('邮件管理');
+	});
+});
+
+describe('EmailSettings - 模板预览', () => {
+	const previewModal = () => wrapper.findComponent(MailPreviewModal);
+	const openPreview = async (kind = 'reply') => {
+		await wrapper.get(`[data-test="preview-${kind === 'reply' ? 'reply' : 'notification'}-template"]`).trigger('click');
+		await flushPromises();
+	};
+	const basicCalls = () =>
+		requestMock.get.mock.calls.filter(([, config]) => config?.params?.type === 'basic');
+
+	/** 按 type 返回不同设置：邮件组返回空模板，基本组返回站点名 */
+	const settingsByType = (siteName = '我的博客') => (url, config) => {
+		if (config?.params?.type === 'basic') {
+			return Promise.resolve({ code: 200, data: { site_name: siteName } });
+		}
+		return Promise.resolve({ code: 200, data: { reply_template: '', notification_template: '' } });
+	};
+
+	it('默认不渲染预览弹窗', async () => {
+		await mountSettings();
+		expect(previewModal().exists()).toBe(false);
+	});
+
+	it('点「预览」用当前尚未保存的模板打开回复预览', async () => {
+		await mountSettings();
+		await wrapper.findAll('textarea')[0].setValue('<p>{{replyAuthor}}</p>');
+		await openPreview('reply');
+
+		const modal = previewModal();
+		expect(modal.exists()).toBe(true);
+		expect(modal.props('kind')).toBe('reply');
+		expect(modal.props('title')).toBe('回复通知预览');
+		expect(modal.props('template')).toBe('<p>{{replyAuthor}}</p>');
+		// 预览不发请求保存
+		expect(requestMock.put).not.toHaveBeenCalled();
+	});
+
+	it('新评论通知模板用 notification 类型与自己的内容', async () => {
+		await mountSettings();
+		await wrapper.findAll('textarea')[1].setValue('<p>{{commentAuthor}}</p>');
+		await openPreview('notification');
+
+		const modal = previewModal();
+		expect(modal.props('kind')).toBe('notification');
+		expect(modal.props('title')).toBe('新评论通知预览');
+		expect(modal.props('template')).toBe('<p>{{commentAuthor}}</p>');
+	});
+
+	it('模板留空时弹窗预览默认模板并给出提示', async () => {
+		await mountSettings();
+		await openPreview('reply');
+		expect(previewModal().text()).toContain('内置默认模板');
+		expect(previewModal().get('[data-test="mail-preview-hint"]').text()).toContain('不会发送邮件');
+	});
+
+	it('打开预览时惰性拉取站点名称，只用于邮件主题', async () => {
+		await mountSettings(settingsByType('我的博客'));
+		expect(basicCalls()).toHaveLength(0);
+
+		await openPreview('reply');
+		expect(basicCalls()).toHaveLength(1);
+		expect(basicCalls()[0][0]).toBe('/admin/settings');
+		expect(basicCalls()[0][1]).toEqual({ params: { type: 'basic' } });
+		expect(previewModal().props('siteName')).toBe('我的博客');
+		expect(previewModal().text()).toContain('主题：您在 我的博客 上的评论有了新回复');
+	});
+
+	it('站点名称只拉一次：关掉再打开不会重复请求', async () => {
+		await mountSettings(settingsByType('我的博客'));
+		await openPreview('reply');
+		await wrapper.get('[data-test="mail-preview-close"]').trigger('click');
+		await flushPromises();
+		expect(previewModal().exists()).toBe(false);
+
+		await openPreview('notification');
+		expect(basicCalls()).toHaveLength(1);
+	});
+
+	it('站点名称拉取失败不影响预览，主题回落 Momo Blog', async () => {
+		let calls = 0;
+		await mountSettings(() => {
+			calls += 1;
+			return calls === 1 ? Promise.resolve({ code: 200, data: {} }) : Promise.reject(new Error('boom'));
+		});
+		await openPreview('reply');
+		expect(previewModal().exists()).toBe(true);
+		expect(previewModal().props('siteName')).toBe('');
+		expect(previewModal().text()).toContain('主题：您在 Momo Blog 上的评论有了新回复');
+		expect(errorSpy).toHaveBeenCalled();
+	});
+
+	it('关闭预览后弹窗消失，表单内容保持不变', async () => {
+		await mountSettings();
+		await wrapper.findAll('textarea')[0].setValue('我的模板');
+		await openPreview('reply');
+		await wrapper.get('[data-test="mail-preview-close"]').trigger('click');
+		await flushPromises();
+
+		expect(previewModal().exists()).toBe(false);
+		expect(wrapper.vm.form.reply_template).toBe('我的模板');
 	});
 });
 

@@ -144,6 +144,8 @@ export async function sendCommentReplyNotification(
       ? await hydrateEmojiHtml(env, params.replyContentHtml)
       : htmlEscape(replyContent);
 
+  // 面板预览（dashboard/src/utils/mailTemplates.js）照抄了下面这份默认模板：
+  // 改动默认模板时请同步更新，见 doc/mail.md 第 7 节。
   let html: string;
   if (customTpl) {
     html = customTpl
@@ -238,6 +240,8 @@ export async function sendCommentNotification(
       ? await hydrateEmojiHtml(env, params.commentContentHtml)
       : htmlEscape(commentContent);
 
+  // 面板预览（dashboard/src/utils/mailTemplates.js）照抄了下面这份默认模板：
+  // 改动默认模板时请同步更新，见 doc/mail.md 第 7 节。
   let html: string;
   if (customTpl) {
     html = customTpl
