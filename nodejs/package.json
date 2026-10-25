@@ -1,6 +1,6 @@
 {
   "name": "momo-backend-nodejs",
-  "version": "1.8.2",
+  "version": "1.8.3",
   "description": "",
   "main": "app.js",
   "scripts": {

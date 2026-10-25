@@ -59,6 +59,39 @@ pnpm run deploy
 
 ## 数据库更新记录
 
+### `v1.8.3` 版本
+
+**无数据库变更、无新增设置键**，升级无需执行 SQL。
+
+管理面板：
+
+- 邮件模板支持**预览**：用演示数据在面板里直接渲染（`sandbox` iframe，可切桌面 / 手机宽度），
+  占位符与转义规则与真实发信完全一致；模板留空时预览内置默认模板，预览不落库、不发信；
+- 新增**更新中心**：侧边栏版本号发现新版本后弹出升级指南，按 `GET /health` 的运行时字段
+  自动识别 Node.js / Go / Cloudflare Worker / Docker，只展示对应部署方式的升级步骤；
+- 系统设置导出改为**完整生效快照**：47 个可写设置键全部导出，从没保存过的按生效默认值补全
+  （例如表情开关与表情来源），敏感字段仍置空；导入仍只写文件里出现的键；
+- 「发送测试邮件」按钮不再被右侧长说明压窄换行。
+
+评论组件（`@motues/momo-comment` 1.8.3）：
+
+- 无感验证「验证成功」的绿色跟随主题：浅色用深绿、深色用亮绿，宿主可用
+  `--momo-verify-success-color` / `--momo-verify-success-border-color` 覆盖；没有 `data-theme`
+  的页面跟随系统深色，`data-theme="light"` 可锁定浅色；
+- 表情加载改为 **stale-while-revalidate**：7 天可用期之外另加 6 小时校验，来源内容变化时
+  已显示的表情也会换图；表情面板新增常驻「刷新表情」按钮，可绕过缓存强制拉取。
+
+后端（Node.js / Go / Cloudflare Worker）：
+
+- `GET /health` 增加 `runtime` / `container` / `os` / `arch`（数据库不可用的 503 也带），
+  供管理面板自动识别部署方式；
+- 设置导出为完整快照（见上），三端口径一致，由 `doc/vectors/settings-export-v1.json` 钉死；
+- Release 包不再分发 `worker/wrangler.jsonc`，改为示例配置 `wrangler.example.jsonc`，
+  并排除 `wrangler.e2e.jsonc` 与本地 `.env` / `.dev.vars*`。
+
+升级方式：按上面各端的常规升级步骤替换文件 / 二进制即可，数据库与设置无需变更。
+npm 发布的评论组件版本为 `1.8.3`，升级后按需替换 CDN 引用。
+
 ### `v1.8.2` 版本
 
 **无数据库变更、无新增设置键**，升级无需执行 SQL；Docker 镜像新增健康检查。
