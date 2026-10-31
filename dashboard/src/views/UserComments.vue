@@ -212,6 +212,7 @@
       @update="(id, status) => updateStatus(id, status)"
       @delete="(id) => updateStatus(id, 'deleted')"
       @edit="editComment"
+      @view-user="viewUserComments"
     />
   </AdminLayout>
 </template>
@@ -373,6 +374,15 @@ const closeModal = () => {
 
 const goBack = () => {
   router.push('/users');
+};
+
+/** 详情弹窗里点击昵称：与用户列表「查看评论」一致，带 author + email 跳到该用户评论页 */
+const viewUserComments = ({ author: nextAuthor, email: nextEmail } = {}) => {
+  if (!nextAuthor || !nextEmail) return;
+  router.push({
+    path: '/user-comments',
+    query: { author: nextAuthor, email: nextEmail }
+  });
 };
 
 const formatDate = (str) => {

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "note": "系统设置导出（GET /admin/data/export/settings）的完整快照口径 v1。导出必须包含全部 47 个可写设置键；数据库里没有的键按下表补「生效默认值」（= 各端读取该键时的实际默认行为，不是面板输入框的初值）。导入仍只写文件里出现的键。表情的 emoji_cdn_urls 是跨键回落的（空列表 → 旧单地址键 emoji_cdn_url → 内置默认源），所以缺 emoji_cdn_urls 时导出的是解析后的生效列表，而不是直接写默认源（否则会把旧单地址键覆盖掉）。敏感键统一置空并在 sensitiveOmitted 里登记。三端逐字一致。",
+  "note": "系统设置导出（GET /admin/data/export/settings）的完整快照口径 v1。导出必须包含全部 50 个可写设置键；数据库里没有的键按下表补「生效默认值」（= 各端读取该键时的实际默认行为，不是面板输入框的初值）。导入仍只写文件里出现的键。表情的 emoji_cdn_urls 是跨键回落的（空列表 → 旧单地址键 emoji_cdn_url → 内置默认源），所以缺 emoji_cdn_urls 时导出的是解析后的生效列表，而不是直接写默认源（否则会把旧单地址键覆盖掉）。敏感键统一置空并在 sensitiveOmitted 里登记。三端逐字一致。",
   "defaults": {
     "admin_comment_key": "",
     "admin_comment_key_enabled": "false",
@@ -8,6 +8,9 @@
     "admin_emails": "[]",
     "admin_name": "momo",
     "allow_origin": "",
+    "avatar_custom_url": "",
+    "avatar_enabled": "true",
+    "avatar_source": "default",
     "blogger_badge_enabled": "false",
     "blogger_badge_text": "",
     "comment_auto_approve": "true",

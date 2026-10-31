@@ -19,7 +19,7 @@ import { createTestRouter, AdminLayoutStub } from './support/harness.js';
 const ModalStub = defineComponent({
 	name: 'CommentDetailModal',
 	props: { visible: { type: Boolean, default: false }, comment: { type: Object, default: () => ({}) } },
-	emits: ['close', 'update', 'delete', 'edit'],
+	emits: ['close', 'update', 'delete', 'edit', 'view-user'],
 	template: '<div />',
 });
 
@@ -113,8 +113,20 @@ describe('UserComments - 用户概要卡片', () => {
 	});
 });
 
-describe('UserComments - 批量审核', () => {
-	it('全选后批量通过：逐条调用单条接口并刷新列表与概要', async () => {
+describe('UserComments - 详情弹窗昵称跳转', () => {
+	it('弹窗里点击昵称后跳到对应用户的评论页', async () => {
+		const wrapper = await mountPage();
+		const modal = wrapper.findComponent(ModalStub);
+		modal.vm.$emit('view-user', { author: '李四', email: 'lisi@example.com' });
+		await flushPromises();
+
+		const route = wrapper.vm.$router.currentRoute.value;
+		expect(route.path).toBe('/user-comments');
+		expect(route.query).toEqual({ author: '李四', email: 'lisi@example.com' });
+	});
+});
+
+describe('UserComments - 批量审核', () => {	it('全选后批量通过：逐条调用单条接口并刷新列表与概要', async () => {
 		const wrapper = await mountPage({
 			comments: [makeComment({ id: 1 }), makeComment({ id: 2, contentText: '第二条' })],
 		});

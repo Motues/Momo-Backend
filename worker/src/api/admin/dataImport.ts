@@ -1,6 +1,15 @@
 import { Context } from 'hono';
 import { Bindings } from '../../bindings';
-import { getAllSettings, setSetting } from '../../utils/settings';
+import { getAllSettings, getSetting, setSetting } from '../../utils/settings';
+import {
+  AVATAR_CUSTOM_URL_KEY,
+  AVATAR_ENABLED_KEY,
+  AVATAR_SOURCE_KEY,
+  normalizeAvatarCustomUrl,
+  normalizeAvatarEnabled,
+  normalizeAvatarSource,
+  validateAvatarSettings,
+} from '../../utils/avatar';
 import { checkContent, sanitizeUrl, isValidIpBlacklistJson, MAX_CONTENT, MAX_AUTHOR, MAX_EMAIL, MAX_URL, MAX_POST_SLUG } from '../../utils/security';
 import { parseMarkdown, sanitizeHtml } from '../../utils/markdown';
 import { validateSpamSettings } from '../../utils/spam';
@@ -145,6 +154,9 @@ export const importSettings = async (c: Context<{ Bindings: Bindings }>) => {
     "emoji_cdn_url",
     "emoji_cdn_urls",
     "emoji_enabled",
+    "avatar_enabled",
+    "avatar_source",
+    "avatar_custom_url",
     "link_security_enabled",
     "link_dormant_days",
     "link_sync_enabled",
@@ -181,6 +193,24 @@ export const importSettings = async (c: Context<{ Bindings: Bindings }>) => {
       return c.json({ code: 400, message: result.error }, 400);
     }
     emojiCdnUrlsJson = JSON.stringify(result.urls);
+  }
+
+  // 头像来源：与 PUT /admin/settings 同一套校验（口径见 doc/avatar.md 第 6 节）
+  if (AVATAR_ENABLED_KEY in body || AVATAR_SOURCE_KEY in body || AVATAR_CUSTOM_URL_KEY in body) {
+    const avatarError = validateAvatarSettings(
+      {
+        enabled: AVATAR_ENABLED_KEY in body ? body[AVATAR_ENABLED_KEY] : undefined,
+        source: AVATAR_SOURCE_KEY in body ? body[AVATAR_SOURCE_KEY] : undefined,
+        customUrl: AVATAR_CUSTOM_URL_KEY in body ? body[AVATAR_CUSTOM_URL_KEY] : undefined,
+      },
+      {
+        source: await getSetting(c.env, AVATAR_SOURCE_KEY),
+        customUrl: await getSetting(c.env, AVATAR_CUSTOM_URL_KEY),
+      }
+    );
+    if (avatarError) {
+      return c.json({ code: 400, message: avatarError }, 400);
+    }
   }
 
   // 链接安全审查：与 PUT /admin/settings 同一套校验（口径见 doc/link_security.md）
@@ -233,6 +263,9 @@ export const importSettings = async (c: Context<{ Bindings: Bindings }>) => {
     if (key === "emoji_enabled") await setSetting(c.env, key, normalizeEmojiEnabled(value));
     else if (key === "emoji_cdn_url") await setSetting(c.env, key, String(value).trim());
     else if (key === "emoji_cdn_urls") await setSetting(c.env, key, emojiCdnUrlsJson ?? '[]');
+    else if (key === AVATAR_ENABLED_KEY) await setSetting(c.env, key, normalizeAvatarEnabled(value));
+    else if (key === AVATAR_SOURCE_KEY) await setSetting(c.env, key, normalizeAvatarSource(String(value)));
+    else if (key === AVATAR_CUSTOM_URL_KEY) await setSetting(c.env, key, normalizeAvatarCustomUrl(value));
     else if (key === ADMIN_EMAILS_KEY) await setSetting(c.env, key, adminWrite.adminEmailsJson ?? '[]');
     else if (key === NOTIFY_EMAIL_KEY) await setSetting(c.env, key, adminWrite.notifyEmail ?? '');
     else if (LINK_SWITCH_KEYS.includes(key as (typeof LINK_SWITCH_KEYS)[number])) {

@@ -377,7 +377,7 @@ func TestGetStatsOverviewExtendedFields(t *testing.T) {
 	if data.TopPosts[0].PostSlug != "/hot" || data.TopPosts[0].Count != 3 || data.TopPosts[1].PostSlug != "/cold" {
 		t.Errorf("topPosts 不正确: %+v", data.TopPosts)
 	}
-	wantHotDate := time.UnixMilli(startOfToday+2000).UTC().Format("2006-01-02T15:04:05.000Z")
+	wantHotDate := time.UnixMilli(startOfToday + 2000).UTC().Format("2006-01-02T15:04:05.000Z")
 	if data.TopPosts[0].LastCommentDate != wantHotDate {
 		t.Errorf("topPosts[0].lastCommentDate 期望 %q，实际 %q", wantHotDate, data.TopPosts[0].LastCommentDate)
 	}
@@ -405,7 +405,7 @@ func TestGetStatsOverviewExtendedFields(t *testing.T) {
 		latest.ContentText != "今天第二条" || latest.Status != "pending" {
 		t.Errorf("latestComments[0] 字段不正确: %+v", latest)
 	}
-	wantPub := time.UnixMilli(startOfToday+2000).UTC().Format("2006-01-02T15:04:05.000Z")
+	wantPub := time.UnixMilli(startOfToday + 2000).UTC().Format("2006-01-02T15:04:05.000Z")
 	if latest.PubDate != wantPub {
 		t.Errorf("latestComments[0].pubDate 期望 %q，实际 %q", wantPub, latest.PubDate)
 	}
@@ -954,6 +954,10 @@ func TestGetUserCommentsEndpoint(t *testing.T) {
 	for _, c := range payload.Data.Comments {
 		if c.Author != "alice" || c.Email != "a@x.com" {
 			t.Errorf("返回了其他用户的评论: %+v", c)
+		}
+		// 后台头像默认走内置默认源，且不受 avatar_enabled 影响
+		if want := "https://open.motues.top/avatar?name=743173788aa9166801df2e18f0e7ff24&mode=cravatar&variant=beam"; c.Avatar != want {
+			t.Errorf("avatar 应为 %q，实际 %q", want, c.Avatar)
 		}
 	}
 

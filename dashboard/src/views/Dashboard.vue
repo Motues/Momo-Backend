@@ -39,6 +39,7 @@
         @edit="editComment"
         @batch-update="handleBatchUpdate"
         @filter-slug="applySlugFilter"
+        @view-user="viewUserComments"
       />
     </template>
   </AdminLayout>
@@ -177,6 +178,18 @@ const editComment = async (payload) => {
 };
 
 const handlePageChange = (p) => fetchComments(p);
+
+/**
+ * 点击评论昵称进入该用户的评论页：与用户列表「查看评论」共用 /user-comments，
+ * 详情弹窗也走同一条路径。缺少邮箱时不跳转（用户页以邮箱作为身份凭据）。
+ */
+const viewUserComments = ({ author, email } = {}) => {
+  if (!author || !email) return;
+  router.push({
+    path: '/user-comments',
+    query: { author, email }
+  });
+};
 
 const logout = () => {
   localStorage.removeItem('token');

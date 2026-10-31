@@ -59,82 +59,6 @@ pnpm run deploy
 
 ## 数据库更新记录
 
-### `v1.8.3` 版本
-
-**无数据库变更、无新增设置键**，升级无需执行 SQL。
-
-管理面板：
-
-- 邮件模板支持**预览**：用演示数据在面板里直接渲染（`sandbox` iframe，可切桌面 / 手机宽度），
-  占位符与转义规则与真实发信完全一致；模板留空时预览内置默认模板，预览不落库、不发信；
-- 新增**更新中心**：侧边栏版本号发现新版本后弹出升级指南，按 `GET /health` 的运行时字段
-  自动识别 Node.js / Go / Cloudflare Worker / Docker，只展示对应部署方式的升级步骤；
-- 系统设置导出改为**完整生效快照**：47 个可写设置键全部导出，从没保存过的按生效默认值补全
-  （例如表情开关与表情来源），敏感字段仍置空；导入仍只写文件里出现的键；
-- 「发送测试邮件」按钮不再被右侧长说明压窄换行。
-
-评论组件（`@motues/momo-comment` 1.8.3）：
-
-- 无感验证「验证成功」的绿色跟随主题：浅色用深绿、深色用亮绿，宿主可用
-  `--momo-verify-success-color` / `--momo-verify-success-border-color` 覆盖；没有 `data-theme`
-  的页面跟随系统深色，`data-theme="light"` 可锁定浅色；
-- 表情加载改为 **stale-while-revalidate**：7 天可用期之外另加 6 小时校验，来源内容变化时
-  已显示的表情也会换图；表情面板新增常驻「刷新表情」按钮，可绕过缓存强制拉取。
-
-后端（Node.js / Go / Cloudflare Worker）：
-
-- `GET /health` 增加 `runtime` / `container` / `os` / `arch`（数据库不可用的 503 也带），
-  供管理面板自动识别部署方式；
-- 设置导出为完整快照（见上），三端口径一致，由 `doc/vectors/settings-export-v1.json` 钉死；
-- Release 包不再分发 `worker/wrangler.jsonc`，改为示例配置 `wrangler.example.jsonc`，
-  并排除 `wrangler.e2e.jsonc` 与本地 `.env` / `.dev.vars*`。
-
-升级方式：按上面各端的常规升级步骤替换文件 / 二进制即可，数据库与设置无需变更。
-npm 发布的评论组件版本为 `1.8.3`，升级后按需替换 CDN 引用。
-
-### `v1.8.2` 版本
-
-**无数据库变更、无新增设置键**，升级无需执行 SQL；Docker 镜像新增健康检查。
-
-管理面板：
-
-- 评论管理新增「来源文章」列，点击文章标识即可按该文章筛选（地址栏保留 `?slug=`，可清除）；
-- 用户列表整行可点击进入「用户详情」：新增用户概要卡片（邮箱验证 / 拉黑状态 / 网站链接状态 /
-  评论统计），下方仍是该用户全部评论；
-- 评论管理支持批量审核：勾选 / 全选后批量通过、打回待审、删除；部分失败时只保留失败项的勾选，
-  `deleted` / `pending` 仍按既有的级联语义连同子孙回复一起修改。
-
-评论组件（`@motues/momo-comment` 1.8.2）：
-
-- 表情面板改为挂载到 `body` 并用 `position: fixed` 定位：不再被二级评论的 `overflow-hidden`
-  裁掉，窄屏自动夹在视口内，软键盘弹出时翻到按钮上方；移动端选中表情后自动收起；
-- 表情小图与文字垂直居中（宿主可用 `--momo-emoji-align` 微调）；
-- 含 `:name:` 短代码的评论会在首屏渲染后的空闲时段自动预取 owo.json 并水合，**不再需要先打开
-  表情面板**；页面里没有短代码时仍不发任何第三方表情请求。
-
-后端（Node.js / Go / Cloudflare Worker）：
-
-- 新增公开的 `GET /health`：数据库可用返回 `200`，不可用返回 `503`（三端响应结构一致）；
-- Go 镜像内置 `HEALTHCHECK`，`docker-compose.yml` 增加 `healthcheck`，`docker compose ps`
-  可以看到 `healthy` 状态。
-
-升级方式：按上面各端的常规升级步骤替换文件 / 二进制即可，数据库与设置无需变更。
-npm 发布的评论组件版本为 `1.8.2`，升级后按需替换 CDN 引用。
-
-### `v1.8.1` 版本
-
-**无数据库变更、无新增设置键**，升级后：
-
-- API 地址（`verify_base_url`）从「邮件通知 → 邮箱验证」移到「基本设置 → 站点信息」，成为站点
-  基础信息的一部分；邮箱验证开关移到「基本设置 → 评论审核」。
-- 邮箱验证、历史链接同步、休眠提醒都要求 API 地址非空：地址为空时，`PUT /admin/settings`
-  与设置导入会拒绝开启对应功能（`400`）；历史链接同步 / 休眠提醒在运行时也不再依赖
-  `email_verify_enabled`，**API 地址为空时不会发信**。
-- 升级后如果「链接同步 / 休眠提醒」开着但 API 地址为空：运行时停止发信，面板显示警告；
-  补填 API 地址（或先关闭对应开关）即可恢复。邮箱验证的旧配置仍保留 Origin/Host 兜底。
-- 三端设置分组：`type=basic` 新增 `verify_base_url` / `email_verify_enabled`；
-  `type=email` 继续下发这两个键以兼容旧面板。
-
 ### `v1.8.0` 版本
 
 **数据库变更**：新增四张表，并给 `TrustedLink` 增加 `source` 列。字段与语义见
@@ -295,19 +219,6 @@ CREATE INDEX IF NOT EXISTS idx_vr_cid ON VerifyRecord(challenge_id);
 | 第一层 | **HashWX** 工作量证明 | 每次挑战生成一次性函数，GPU 相对 CPU 的吞吐优势从 SHA-256 的约 150 倍降到约 2 倍 |
 | 第二层 | **Instrumentation 环境质询** | 服务端下发随机程序，要求浏览器真实执行并回传环境特征；默认关闭 |
 
-
-### `v1.3.0` 版本
-
-添加了 `Settings` 表，SQL 语句如下：
-
-```sql
-CREATE TABLE IF NOT EXISTS Settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL,
-    updated_at TEXT DEFAULT (datetime('now'))
-);
-```
-
 ### `v1.4.0` 版本
 
 #### Node.js 重构
@@ -340,4 +251,16 @@ CREATE TABLE IF NOT EXISTS EmailVerification (
 );
 CREATE INDEX IF NOT EXISTS idx_ev_email ON EmailVerification(email);
 CREATE INDEX IF NOT EXISTS idx_ev_token ON EmailVerification(token);
+```
+
+### `v1.3.0` 版本
+
+添加了 `Settings` 表，SQL 语句如下：
+
+```sql
+CREATE TABLE IF NOT EXISTS Settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT DEFAULT (datetime('now'))
+);
 ```

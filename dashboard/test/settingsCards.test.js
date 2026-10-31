@@ -16,6 +16,7 @@ const EXPECTED_CARDS = [
 	{ href: '/settings/link', title: '链接安全', keywords: ['休眠链接', '历史'] },
 	{ href: '/settings/verify', title: '人机验证', keywords: ['工作量证明', '环境质询', '来源域名绑定', '认证记录保留'] },
 	{ href: '/settings/emoji', title: '表情设置', keywords: ['OwO'] },
+	{ href: '/settings/avatar', title: '头像设置', keywords: ['头像来源', 'Gravatar', 'Cravatar', 'QQ', '自定义'] },
 	{ href: '/settings/data', title: '数据管理', keywords: ['导入导出'] },
 ];
 
@@ -28,6 +29,7 @@ const EXPECTED_ICONS = [
 	{ icon: 'i.fa-link', hue: 'sky' },
 	{ icon: 'i.fa-robot', hue: 'indigo' },
 	{ icon: 'i.fa-face-smile', hue: 'violet' },
+	{ icon: 'i.fa-user-circle', hue: 'rose' },
 	{ icon: 'i.fa-database', hue: 'emerald' },
 ];
 
@@ -47,7 +49,7 @@ afterEach(() => {
 });
 
 describe('Settings - 入口卡片', () => {
-	it('恰好 8 张卡片，且顺序与确认的一致', async () => {
+	it('恰好 9 张卡片，且顺序与确认的一致', async () => {
 		await mountSettings();
 		const cards = wrapper.findAll('[data-test="settings-card"]');
 		expect(cards).toHaveLength(EXPECTED_CARDS.length);

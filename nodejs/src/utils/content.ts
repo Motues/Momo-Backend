@@ -1,7 +1,16 @@
 import { Comment } from "../type/prisma";
 import { CommentsResponse, NestedCommentsResponse, NestedComment, CommentAdminResponse } from "../type/api";
-import { getAvatar } from "../utils/getAvatar";
-import { getSetting } from "../utils/settings";
+import {
+  AVATAR_CUSTOM_URL_KEY,
+  AVATAR_ENABLED_KEY,
+  AVATAR_SOURCE_KEY,
+  AvatarConfig,
+  buildAvatarUrl,
+  isAvatarEnabled,
+  resolveAvatarConfig,
+  resolveAvatarUrl,
+} from "../utils/avatar";
+import { getAllSettings } from "../utils/settings";
 import { resolveEmojiConfigs } from "../utils/emoji";
 import {
   resolveAdminEmails,
@@ -27,25 +36,29 @@ import crypto from "crypto";
 */
 const getResponseComment =
 async (comments: Comment[] | null, page: number, limit: number, nested: boolean, postSlug: string = "", noticeBaseUrl: string = ""): Promise<CommentsResponse | NestedCommentsResponse> => {
+  // 设置快照：公开列表原本逐键查询约 20 次（Worker 的 D1 每次都是一次往返），
+  // 改成一次 SELECT 后在内存解析。缺键与读库失败保持原来的 fail-open 语义。
+  const settings = await getAllSettings();
+  const setting = (key: string): string | null => settings[key] ?? null;
   // 管理员列表（多邮箱）：列表里的人都是博主；列表为空时回落旧的单邮箱键
-  const storedAdminEmails = await getSetting("admin_emails");
-  const storedAdminEmail = await getSetting("admin_email");
+  const storedAdminEmails = setting("admin_emails");
+  const storedAdminEmail = setting("admin_email");
   const admins = await resolveAdminEmails(storedAdminEmails, storedAdminEmail);
   // 通知收件人：必须命中管理员列表，否则回落列表第一个（旧前端仍拿它的哈希）
   const notifyEmail = await resolveNotifyEmail(
-    await getSetting("notify_email"),
+    setting("notify_email"),
     storedAdminEmails,
     storedAdminEmail
   );
   // 读取博主标识设置
-  const badgeEnabled = await getSetting("blogger_badge_enabled") || "false";
-  const badgeText = await getSetting("blogger_badge_text") || "";
-  const placeholderName = await getSetting("placeholder_name") || "";
-  const placeholderEmail = await getSetting("placeholder_email") || "";
-  const placeholderContent = await getSetting("placeholder_content") || "";
-  const placeholderUrl = await getSetting("placeholder_url") || "";
-  const adminCommentKey = await getSetting("admin_comment_key") || "";
-  const adminCommentKeyEnabled = await getSetting("admin_comment_key_enabled") || "false";
+  const badgeEnabled = setting("blogger_badge_enabled") || "false";
+  const badgeText = setting("blogger_badge_text") || "";
+  const placeholderName = setting("placeholder_name") || "";
+  const placeholderEmail = setting("placeholder_email") || "";
+  const placeholderContent = setting("placeholder_content") || "";
+  const placeholderUrl = setting("placeholder_url") || "";
+  const adminCommentKey = setting("admin_comment_key") || "";
+  const adminCommentKeyEnabled = setting("admin_comment_key_enabled") || "false";
   const keyEnabled = adminCommentKeyEnabled === "true";
   // 邮箱哈希仅供前端判断「是否需要显示管理员密钥输入框」。
   // 只有在博主密钥功能开启时才下发，避免被用于离线枚举管理员邮箱。
@@ -53,18 +66,26 @@ async (comments: Comment[] | null, page: number, limit: number, nested: boolean,
     crypto.createHash("sha256").update(normalizeEmail(email)).digest("hex");
   const adminEmailHashes = keyEnabled ? admins.map(hashEmail) : [];
   const adminEmailHash = keyEnabled && notifyEmail ? hashEmail(notifyEmail) : "";
-  // 无感验证公开配置（开关 + 按文章派生的蜜罐字段名）
+  // 无感验证公开配置（开关 + 按文章派生的蜜罐字段名）：保留内部读取，
+  // 关闭时只有 1 次查询，且 getSecret 在缺密钥时需要落库，不适合走快照。
   const verifyConfig = await getPublicVerifyConfig(postSlug);
   // 表情配置：是否启用 + OwO 格式的表情来源列表（数组为空时回落旧键/默认源，见 doc/emoji.md）
   const emojiConfig = resolveEmojiConfigs(
-    await getSetting("emoji_cdn_urls"),
-    await getSetting("emoji_cdn_url"),
-    await getSetting("emoji_enabled")
+    setting("emoji_cdn_urls"),
+    setting("emoji_cdn_url"),
+    setting("emoji_enabled")
   );
+  // 头像来源：整页评论复用一份解析后的配置（口径见 doc/avatar.md）
+  const avatarConfig = resolveAvatarConfig(
+    setting(AVATAR_SOURCE_KEY),
+    setting(AVATAR_CUSTOM_URL_KEY)
+  );
+  // 头像开关：关闭时整页统一下发内置默认头像（不修改已保存的来源配置）
+  const avatarEnabled = isAvatarEnabled(setting(AVATAR_ENABLED_KEY));
 
   // 链接安全审查：按邮箱实时推导「休眠链接」（不落库、不加定时任务，见 doc/link_security.md 第 2 节）
-  const securityEnabled = resolveLinkSwitch(await getSetting(LINK_SECURITY_ENABLED_KEY));
-  const dormantDays = await getSetting(LINK_DORMANT_DAYS_KEY);
+  const securityEnabled = resolveLinkSwitch(setting(LINK_SECURITY_ENABLED_KEY));
+  const dormantDays = setting(LINK_DORMANT_DAYS_KEY);
   let lastCommentTimes = new Map<string, number>();
   let trustedLinks = new Map<string, { expiresAt: string; source: string }>();
   if (securityEnabled === "true" && comments && comments.length > 0) {
@@ -143,7 +164,7 @@ async (comments: Comment[] | null, page: number, limit: number, nested: boolean,
   }
   if (nested) {
     // 构建嵌套结构的评论数据
-    const nestedComments = await buildNestedComments(comments, admins, isDormant);
+    const nestedComments = await buildNestedComments(comments, admins, isDormant, avatarConfig, avatarEnabled);
     // 对根评论进行分页（limit 防御性下限：limit=0 时 Math.ceil 会得到 Infinity）
     const safeLimit = Math.max(1, limit);
     const rootTotal = nestedComments.length;
@@ -172,7 +193,7 @@ async (comments: Comment[] | null, page: number, limit: number, nested: boolean,
       id: comment.id,
       author: comment.author,
       url: comment.url || undefined,
-      avatar: await getAvatar(comment.author, comment.email),
+      avatar: resolveAvatarUrl(avatarEnabled, avatarConfig, comment.email, comment.author),
       contentText: comment.content_text,
       contentHtml: comment.content_html,
       pubDate: comment.pub_date.toISOString(),
@@ -201,7 +222,9 @@ async (comments: Comment[] | null, page: number, limit: number, nested: boolean,
 const buildNestedComments = async (
   comments: Comment[],
   admins: string[],
-  isDormant: (comment: Comment) => boolean
+  isDormant: (comment: Comment) => boolean,
+  avatarConfig: AvatarConfig,
+  avatarEnabled: boolean
 ): Promise<NestedComment[]> => {
   // 创建评论映射以便快速查找
   const commentMap = new Map<number, NestedComment>();
@@ -212,7 +235,7 @@ const buildNestedComments = async (
     return {
       id: comment.id,
       author: comment.author,
-      avatar: await getAvatar(comment.author, comment.email),
+      avatar: resolveAvatarUrl(avatarEnabled, avatarConfig, comment.email, comment.author),
       url: comment.url || undefined,
       contentText: comment.content_text,
       contentHtml: comment.content_html,
@@ -268,6 +291,14 @@ const getResponseCommentAdmin = async (comments: Comment[] | null, page: number)
   const startIndex = (page - 1) * limit;
   const endIndex = Math.min(startIndex + limit, total);
   const pageComments = comments.slice(startIndex, endIndex);
+
+  // 后台列表的头像**不受 avatar_enabled 影响**：开关只约束访客可见结果，管理面板用它识别评论者；
+  // 关闭头像时也不该把同一段 340 字符的内联 SVG 塞进每一行。来源配置与公开列表同一套。
+  const settings = await getAllSettings();
+  const avatarConfig = resolveAvatarConfig(
+    settings[AVATAR_SOURCE_KEY],
+    settings[AVATAR_CUSTOM_URL_KEY]
+  );
   
   // 构建管理员界面的评论数据
   const adminComments = await Promise.all(pageComments.map(async comment => ({
@@ -277,6 +308,7 @@ const getResponseCommentAdmin = async (comments: Comment[] | null, page: number)
     author: comment.author,
     email: comment.email,
     url: comment.url || undefined,
+    avatar: buildAvatarUrl(avatarConfig, comment.email, comment.author),
     ipAddress: comment.ip_address || '',
     os: comment.os || '',
     browser: comment.browser || '',

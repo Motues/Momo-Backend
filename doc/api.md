@@ -395,7 +395,8 @@
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `id` / `author` / `avatar` / `contentText` / `contentHtml` / `pubDate` | — | 既有字段 |
+| `id` / `author` / `contentText` / `contentHtml` / `pubDate` | — | 既有字段 |
+| `avatar` | string | 评论者头像地址，由服务端按邮箱与 **头像设置**（`avatar_enabled` / `avatar_source` / `avatar_custom_url`）生成；关闭开关时所有评论统一为内置默认头像。见 [avatar.md](./avatar.md) |
 | `url` | string \| null | 评论者个人网站（已过协议白名单：http/https/mailto/相对路径） |
 | `parentId` | number \| null | 回复的父评论（仅平面结构 `nested=false` 有） |
 | `replies` | array | 子评论（仅嵌套结构 `nested=true` 有） |
@@ -835,6 +836,7 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
   - `security` — 安全设置（CORS、评论密钥、IP/邮箱黑名单）
   - `account` — 账户信息（管理员名称）
   - `emoji` — 表情设置（是否启用、OwO 格式的表情来源地址）
+  - `avatar` — 头像设置（头像来源、自定义 URL 模板）
   - 不传则返回全部设置（向后兼容）；未知取值（含 `toString` 等原型链成员名）同样回退为全部设置
 
 **响应（成功）**：
@@ -885,6 +887,9 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
     "emoji_enabled": "true",
     "emoji_cdn_url": "https://open.motues.top/emoji/owo.json",
     "emoji_cdn_urls": "[\"https://open.motues.top/emoji/owo.json\"]",
+    "avatar_enabled": "true",
+    "avatar_source": "default",
+    "avatar_custom_url": "",
     "link_security_enabled": "false",
     "link_dormant_days": "30",
     "link_sync_enabled": "false",
@@ -1013,6 +1018,20 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
 }
 ```
 
+`GET /admin/settings?type=avatar`（头像设置分组）
+
+```json
+{
+  "code": 200,
+  "message": "Settings fetched",
+  "data": {
+    "avatar_enabled": "true",
+    "avatar_source": "default",
+    "avatar_custom_url": ""
+  }
+}
+```
+
 * `emoji_enabled`：是否在评论区显示表情按钮，取 `"true"` / `"false"`（默认 `"true"`）。
   写入时 `trim` + 转小写后落库，只接受 `"true"` / `"false"` / 空串，其余返回 `400`。
 * `emoji_cdn_urls`：**OwO 格式来源地址数组**（JSON 数组字符串，最多 5 个，每个必须 `http`/`https`
@@ -1023,6 +1042,16 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
 * `link_security_enabled` / `link_dormant_days` / `link_sync_enabled` / `link_dormant_notice_enabled`：
   休眠链接、历史链接批量更新与休眠提醒邮件，口径见 [link_security.md](./link_security.md)
   （三个开关 **fail-closed**：只有 `"true"` 才算开启）。
+* `avatar_enabled`：评论头像总开关，取 `"true"` / `"false"`（默认 `"true"`）。只有明确 `"false"` 才关闭，
+  空串/未知值 fail-open 为开启；关闭后公开评论列表对每条评论统一下发内置默认头像
+  （内联 SVG），`avatar_source` / `avatar_custom_url` 不会被清空。
+* `avatar_source`：评论区头像来源，取 `"default"` / `"gravatar"` / `"cravatar"` / `"qq"` / `"custom"`
+  （默认 `"default"`，即历史的内置 Cravatar + beam 地址）。写入时 `trim` + 转小写，空串归一化为
+  `"default"`；未知取值返回 `400`。
+* `avatar_custom_url`：仅 `avatar_source = "custom"` 时使用的 URL 模板，支持
+  `{hash}` / `{email}` / `{author}` / `{qq}` 四个占位符；必须是 `http` / `https` 地址、不超过 500 码点、
+  不含控制字符与未知占位符。选择 `custom` 时模板不能为空。读取路径对未知来源 / 空或非法模板
+  **fail-open** 回落到内置默认源。完整口径见 [avatar.md](./avatar.md)。
 
 **响应（失败）**：
 ```json
@@ -1386,6 +1415,7 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
         "author": "张三",
         "email": "zhangsan@example.com",
         "url": "https://example.com",
+        "avatar": "https://open.motues.top/avatar?name=f0c3acd8a5e2b954b76bfd774a667cf1&mode=cravatar&variant=beam",
         "ipAddress": "192.168.1.1",
         "os": "Windows 10",
         "browser": "Chrome 96.0.4664.110",
@@ -1402,6 +1432,9 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
   }
 }
 ```
+
+> `avatar` 按头像来源配置（`avatar_source` / `avatar_custom_url`）生成，**不受 `avatar_enabled` 影响**：
+> 开关只约束访客可见的公开评论列表，管理面板需要它来识别评论者（见 [avatar.md](./avatar.md)）。
 
 **响应（失败）**：
 
@@ -1988,6 +2021,7 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
         "author": "张三",
         "email": "zhangsan@example.com",
         "url": null,
+        "avatar": "https://open.motues.top/avatar?name=f0c3acd8a5e2b954b76bfd774a667cf1&mode=cravatar&variant=beam",
         "ipAddress": "192.168.1.1",
         "os": "Windows 10",
         "browser": "Chrome 96",
@@ -2004,6 +2038,8 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
   }
 }
 ```
+
+> `avatar` 与 `/admin/comments/list` 同口径：按来源配置生成，不受 `avatar_enabled` 影响。
 
 **响应（失败）**：
 ```json
@@ -2058,7 +2094,7 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
 
 > 导出系统设置，不含 `admin_password`/`comment_verify_secret`。
 >
-> **导出的是完整快照**：全部 47 个可写设置键都会出现在 `settings` 里。数据库里没有的键
+> **导出的是完整快照**：全部 50 个可写设置键都会出现在 `settings` 里。数据库里没有的键
 > （从没在面板保存过）按**生效默认值**补全 —— 例如表情的三个键即使从未保存过，
 > 也会以 `emoji_enabled: "true"`、`emoji_cdn_urls: ["https://open.motues.top/emoji/owo.json"]`
 > 出现在文件里，备份能看出实际生效的配置。默认值口径由
@@ -2105,11 +2141,14 @@ org = hex(SHA256("org:" + secret + ":" + 归一化来源))[:16]   // 与 iph 同
       "emoji_enabled": "true",
       "emoji_cdn_url": "",
       "emoji_cdn_urls": "[\"https://open.motues.top/emoji/owo.json\"]",
+      "avatar_enabled": "true",
+      "avatar_source": "default",
+      "avatar_custom_url": "",
       "link_security_enabled": "false",
       "link_dormant_days": "30",
       "link_sync_enabled": "false",
       "link_dormant_notice_enabled": "false",
-      "...": "其余键按默认值补全，共 47 个"
+      "...": "其余键按默认值补全，共 50 个"
     }
   }
 }

@@ -45,6 +45,8 @@ describe('GET /admin/comments/list', () => {
 			author: 'Alice',
 			email: 'alice@example.com',
 			url: 'https://me.example.com',
+			// 后台头像按来源配置生成，不受 avatar_enabled 影响（默认源 = open.motues.top + cravatar/beam）
+			avatar: 'https://open.motues.top/avatar?name=c160f8cc69a4f0bf2b0362752353d060&mode=cravatar&variant=beam',
 			ipAddress: '1.2.3.4',
 			os: 'Windows 10',
 			browser: 'Chrome 120',
@@ -54,8 +56,16 @@ describe('GET /admin/comments/list', () => {
 		});
 	});
 
-	it('按 pub_date 倒序', async () => {
-		await seedComment({ author: 'Old', pub_date: 1700000000000 });
+	it('头像按来源配置生成，且不受 avatar_enabled 影响', async () => {
+		await seedSettings({ avatar_enabled: 'false', avatar_source: 'gravatar' });
+		await seedComment({ author: 'A', email: 'a@example.com' });
+		const res = await api('/admin/comments/list', { headers: authed() });
+		expect(res.body.data.comments[0].avatar).toBe(
+			'https://gravatar.com/avatar/b418773a2c51fb9777a1648346fa7394?s=200&d=identicon'
+		);
+	});
+
+	it('按 pub_date 倒序', async () => {		await seedComment({ author: 'Old', pub_date: 1700000000000 });
 		await seedComment({ author: 'New', pub_date: 1750000000000 });
 		const res = await api('/admin/comments/list', { headers: authed() });
 		expect(res.body.data.comments.map((c: any) => c.author)).toEqual(['New', 'Old']);

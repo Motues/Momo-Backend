@@ -386,12 +386,12 @@ describe("GET /admin/data/export/settings", () => {
     expect(body.data.sensitiveOmitted).toEqual([]);
   });
 
-  it("空库导出是完整快照：47 个键全部出现，表情按生效默认值补全", async () => {
+  it("空库导出是完整快照：50 个键全部出现，表情按生效默认值补全", async () => {
     const token = await loginToken();
     const body = await json(await api("/admin/data/export/settings", { token }));
     const settings = body.data.settings as Record<string, string>;
 
-    expect(Object.keys(settings)).toHaveLength(47);
+    expect(Object.keys(settings)).toHaveLength(50);
     // 从没在面板里保存过表情设置 —— 过去这里完全没有 emoji_*，备份看不出表情状态
     expect(settings.emoji_enabled).toBe("true");
     expect(JSON.parse(settings.emoji_cdn_urls)).toEqual([
@@ -411,7 +411,7 @@ describe("GET /admin/data/export/settings", () => {
     const body = await json(await api("/admin/data/export/settings", { token }));
     expect(body.data.settings.emoji_enabled).toBe("false");
     expect(body.data.settings.emoji_cdn_urls).toBe('["https://cdn.example.com/owo.json"]');
-    expect(Object.keys(body.data.settings)).toHaveLength(47);
+    expect(Object.keys(body.data.settings)).toHaveLength(50);
   });
 });
 

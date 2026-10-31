@@ -274,6 +274,10 @@ describe("GET /admin/stats/users/comments", () => {
     expect(page1.data.pagination).toEqual({ page: 1, limit: 10, totalPage: 2 });
     expect(page1.data.comments[0].postSlug).toBe("/p0");
     expect(page1.data.comments[0].pubDate).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    // 后台头像按来源配置生成（默认源），不受 avatar_enabled 影响
+    expect(page1.data.comments[0].avatar).toBe(
+      "https://open.motues.top/avatar?name=743173788aa9166801df2e18f0e7ff24&mode=cravatar&variant=beam"
+    );
 
     const page2 = await json(
       await api("/admin/stats/users/comments?author=甲&email=a@x.com&page=2", { token })

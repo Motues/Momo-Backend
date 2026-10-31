@@ -500,7 +500,7 @@ func TestExportSettings(t *testing.T) {
 }
 
 // TestExportSettingsIncludesDefaults 空库导出必须是完整快照：
-// 47 个可写设置键全部出现，表情等「从没保存过」的设置按生效默认值补全。
+// 50 个可写设置键全部出现，表情等「从没保存过」的设置按生效默认值补全。
 func TestExportSettingsIncludesDefaults(t *testing.T) {
 	resetState(t)
 	token := adminToken(t)
@@ -511,8 +511,8 @@ func TestExportSettingsIncludesDefaults(t *testing.T) {
 	var payload exportSettingsPayload
 	decodeInto(t, w, &payload)
 
-	if len(payload.Data.Settings) != 47 {
-		t.Fatalf("空库导出应包含 47 个键，实际 %d", len(payload.Data.Settings))
+	if len(payload.Data.Settings) != 50 {
+		t.Fatalf("空库导出应包含 50 个键，实际 %d", len(payload.Data.Settings))
 	}
 	if payload.Data.Settings["emoji_enabled"] != "true" {
 		t.Errorf("表情默认应为启用，实际 %q", payload.Data.Settings["emoji_enabled"])

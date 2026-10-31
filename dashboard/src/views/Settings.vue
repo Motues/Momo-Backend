@@ -73,7 +73,17 @@
           <p class="text-sm text-gray-500">启用或关闭表情按钮，配置 OwO 格式的表情来源地址</p>
         </router-link>
 
-        <!-- 8. 数据管理（固定最后） -->
+        <!-- 8. 头像设置 -->
+        <router-link to="/settings/avatar" data-test="settings-card"
+          class="block bg-white rounded-lg shadow-sm border border-gray-200 p-8 hover:shadow-md hover:border-rose-200 transition-all group">
+          <div class="w-14 h-14 bg-rose-50 rounded-lg flex items-center justify-center mb-4 group-hover:bg-rose-100 transition-colors">
+            <i class="fa-solid fa-user-circle text-rose-500 text-2xl"></i>
+          </div>
+          <h2 class="text-lg font-semibold text-gray-800 mb-2">头像设置</h2>
+          <p class="text-sm text-gray-500">选择评论头像来源（内置源 / Gravatar / Cravatar / QQ / 自定义地址模板）</p>
+        </router-link>
+
+        <!-- 9. 数据管理（固定最后） -->
         <router-link to="/settings/data" data-test="settings-card"
           class="block bg-white rounded-lg shadow-sm border border-gray-200 p-8 hover:shadow-md hover:border-emerald-200 transition-all group">
           <div class="w-14 h-14 bg-emerald-50 rounded-lg flex items-center justify-center mb-4 group-hover:bg-emerald-100 transition-colors">

@@ -10,7 +10,7 @@ import (
 /*
 系统设置导出的跨语言固定向量验收（与 Node / Worker 读同一份 fixture）。
 
-导出是「完整快照」：47 个可写设置键全都要出现，缺的键按生效默认值补全。
+导出是「完整快照」：50 个可写设置键全都要出现，缺的键按生效默认值补全。
 只要有一端漏键、把默认值写成面板初值（例如把 email_secure 当成 true）、
 或把表情来源列表直接写默认源（覆盖旧单地址键），这里就会立刻失败。
 */
@@ -38,8 +38,8 @@ func TestSettingsExportDefaultsMatchVector(t *testing.T) {
 	fixture := loadSettingsExportVector(t)
 	got := SettingsExportDefaults()
 
-	if len(got) != 47 || len(fixture.Defaults) != 47 {
-		t.Fatalf("默认值表应为 47 个键，实际 got=%d fixture=%d", len(got), len(fixture.Defaults))
+	if len(got) != 50 || len(fixture.Defaults) != 50 {
+		t.Fatalf("默认值表应为 50 个键，实际 got=%d fixture=%d", len(got), len(fixture.Defaults))
 	}
 	for key, want := range fixture.Defaults {
 		if got[key] != want {
@@ -60,10 +60,10 @@ func TestSettingsExportDefaultsMatchVector(t *testing.T) {
 func TestBuildExportedSettings(t *testing.T) {
 	fixture := loadSettingsExportVector(t)
 
-	// 空库：47 个键全部出现，值等于默认值表
+	// 空库：50 个键全部出现，值等于默认值表
 	settings, omitted := BuildExportedSettings(map[string]string{})
-	if len(settings) != 47 {
-		t.Fatalf("空库导出应包含 47 个键，实际 %d", len(settings))
+	if len(settings) != 50 {
+		t.Fatalf("空库导出应包含 50 个键，实际 %d", len(settings))
 	}
 	for key, want := range fixture.Defaults {
 		if settings[key] != want {
@@ -92,8 +92,8 @@ func TestBuildExportedSettings(t *testing.T) {
 	if overridden["emoji_enabled"] != "false" {
 		t.Errorf("emoji_enabled 应被覆盖，实际 %q", overridden["emoji_enabled"])
 	}
-	if len(overridden) != 47 {
-		t.Errorf("覆盖后仍应是 47 个键，实际 %d", len(overridden))
+	if len(overridden) != 50 {
+		t.Errorf("覆盖后仍应是 50 个键，实际 %d", len(overridden))
 	}
 
 	// 表情跨键回落：缺 emoji_cdn_urls 时用旧单地址键的解析结果，而不是默认源

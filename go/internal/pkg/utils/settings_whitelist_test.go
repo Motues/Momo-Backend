@@ -25,6 +25,10 @@ var canonicalSettingKeys = []string{
 	"admin_emails",
 	"admin_name",
 	"allow_origin",
+	// 评论区头像来源：开关 + 预设 / 自定义 URL 模板（见 doc/avatar.md）
+	"avatar_custom_url",
+	"avatar_enabled",
+	"avatar_source",
 	"blogger_badge_enabled",
 	"blogger_badge_text",
 	"comment_auto_approve",

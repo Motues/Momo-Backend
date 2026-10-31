@@ -27,12 +27,12 @@ type CommentHandler struct {
 
 // 字段长度上限（与前端组件约束对齐）
 const (
-	MaxContentLen  = 2000
+	MaxContentLen     = 2000
 	MaxContentHTMLLen = 50000
-	MaxAuthorLen   = 100
-	MaxEmailLen    = 254
-	MaxURLLen      = 500
-	MaxPostSlugLen = 200
+	MaxAuthorLen      = 100
+	MaxEmailLen       = 254
+	MaxURLLen         = 500
+	MaxPostSlugLen    = 200
 )
 
 // PostComment 提交评论 (POST /api/comments)
@@ -332,7 +332,7 @@ func (h *CommentHandler) PostComment(c *gin.Context) {
 	h.maybeRequestLinkSync(c, req, sanitizedURL)
 
 	c.JSON(http.StatusOK, gin.H{
-		"code":    200,
+		"code": 200,
 		"message": func() string {
 			if needsVerification {
 				return "Comment submitted! Verification email sent. Please check your inbox."
@@ -387,25 +387,30 @@ func (h *CommentHandler) GetComments(c *gin.Context) {
 		page = 1
 	}
 
+	// 设置快照：原本逐键查询约 22 次，改成一次 SELECT 后在内存解析；
+	// 缺键与读库失败保持原来的 fail-open 语义（GetSetting 读不到时也是空串）。
+	settings := utils.GetAllSettings()
+	setting := func(key string) string { return settings[key] }
+
 	// 读取博主标识设置
-	admins := utils.ResolveAdminEmailsFromSettings()
-	badgeEnabled := utils.GetSetting("blogger_badge_enabled")
+	admins := utils.ResolveAdminEmailsFromMap(settings)
+	badgeEnabled := setting("blogger_badge_enabled")
 	if badgeEnabled == "" {
 		badgeEnabled = "false"
 	}
-	badgeText := utils.GetSetting("blogger_badge_text")
-	placeholderName := utils.GetSetting("placeholder_name")
-	placeholderEmail := utils.GetSetting("placeholder_email")
-	placeholderContent := utils.GetSetting("placeholder_content")
-	placeholderURL := utils.GetSetting("placeholder_url")
+	badgeText := setting("blogger_badge_text")
+	placeholderName := setting("placeholder_name")
+	placeholderEmail := setting("placeholder_email")
+	placeholderContent := setting("placeholder_content")
+	placeholderURL := setting("placeholder_url")
 	// 表情配置（OwO 来源）：读取路径宽容归一化，未配置时回落默认源并 fail-open 为启用；
 	// 同时下发数组（v3）与数组第一个地址（兼容旧前端的 emoji_cdn_url）
 	emojiCdnURLs, emojiEnabled := utils.ResolveEmojiConfig(
-		utils.GetSetting(utils.EmojiCdnURLsKey),
-		utils.GetSetting(utils.EmojiCdnURLKey),
-		utils.GetSetting(utils.EmojiEnabledKey))
-	adminCommentKey := utils.GetSetting("admin_comment_key")
-	adminCommentKeyEnabled := utils.GetSetting("admin_comment_key_enabled")
+		setting(utils.EmojiCdnURLsKey),
+		setting(utils.EmojiCdnURLKey),
+		setting(utils.EmojiEnabledKey))
+	adminCommentKey := setting("admin_comment_key")
+	adminCommentKeyEnabled := setting("admin_comment_key_enabled")
 	adminCommentKeyConfigured := "false"
 	if adminCommentKey != "" && adminCommentKeyEnabled == "true" {
 		adminCommentKeyConfigured = "true"
@@ -419,7 +424,7 @@ func (h *CommentHandler) GetComments(c *gin.Context) {
 	adminEmailHash := ""
 	adminEmailHashes := []string{}
 	if adminCommentKeyEnabled == "true" {
-		if notifyEmail := utils.ResolveNotifyEmailFromSettings(); notifyEmail != "" {
+		if notifyEmail := utils.ResolveNotifyEmailFromMap(settings); notifyEmail != "" {
 			adminEmailHash = utils.EmailHash(notifyEmail)
 		}
 		adminEmailHashes = utils.AdminEmailHashes(admins)
@@ -441,8 +446,15 @@ func (h *CommentHandler) GetComments(c *gin.Context) {
 	//    再逐条实时推导 urlDormant（不落库、不跑后台任务）；功能关闭时一律 false 且跳过查询。
 	lastCommentAt := map[string]int64{}
 	trustedLinks := map[string]model.TrustedLinkInfo{}
-	linkSecurityEnabled := utils.ResolveLinkSecurityEnabled(utils.GetSetting(utils.LinkSecurityEnabledKey))
-	linkDormantDays := utils.ResolveLinkDormantDays(utils.GetSetting(utils.LinkDormantDaysKey))
+	linkSecurityEnabled := utils.ResolveLinkSecurityEnabled(setting(utils.LinkSecurityEnabledKey))
+	linkDormantDays := utils.ResolveLinkDormantDays(setting(utils.LinkDormantDaysKey))
+	// 头像来源：整页评论复用一份解析后的配置（口径见 doc/avatar.md）
+	avatarConfig := utils.ResolveAvatarConfig(
+		setting(utils.AvatarSourceKey),
+		setting(utils.AvatarCustomURLKey),
+	)
+	// 头像开关：关闭时整页统一下发内置默认头像（不修改已保存的来源配置）
+	avatarEnabled := utils.IsAvatarEnabled(setting(utils.AvatarEnabledKey))
 	nowMillisValue := nowMillis()
 	if linkSecurityEnabled {
 		emails := make([]string, 0, len(allComments))
@@ -492,7 +504,7 @@ func (h *CommentHandler) GetComments(c *gin.Context) {
 			ID:          comm.ID,
 			Author:      comm.Author,
 			URL:         comm.URL,
-			Avatar:      utils.GetCravatar(comm.Email),
+			Avatar:      utils.ResolveAvatarURL(avatarEnabled, avatarConfig, comm.Email, comm.Author),
 			ContentText: comm.ContentText,
 			ContentHTML: comm.ContentHTML,
 			PubDate:     time.UnixMilli(comm.PubDate).UTC().Format("2006-01-02T15:04:05.000Z"),

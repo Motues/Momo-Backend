@@ -1,7 +1,14 @@
 import { Context } from 'hono'
 import { Bindings } from '../../bindings'
-import { getCravatar } from '../../utils/getAvatar'
-import { getSetting } from '../../utils/settings'
+import {
+  AVATAR_CUSTOM_URL_KEY,
+  AVATAR_ENABLED_KEY,
+  AVATAR_SOURCE_KEY,
+  isAvatarEnabled,
+  resolveAvatarConfig,
+  resolveAvatarUrl,
+} from '../../utils/avatar'
+import { getAllSettings } from '../../utils/settings'
 import { getPublicVerifyConfig } from '../../utils/verify'
 import {
   resolveEmojiSettings,
@@ -36,16 +43,21 @@ export const getComments = async (c: Context<{ Bindings: Bindings }>) => {
     return c.json({ code: 429, message: "Too many requests. Please slow down." }, 429)
   }
 
+  // 设置快照：原本逐键查询约 21 次（D1 每次都是一次往返），改成一次 SELECT 后在内存解析。
+  // 缺键与读库失败保持原来的 fail-open 语义（按 null/默认值处理）。
+  const settings = await getAllSettings(c.env)
+  const setting = (key: string): string | null => settings[key] ?? null
+
   // 管理员列表（宽容解析：admin_emails 为空时回落旧键 admin_email；notify_email 命中不了则回落第一个）
-  const adminConfig = await getAdminConfig(c.env)
-  const badgeEnabled = await getSetting(c.env, "blogger_badge_enabled") || "false"
-  const badgeText = await getSetting(c.env, "blogger_badge_text") || ""
-  const placeholderName = await getSetting(c.env, "placeholder_name") || ""
-  const placeholderEmail = await getSetting(c.env, "placeholder_email") || ""
-  const placeholderContent = await getSetting(c.env, "placeholder_content") || ""
-  const placeholderUrl = await getSetting(c.env, "placeholder_url") || ""
-  const adminCommentKey = await getSetting(c.env, "admin_comment_key") || ""
-  const adminCommentKeyEnabled = await getSetting(c.env, "admin_comment_key_enabled") || "false"
+  const adminConfig = await getAdminConfig(c.env, settings)
+  const badgeEnabled = setting("blogger_badge_enabled") || "false"
+  const badgeText = setting("blogger_badge_text") || ""
+  const placeholderName = setting("placeholder_name") || ""
+  const placeholderEmail = setting("placeholder_email") || ""
+  const placeholderContent = setting("placeholder_content") || ""
+  const placeholderUrl = setting("placeholder_url") || ""
+  const adminCommentKey = setting("admin_comment_key") || ""
+  const adminCommentKeyEnabled = setting("admin_comment_key_enabled") || "false"
   // 邮箱哈希仅供前端判断「是否需要显示管理员密钥输入框」。
   // 只有在博主密钥功能开启时才下发，避免被用于离线枚举管理员邮箱（口径见 doc/admin_emails.md 第 5 节）。
   const keyEnabled = adminCommentKeyEnabled === "true"
@@ -55,17 +67,25 @@ export const getComments = async (c: Context<{ Bindings: Bindings }>) => {
     : ""
   // 新字段：每个归一化管理员邮箱的哈希数组（同样只在密钥功能开启时下发）
   const adminEmailHashList = keyEnabled ? await adminEmailHashes(adminConfig.admins) : []
-  // 无感验证公开配置（开关 + 按文章派生的蜜罐字段名）
+  // 无感验证公开配置（开关 + 按文章派生的蜜罐字段名）：保留内部读取，
+  // 关闭时只有 1 次查询，且 getSecret 在缺密钥时需要落库，不适合走快照。
   const verifyConfig = await getPublicVerifyConfig(c.env, post_slug)
   // 表情设置（契约 v3）：开关 + OwO 格式的来源地址**数组**，前端据此显示按钮并直接拉取 owo.json。
   // 数组为空回落旧键、旧键也为空回落默认源；开关只有显式 "false" 才关闭，关闭时地址照常下发。
   const emoji = resolveEmojiSettings(
-    await getSetting(c.env, EMOJI_CDN_URLS_KEY),
-    await getSetting(c.env, EMOJI_CDN_URL_KEY),
-    await getSetting(c.env, EMOJI_ENABLED_KEY)
+    setting(EMOJI_CDN_URLS_KEY),
+    setting(EMOJI_CDN_URL_KEY),
+    setting(EMOJI_ENABLED_KEY)
   )
+  // 头像来源：整页评论复用一份解析后的配置（口径见 doc/avatar.md）
+  const avatarConfig = resolveAvatarConfig(
+    setting(AVATAR_SOURCE_KEY),
+    setting(AVATAR_CUSTOM_URL_KEY)
+  )
+  // 头像开关：关闭时整页统一下发内置默认头像（不修改已保存的来源配置）
+  const avatarEnabled = isAvatarEnabled(setting(AVATAR_ENABLED_KEY))
   // 链接安全（休眠链接）：fail-closed；功能关闭时一律 urlDormant = false 且不做任何查询
-  const linkSecurity = await resolveLinkSecurityConfig(c.env)
+  const linkSecurity = await resolveLinkSecurityConfig(c.env, settings)
 
   try {
     // 1. 查询审核通过的评论
@@ -103,6 +123,23 @@ export const getComments = async (c: Context<{ Bindings: Bindings }>) => {
     // 3. 批量处理头像并格式化，同时标记博主（显式挑字段，防止 email 等隐私字段回归）
     //    顺带收集本页被判为休眠的评论，供第 4 步的惰性提醒检测使用（email 不进入响应体）
     const dormantCandidates: DormantNoticeCandidate[] = []
+    // 头像按邮箱记忆化：同一邮箱在同一页里重复出现（楼中楼很常见）时复用同一次 WebCrypto MD5。
+    // 模板含 {author} 时昵称也参与生成，key 必须带上昵称，否则会错用别人的头像。
+    const avatarCache = new Map<string, Promise<string>>()
+    const avatarOf = (email: string, author: string): Promise<string> => {
+      if (!avatarEnabled) {
+        return Promise.resolve(resolveAvatarUrl(false, avatarConfig, email, author))
+      }
+      const key = avatarConfig.template.includes('{author}')
+        ? `${email.trim().toLowerCase()}\u0000${author.trim()}`
+        : email.trim().toLowerCase()
+      let job = avatarCache.get(key)
+      if (!job) {
+        job = resolveAvatarUrl(true, avatarConfig, email, author).catch(() => '')
+        avatarCache.set(key, job)
+      }
+      return job
+    }
     const allComments = await Promise.all((results || []).map(async (row: any) => {
       const hasUrl = typeof row.url === 'string' && row.url.trim() !== ''
       const emailKey = String(row.email ?? '').trim().toLowerCase()
@@ -110,12 +147,7 @@ export const getComments = async (c: Context<{ Bindings: Bindings }>) => {
       const commentUrl = hasUrl ? String(row.url).trim() : ''
       const trusted = commentUrl !== '' && (activeTrusts.get(emailKey)?.get(commentUrl) ?? null) !== null
       const isBlogger = isAdminMember(adminConfig.admins, row.email)
-      let avatar = ''
-      try {
-        avatar = await getCravatar(row.email)
-      } catch {
-        avatar = ''
-      }
+      const avatar = await avatarOf(String(row.email ?? ''), String(row.author ?? ''))
       // 休眠链接：功能关闭、无网址、最后评论时间未知（fail-open）时恒为 false；
       // 有效人工确认（TrustedLink）直接豁免休眠
       const lastCommentAt = hasUrl ? lastCommentTimes.get(emailKey) ?? null : null

@@ -15,6 +15,7 @@ type adminCommentItem struct {
 	Author      string  `json:"author"`
 	Email       string  `json:"email"`
 	URL         *string `json:"url"`
+	Avatar      string  `json:"avatar"`
 	IPAddress   *string `json:"ipAddress"`
 	OS          *string `json:"os"`
 	Browser     *string `json:"browser"`
@@ -102,6 +103,10 @@ func TestListAllComments(t *testing.T) {
 	if first.URL == nil || *first.URL != "https://x.com" {
 		t.Errorf("url 映射不正确: %v", first.URL)
 	}
+	// 后台头像默认走内置默认源（open.motues.top + cravatar/beam）
+	if want := "https://open.motues.top/avatar?name=ca2c72b0c941af29019c38c49d596565&mode=cravatar&variant=beam"; first.Avatar != want {
+		t.Errorf("avatar 映射不正确: 期望 %q，实际 %q", want, first.Avatar)
+	}
 	if first.IPAddress == nil || *first.IPAddress != "203.0.113.1" {
 		t.Errorf("ipAddress 映射不正确: %v", first.IPAddress)
 	}
@@ -113,6 +118,33 @@ func TestListAllComments(t *testing.T) {
 	}
 	if !strings.HasSuffix(first.PubDate, "Z") || len(first.PubDate) != 24 {
 		t.Errorf("pubDate 应为毫秒 ISO（UTC），实际 %q", first.PubDate)
+	}
+}
+
+// 后台头像不受 avatar_enabled 影响：开关只约束访客可见结果，管理面板需要它识别评论者。
+func TestListAllCommentsAvatarIgnoresEnabled(t *testing.T) {
+	resetState(t)
+	setSetting(t, "avatar_enabled", "false")
+	setSetting(t, "avatar_source", "gravatar")
+	seedComment(t, &model.Comment{
+		PostSlug:    "/p",
+		Author:      "A",
+		Email:       "a@example.com",
+		ContentText: "x",
+		ContentHTML: "<p>x</p>",
+		Status:      "approved",
+		PubDate:     1_700_000_000_000,
+	})
+	token := adminToken(t)
+
+	w := callWithToken(t, "GET", "/admin/comments/list", "", token)
+	requireStatus(t, w, 200)
+
+	var payload adminCommentsPayload
+	decodeInto(t, w, &payload)
+	want := "https://gravatar.com/avatar/b418773a2c51fb9777a1648346fa7394?s=200&d=identicon"
+	if len(payload.Data.Comments) != 1 || payload.Data.Comments[0].Avatar != want {
+		t.Errorf("avatar 应为 %q，实际 %+v", want, payload.Data.Comments)
 	}
 }
 

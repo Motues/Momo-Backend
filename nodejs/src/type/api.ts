@@ -94,6 +94,8 @@ interface CommentAdmin {
   author: string;
   email: string;
   url?: string;
+  /** 按头像来源配置生成的地址；后台列表**不受** avatar_enabled 影响（开关只约束访客可见结果） */
+  avatar: string;
   ipAddress: string;
   os: string;
   browser: string;

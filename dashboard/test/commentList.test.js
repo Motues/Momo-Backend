@@ -11,7 +11,7 @@ const ModalStub = defineComponent({
 		visible: { type: Boolean, default: false },
 		comment: { type: Object, default: () => ({}) },
 	},
-	emits: ['close', 'update', 'delete', 'edit'],
+	emits: ['close', 'update', 'delete', 'edit', 'view-user'],
 	template: '<div class="modal-stub" />',
 });
 
@@ -195,6 +195,44 @@ describe('CommentList - 详情弹窗', () => {
 		const payload = { id: 88, author: '新作者' };
 		modal(wrapper).vm.$emit('edit', payload);
 		expect(wrapper.emitted('edit')).toEqual([[payload]]);
+	});
+
+	it('弹窗 view-user 事件向外透传（昵称跳转）', async () => {
+		const wrapper = mountList({ data: [makeComment()] });
+		const payload = { author: '张三', email: 'zhangsan@example.com' };
+		modal(wrapper).vm.$emit('view-user', payload);
+		expect(wrapper.emitted('view-user')).toEqual([[payload]]);
+	});
+});
+
+describe('CommentList - 昵称跳转用户评论页', () => {
+	it('点击昵称 emit view-user，且不会打开详情弹窗', async () => {
+		const wrapper = mountList({
+			data: [makeComment({ author: '李四', email: 'lisi@example.com' })],
+		});
+		await wrapper.get('tbody [data-test="comment-author-link"]').trigger('click');
+
+		expect(wrapper.emitted('view-user')).toEqual([
+			[{ author: '李四', email: 'lisi@example.com' }],
+		]);
+		expect(modal(wrapper).props('visible')).toBe(false);
+	});
+
+	it('昵称链接指向 /user-comments 并携带 author + email', () => {
+		const wrapper = mountList({
+			data: [makeComment({ author: '张 三', email: 'a+b@example.com' })],
+		});
+		const link = wrapper.get('tbody [data-test="comment-author-link"]');
+		expect(link.attributes('href')).toBe(
+			'/user-comments?author=%E5%BC%A0%20%E4%B8%89&email=a%2Bb%40example.com'
+		);
+		expect(link.attributes('title')).toContain('查看');
+	});
+
+	it('没有邮箱时昵称退化为纯文本（不提供跳转）', () => {
+		const wrapper = mountList({ data: [makeComment({ email: '' })] });
+		expect(wrapper.find('tbody [data-test="comment-author-link"]').exists()).toBe(false);
+		expect(wrapper.text()).toContain('张三');
 	});
 });
 

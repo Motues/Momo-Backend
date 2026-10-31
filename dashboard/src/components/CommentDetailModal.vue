@@ -27,7 +27,13 @@
             <img v-if="comment.avatar" :src="comment.avatar" class="w-10 h-10 rounded-md object-cover border border-slate-100" alt="avatar" />
             <div class="min-w-0 flex-1">
               <template v-if="!editing">
-                <div class="text-sm font-bold text-slate-900">{{ comment.author }}</div>
+                <button v-if="comment.email" type="button" data-test="detail-author-link"
+                  :title="`查看 ${comment.author || comment.email} 的全部评论`"
+                  class="block text-sm font-bold text-slate-900 text-left hover:text-blue-600 hover:underline"
+                  @click="$emit('view-user', { author: comment.author || '', email: comment.email })">
+                  {{ comment.author }}
+                </button>
+                <div v-else class="text-sm font-bold text-slate-900">{{ comment.author }}</div>
                 <div class="text-xs text-slate-400 truncate">{{ comment.email || '无邮箱' }}</div>
               </template>
               <template v-else>
@@ -148,7 +154,7 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['close', 'update', 'delete', 'edit']);
+const emit = defineEmits(['close', 'update', 'delete', 'edit', 'view-user']);
 
 const editing = ref(false);
 const form = reactive({

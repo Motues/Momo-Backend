@@ -32,6 +32,9 @@ const RESET_KEYS = [
   "placeholder_name",
   "email_enabled",
   "email_blacklist",
+  "avatar_enabled",
+  "avatar_source",
+  "avatar_custom_url",
 ];
 
 beforeEach(() => {
@@ -518,6 +521,87 @@ describe("PUT /admin/settings", () => {
     const body = await json(await api("/admin/settings?type=basic", { token }));
     expect(body.data.comment_spam_max_links).toBe("5");
     expect(body.data.comment_spam_keywords).toBe('["加微信","casino"]');
+  });
+
+  it("头像来源：type=avatar 只返回三个头像键", async () => {
+    const token = await loginToken();
+    await setSetting("avatar_enabled", "true");
+    await setSetting("avatar_source", "gravatar");
+    await setSetting("avatar_custom_url", "");
+    const body = await json(await api("/admin/settings?type=avatar", { token }));
+    // 分组只回库里有值的键；email_enabled 始终附带默认值（与其它分组的既有行为一致）
+    expect(Object.keys(body.data).sort()).toEqual([
+      "avatar_custom_url",
+      "avatar_enabled",
+      "avatar_source",
+      "email_enabled",
+    ]);
+  });
+
+  it("头像来源：非法来源 / 非法模板整批拒绝", async () => {
+    const token = await loginToken();
+    for (const [key, value] of [
+      ["avatar_source", "github"],
+      ["avatar_enabled", "yes"],
+      ["avatar_custom_url", "javascript:alert(1)"],
+      ["avatar_custom_url", "https://x/{foo}"],
+      ["avatar_custom_url", "https://x/\n{hash}"],
+    ] as [string, string][]) {
+      const res = await api("/admin/settings", {
+        method: "PUT",
+        token,
+        body: { site_name: "不应写入", [key]: value },
+      });
+      expect(res.status, `${key}=${value}`).toBe(400);
+      expect(await getSetting(key), `${key}=${value}`).toBeNull();
+      expect(await getSetting("site_name"), `${key}=${value}`).toBeNull();
+    }
+  });
+
+  it("头像来源：选择 custom 但未填地址返回 400", async () => {
+    const token = await loginToken();
+    const res = await api("/admin/settings", {
+      method: "PUT",
+      token,
+      body: { avatar_source: "custom" },
+    });
+    expect(res.status).toBe(400);
+    expect((await json(res)).message).toBe("选择自定义头像来源时必须填写头像地址");
+    expect(await getSetting("avatar_source")).toBeNull();
+  });
+
+  it("头像来源：合法写入后归一化（来源小写、模板 trim）并可读回", async () => {
+    const token = await loginToken();
+    const res = await api("/admin/settings", {
+      method: "PUT",
+      token,
+      body: {
+        avatar_source: "  CUSTOM  ",
+        avatar_custom_url: "  https://cdn.example.com/{hash}.png  ",
+      },
+    });
+    expect(res.status).toBe(200);
+    expect(await getSetting("avatar_source")).toBe("custom");
+    expect(await getSetting("avatar_custom_url")).toBe("https://cdn.example.com/{hash}.png");
+
+    const body = await json(await api("/admin/settings?type=avatar", { token }));
+    expect(body.data.avatar_source).toBe("custom");
+    expect(body.data.avatar_custom_url).toBe("https://cdn.example.com/{hash}.png");
+  });
+
+  it("头像来源：切回 default 时可同时清空模板", async () => {
+    const token = await loginToken();
+    await setSetting("avatar_source", "custom");
+    await setSetting("avatar_custom_url", "https://cdn.example.com/{hash}");
+
+    const res = await api("/admin/settings", {
+      method: "PUT",
+      token,
+      body: { avatar_source: "default", avatar_custom_url: "" },
+    });
+    expect(res.status).toBe(200);
+    expect(await getSetting("avatar_source")).toBe("default");
+    expect(await getSetting("avatar_custom_url")).toBe("");
   });
 
   it("审核自动化的空串阈值允许写入（表示使用默认值）", async () => {

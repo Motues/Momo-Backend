@@ -10,7 +10,7 @@
 | `pub_date` | INTEGER | NOT NULL DEFAULT `(CAST(strftime('%s','now') AS INTEGER) * 1000)` | 创建时间（**Unix 毫秒整数**，三端统一） |
 | `post_slug` | TEXT | NOT NULL | 博客文章唯一标识（如 `/posts/hello-world`） |
 | `author` | TEXT | NOT NULL | 昵称 |
-| `email` | TEXT | NOT NULL | 邮箱（用于 Gravatar，不公开） |
+| `email` | TEXT | NOT NULL | 邮箱（用于生成评论头像，口径见 `doc/avatar.md`；不公开） |
 | `url` | TEXT | — | 个人网站（可为空） |
 | `ip_address` | TEXT | — | 记录 IP 用于反垃圾 |
 | `device` | TEXT | — | 设备信息（如 `Windows 10`） |

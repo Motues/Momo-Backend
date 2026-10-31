@@ -2,7 +2,7 @@
  * 系统设置导出（`GET /admin/data/export/settings`）的「完整快照」口径。
  *
  * 与 Node `utils/settingsExport.ts`、Go `utils/settings_export.go` 逐字一致：
- * 先铺一遍全部 47 个可写设置键的**生效默认值**，再用库里的值覆盖，最后把敏感键置空。
+ * 先铺一遍全部 50 个可写设置键的**生效默认值**，再用库里的值覆盖，最后把敏感键置空。
  * 口径的唯一事实来源是 `doc/vectors/settings-export-v1.json`。
  *
  * 表情是唯一的跨键回落：`emoji_cdn_urls` 为空时实际生效的是「旧单地址键
@@ -73,6 +73,10 @@ export const SETTINGS_EXPORT_DEFAULTS: Readonly<Record<string, string>> = {
 	emoji_enabled: 'true',
 	emoji_cdn_url: '',
 	emoji_cdn_urls: JSON.stringify([DEFAULT_EMOJI_CDN_URL]),
+	// 评论区头像来源（见 doc/avatar.md）：缺省走内置默认源
+	avatar_enabled: 'true',
+	avatar_source: 'default',
+	avatar_custom_url: '',
 	// 链接安全审查（见 doc/link_security.md）
 	link_security_enabled: 'false',
 	link_dormant_days: '30',
@@ -81,7 +85,7 @@ export const SETTINGS_EXPORT_DEFAULTS: Readonly<Record<string, string>> = {
 };
 
 export interface ExportedSettings {
-	/** 完整快照：全部 47 个键，敏感键为空串 */
+	/** 完整快照：全部 50 个键，敏感键为空串 */
 	settings: Record<string, string>;
 	/** 库里确实存过、且会被置空的敏感键 */
 	sensitiveOmitted: string[];

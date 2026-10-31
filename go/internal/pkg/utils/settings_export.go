@@ -5,7 +5,7 @@ import "encoding/json"
 // 系统设置导出（GET /admin/data/export/settings）的「完整快照」口径。
 //
 // 与 Node `utils/settingsExport.ts`、Worker `utils/settingsExport.ts` 逐字一致：
-// 先铺一遍全部 47 个可写设置键的**生效默认值**，再用库里的值覆盖，最后把敏感键置空。
+// 先铺一遍全部 50 个可写设置键的**生效默认值**，再用库里的值覆盖，最后把敏感键置空。
 // 口径的唯一事实来源是 `doc/vectors/settings-export-v1.json`（三端读同一份）。
 //
 // 表情是唯一的跨键回落：`emoji_cdn_urls` 为空时实际生效的是「旧单地址键
@@ -68,7 +68,11 @@ var settingsExportDefaults = map[string]string{
 	"emoji_enabled":                  "true",
 	"emoji_cdn_url":                  "",
 	// 表情来源默认列表（JSON 数组字符串）：与 DefaultEmojiCDN 一致
-	"emoji_cdn_urls":              `["` + DefaultEmojiCDN + `"]`,
+	"emoji_cdn_urls": `["` + DefaultEmojiCDN + `"]`,
+	// 评论区头像来源（见 doc/avatar.md）：缺省开启并使用内置默认源
+	"avatar_enabled":              "true",
+	"avatar_source":               "default",
+	"avatar_custom_url":           "",
 	"link_security_enabled":       "false",
 	"link_dormant_days":           "30",
 	"link_sync_enabled":           "false",

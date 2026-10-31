@@ -155,6 +155,18 @@ func ResolveNotifyEmailFromSettings() string {
 	return ResolveNotifyEmail(GetSetting(NotifyEmailKey), ResolveAdminEmailsFromSettings())
 }
 
+// ResolveAdminEmailsFromMap 从设置快照解析管理员列表（含旧键回落）。
+//
+// 公开评论列表用 `GetAllSettings()` 取一次快照后走这里，避免逐键查库（见 comment.go）。
+func ResolveAdminEmailsFromMap(settings map[string]string) []string {
+	return ResolveAdminEmails(settings[AdminEmailsKey], settings[AdminEmailKey])
+}
+
+// ResolveNotifyEmailFromMap 从设置快照解析通知收件人（含回落列表第一个）。
+func ResolveNotifyEmailFromMap(settings map[string]string) string {
+	return ResolveNotifyEmail(settings[NotifyEmailKey], ResolveAdminEmailsFromMap(settings))
+}
+
 // ValidateAdminEmails 写入路径校验（严格）。通过时返回**归一化去重后**的 JSON 数组
 // 字符串（写入路径存的就是它），否则返回错误信息。
 func ValidateAdminEmails(raw string) (string, string) {

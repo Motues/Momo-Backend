@@ -763,3 +763,71 @@ describe('POST /admin/settings/test-email', () => {
 		expect(sentMails[0].to).toBe('a@x.com');
 	});
 });
+
+describe('PUT /admin/settings —— 头像来源（doc/avatar.md）', () => {
+	it('非法来源 / 非法模板整批拒绝', async () => {
+		for (const [key, value] of [
+			['avatar_source', 'github'],
+			['avatar_enabled', 'yes'],
+			['avatar_custom_url', 'javascript:alert(1)'],
+			['avatar_custom_url', 'https://x/{foo}'],
+			['avatar_custom_url', 'https://x/\n{hash}'],
+		]) {
+			const res = await api('/admin/settings', {
+				method: 'PUT',
+				headers: authed(),
+				body: { site_name: '不应写入', [key]: value },
+			});
+			expect(res.status, `${key}=${value}`).toBe(400);
+			expect(await rawSetting(key), `${key}=${value}`).toBeNull();
+			expect(await rawSetting('site_name'), `${key}=${value}`).toBeNull();
+		}
+	});
+
+	it('选择 custom 但未填地址返回 400', async () => {
+		const res = await api('/admin/settings', {
+			method: 'PUT',
+			headers: authed(),
+			body: { avatar_source: 'custom' },
+		});
+		expect(res.status).toBe(400);
+		expect(res.body.message).toBe('选择自定义头像来源时必须填写头像地址');
+		expect(await rawSetting('avatar_source')).toBeNull();
+	});
+
+	it('合法写入后归一化（开关小写、来源小写、模板 trim），type=avatar 可读回', async () => {
+		const res = await api('/admin/settings', {
+			method: 'PUT',
+			headers: authed(),
+			body: {
+				avatar_enabled: ' FALSE ',
+				avatar_source: '  CUSTOM  ',
+				avatar_custom_url: '  https://cdn.example.com/{hash}.png  ',
+			},
+		});
+		expect(res.status).toBe(200);
+		expect(await rawSetting('avatar_enabled')).toBe('false');
+		expect(await rawSetting('avatar_source')).toBe('custom');
+		expect(await rawSetting('avatar_custom_url')).toBe('https://cdn.example.com/{hash}.png');
+
+		const read = await api('/admin/settings?type=avatar', { headers: authed() });
+		expect(read.body.data.avatar_enabled).toBe('false');
+		expect(read.body.data.avatar_source).toBe('custom');
+		expect(read.body.data.avatar_custom_url).toBe('https://cdn.example.com/{hash}.png');
+	});
+
+	it('切回 default 时可同时清空模板', async () => {
+		await seedSettings({
+			avatar_source: 'custom',
+			avatar_custom_url: 'https://cdn.example.com/{hash}',
+		});
+		const res = await api('/admin/settings', {
+			method: 'PUT',
+			headers: authed(),
+			body: { avatar_source: 'default', avatar_custom_url: '' },
+		});
+		expect(res.status).toBe(200);
+		expect(await rawSetting('avatar_source')).toBe('default');
+		expect(await rawSetting('avatar_custom_url')).toBe('');
+	});
+});

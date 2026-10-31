@@ -83,7 +83,7 @@ func TestGetSettingsTypeGroups(t *testing.T) {
 		"email_password": "p", "email_secure": "true", "email_verify_enabled": "true",
 		"verify_base_url": "https://x.com", "reply_template": "回复模板", "notification_template": "通知模板",
 		"mail_log_retention_days": "30",
-		"allow_origin": "https://a.com", "admin_comment_key": "k", "admin_comment_key_enabled": "true",
+		"allow_origin":            "https://a.com", "admin_comment_key": "k", "admin_comment_key_enabled": "true",
 		"ip_blacklist": `[]`, "email_blacklist": `[]`,
 		"comment_verify_enabled": "true", "comment_verify_difficulty": "12", "trust_proxy": "false",
 		"comment_verify_domain_enabled": "false",
@@ -589,4 +589,68 @@ func mustJSONString(t *testing.T, s string) string {
 		t.Fatalf("编码 JSON 字符串失败: %v", err)
 	}
 	return string(b)
+}
+
+// ---------------------------------------------------------------------------
+// PUT /admin/settings —— 头像来源（doc/avatar.md）
+// ---------------------------------------------------------------------------
+
+func TestUpdateSettingsAvatarSource(t *testing.T) {
+	resetState(t)
+	token := adminToken(t)
+
+	// 非法来源 / 非法模板：整批拒绝，不落库
+	for _, tc := range []struct {
+		body string
+		want string
+	}{
+		{`{"site_name":"不应写入","avatar_source":"github"}`, utils.AvatarErrBadSource},
+		{`{"site_name":"不应写入","avatar_enabled":"yes"}`, utils.AvatarErrBadEnabled},
+		{`{"site_name":"不应写入","avatar_custom_url":"javascript:alert(1)"}`, utils.AvatarErrBadScheme},
+		{`{"site_name":"不应写入","avatar_custom_url":"https://x/{foo}"}`, utils.AvatarErrBadPlaceholder + "：{foo}"},
+		{`{"avatar_source":"custom"}`, utils.AvatarErrEmptyCustom},
+	} {
+		w := callWithToken(t, "PUT", "/admin/settings", tc.body, token)
+		requireStatus(t, w, 400)
+		var resp struct {
+			Message string `json:"message"`
+		}
+		decodeInto(t, w, &resp)
+		if resp.Message != tc.want {
+			t.Errorf("body=%s message 期望 %q，实际 %q", tc.body, tc.want, resp.Message)
+		}
+	}
+	if got := utils.GetSetting("site_name"); got != "" {
+		t.Errorf("校验失败时整批不落库，site_name 实际 %q", got)
+	}
+
+	// 合法写入：开关转小写、来源转小写、模板 trim
+	w := callWithToken(t, "PUT", "/admin/settings",
+		`{"avatar_enabled":" FALSE ","avatar_source":"  CUSTOM  ","avatar_custom_url":"  https://cdn.example.com/{hash}  "}`, token)
+	requireStatus(t, w, 200)
+	if got := utils.GetSetting("avatar_enabled"); got != "false" {
+		t.Errorf("avatar_enabled 期望 false，实际 %q", got)
+	}
+	if got := utils.GetSetting("avatar_source"); got != "custom" {
+		t.Errorf("avatar_source 期望 custom，实际 %q", got)
+	}
+	if got := utils.GetSetting("avatar_custom_url"); got != "https://cdn.example.com/{hash}" {
+		t.Errorf("avatar_custom_url 未 trim，实际 %q", got)
+	}
+
+	// 分组与读回（email_enabled 的默认值始终附带，与其它分组的既有行为一致）
+	var payload settingsPayload
+	decodeInto(t, callWithToken(t, "GET", "/admin/settings?type=avatar", "", token), &payload)
+	if len(payload.Data) != 4 {
+		t.Errorf("type=avatar 应只返回三个头像键（+ email_enabled 默认值），实际 %v", payload.Data)
+	}
+	if payload.Data["avatar_enabled"] != "false" {
+		t.Errorf("GET avatar_enabled 期望 false，实际 %q", payload.Data["avatar_enabled"])
+	}
+	if payload.Data["avatar_source"] != "custom" {
+		t.Errorf("GET avatar_source 期望 custom，实际 %q", payload.Data["avatar_source"])
+	}
+	if payload.Data["avatar_custom_url"] != "https://cdn.example.com/{hash}" {
+		t.Errorf("GET avatar_custom_url 期望模板，实际 %q", payload.Data["avatar_custom_url"])
+	}
 }

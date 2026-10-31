@@ -1,6 +1,15 @@
 import { Context } from 'hono';
 import { Bindings } from '../../bindings';
 import { getAllSettings, getSetting, setSetting } from '../../utils/settings';
+import {
+  AVATAR_CUSTOM_URL_KEY,
+  AVATAR_ENABLED_KEY,
+  AVATAR_SOURCE_KEY,
+  normalizeAvatarCustomUrl,
+  normalizeAvatarEnabled,
+  normalizeAvatarSource,
+  validateAvatarSettings,
+} from '../../utils/avatar';
 import { sendTestEmail } from '../../utils/email';
 import { isValidIpBlacklistJson } from '../../utils/security';
 import { validateSpamSettings } from '../../utils/spam';
@@ -28,8 +37,7 @@ import {
   MAIL_LOG_RETENTION_KEY,
   resolveMailLogRetentionDays,
   validateMailLogRetentionDays,
-} from '../../utils/mailLog';
-import {
+} from '../../utils/mailLog';import {
   EMAIL_VERIFY_ENABLED_KEY,
   VERIFY_BASE_URL_KEY,
   hasApiUrlDependencyKey,
@@ -84,6 +92,10 @@ const ALLOWED_SETTINGS = new Set([
   "emoji_enabled",
   "emoji_cdn_url",
   "emoji_cdn_urls",
+  // 评论区头像来源：开关 + 预设 / 自定义 URL 模板（见 doc/avatar.md）
+  "avatar_enabled",
+  "avatar_source",
+  "avatar_custom_url",
   // 链接安全审查：休眠链接 + 历史链接批量更新 + 休眠提醒邮件（见 doc/link_security.md）
   "link_security_enabled",
   "link_dormant_days",
@@ -98,6 +110,8 @@ const SETTINGS_GROUPS: Record<string, string[]> = {
   account: ["admin_name"],
   // 表情设置：启用开关 + OwO 格式的表情来源地址（数组 + 兼容用的旧单地址）
   emoji: ["emoji_cdn_url", "emoji_cdn_urls", "emoji_enabled"],
+  // 头像设置：开关 + 来源 + 自定义 URL 模板
+  avatar: ["avatar_enabled", "avatar_source", "avatar_custom_url"],
   // 链接安全审查：休眠链接 + 历史链接批量更新 + 休眠提醒邮件
   link: ["link_security_enabled", "link_dormant_days", "link_sync_enabled", "link_dormant_notice_enabled"],
 };
@@ -177,6 +191,24 @@ export const updateSettings = async (c: Context<{ Bindings: Bindings }>) => {
     emojiCdnUrlsJson = JSON.stringify(result.urls);
   }
 
+  // 头像来源（口径见 doc/avatar.md 第 6 节）：开关取值 + 来源 + 模板 + 跨键约束
+  if (AVATAR_ENABLED_KEY in body || AVATAR_SOURCE_KEY in body || AVATAR_CUSTOM_URL_KEY in body) {
+    const avatarError = validateAvatarSettings(
+      {
+        enabled: AVATAR_ENABLED_KEY in body ? body[AVATAR_ENABLED_KEY] : undefined,
+        source: AVATAR_SOURCE_KEY in body ? body[AVATAR_SOURCE_KEY] : undefined,
+        customUrl: AVATAR_CUSTOM_URL_KEY in body ? body[AVATAR_CUSTOM_URL_KEY] : undefined,
+      },
+      {
+        source: await getSetting(c.env, AVATAR_SOURCE_KEY),
+        customUrl: await getSetting(c.env, AVATAR_CUSTOM_URL_KEY),
+      }
+    );
+    if (avatarError) {
+      return c.json({ code: 400, message: avatarError }, 400);
+    }
+  }
+
   // 链接安全审查（口径见 doc/link_security.md）：开关只接受 true/false，天数必须是 1–3650 的整数
   const linkError = validateLinkSecuritySettings(body);
   if (linkError) {
@@ -236,6 +268,19 @@ export const updateSettings = async (c: Context<{ Bindings: Bindings }>) => {
       }
       if (key === "emoji_cdn_urls") {
         await setSetting(c.env, key, emojiCdnUrlsJson ?? '[]');
+        continue;
+      }
+      // 头像来源：存归一化后的开关、来源值（空串 → default）与 trim 后的模板
+      if (key === AVATAR_ENABLED_KEY) {
+        await setSetting(c.env, key, normalizeAvatarEnabled(value));
+        continue;
+      }
+      if (key === AVATAR_SOURCE_KEY) {
+        await setSetting(c.env, key, normalizeAvatarSource(String(value)));
+        continue;
+      }
+      if (key === AVATAR_CUSTOM_URL_KEY) {
+        await setSetting(c.env, key, normalizeAvatarCustomUrl(value));
         continue;
       }
       if (key === ADMIN_EMAILS_KEY) {

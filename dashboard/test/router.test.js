@@ -17,6 +17,7 @@ const EXPECTED_ROUTES = [
 	{ path: '/settings/account', name: 'AccountSettings', file: 'AccountSettings.vue', auth: true },
 	{ path: '/settings/data', name: 'DataManagement', file: 'DataManagement.vue', auth: true },
 	{ path: '/settings/emoji', name: 'EmojiSettings', file: 'EmojiSettings.vue', auth: true },
+	{ path: '/settings/avatar', name: 'AvatarSettings', file: 'AvatarSettings.vue', auth: true },
 	{ path: '/settings/link', name: 'LinkSecuritySettings', file: 'LinkSecuritySettings.vue', auth: true },
 	{ path: '/settings/verify', name: 'VerifySettings', file: 'VerifySettings.vue', auth: true },
 ];

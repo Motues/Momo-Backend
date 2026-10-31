@@ -3,7 +3,8 @@ import crypto from "node:crypto";
 import { sql } from "drizzle-orm";
 import router from "../src/middleware/routes";
 import { db } from "../src/orm/client";
-import { setSetting } from "../src/utils/settings";
+import { setSetting, getSetting } from "../src/utils/settings";
+import { DEFAULT_AVATAR_URL } from "../src/utils/avatar";
 import { hashIp, hashOrigin } from "../src/utils/verify";
 import {
   api,
@@ -54,6 +55,9 @@ const TOUCHED_SETTINGS = [
   "verify_base_url",
   "allow_origin",
   "comment_verify_domain_enabled",
+  "avatar_enabled",
+  "avatar_source",
+  "avatar_custom_url",
 ];
 
 /**
@@ -492,6 +496,61 @@ describe("GET /api/comments", () => {
     expect(body.data.comments).toEqual([]);
     expect(body.data.pagination.totalPage).toBe(1);
   });
+
+  it("头像按 avatar_source 生成：custom / qq / 默认回落（doc/avatar.md）", async () => {
+    const slug = "/posts/avatar-source";
+    seedComment({ post_slug: slug, status: "approved", author: "张三", email: "张三@example.com" });
+    seedComment({ post_slug: slug, status: "approved", author: "QQ", email: "12345@qq.com" });
+
+    setSetting("avatar_source", "custom");
+    setSetting(
+      "avatar_custom_url",
+      "https://cdn.example.com/avatar/{hash}.png?email={email}&name={author}"
+    );
+
+    const customBody = await json(
+      await api(`/api/comments?post_slug=${encodeURIComponent(slug)}&nested=false`, { ip: uniqueIp() })
+    );
+    const zhang = customBody.data.comments.find((c: any) => c.author === "张三");
+    const qq = customBody.data.comments.find((c: any) => c.author === "QQ");
+    expect(zhang.avatar).toBe(
+      "https://cdn.example.com/avatar/3f848e3f116808796c3e9bc7a7e2cc44.png?email=%E5%BC%A0%E4%B8%89%40example.com&name=%E5%BC%A0%E4%B8%89"
+    );
+    expect(qq.avatar).toBe(
+      "https://cdn.example.com/avatar/dc7b50de81883385a28ec3d2b0e62fd7.png?email=12345%40qq.com&name=QQ"
+    );
+
+    // qq 预设：QQ 邮箱走 qlogo，其余邮箱回落默认源
+    setSetting("avatar_source", "qq");
+    const qqBody = await json(
+      await api(`/api/comments?post_slug=${encodeURIComponent(slug)}&nested=false`, { ip: uniqueIp() })
+    );
+    const qqResult = qqBody.data.comments.find((c: any) => c.author === "QQ");
+    const zhangResult = qqBody.data.comments.find((c: any) => c.author === "张三");
+    expect(qqResult.avatar).toBe("https://q1.qlogo.cn/g?b=qq&nk=12345&s=100");
+    expect(zhangResult.avatar).toContain("open.motues.top/avatar?");
+  });
+
+  it("avatar_enabled=false：所有评论统一下发内置默认头像（不丢已存配置）", async () => {
+    const slug = "/posts/avatar-disabled";
+    seedComment({ post_slug: slug, status: "approved", author: "张三", email: "张三@example.com" });
+    seedComment({ post_slug: slug, status: "approved", author: "QQ", email: "12345@qq.com" });
+    setSetting("avatar_source", "custom");
+    setSetting("avatar_custom_url", "https://cdn.example.com/{hash}");
+    setSetting("avatar_enabled", "false");
+
+    const body = await json(
+      await api(`/api/comments?post_slug=${encodeURIComponent(slug)}&nested=false`, { ip: uniqueIp() })
+    );
+    expect(body.data.comments).toHaveLength(2);
+    for (const comment of body.data.comments) {
+      expect(comment.avatar).toBe(DEFAULT_AVATAR_URL);
+    }
+    // 关闭只影响下发结果，来源配置仍然保留
+    expect(await getSetting("avatar_source")).toBe("custom");
+    expect(await getSetting("avatar_custom_url")).toBe("https://cdn.example.com/{hash}");
+  });
+
 
   it("默认 nested=true，回复被挂到父评论下", async () => {
     const slug = "/posts/nested";

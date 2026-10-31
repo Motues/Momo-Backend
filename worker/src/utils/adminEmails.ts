@@ -1,5 +1,5 @@
 import { Bindings } from '../bindings';
-import { getSetting } from './settings';
+import { getAllSettings } from './settings';
 
 /**
  * 多管理员邮箱与通知收件人（契约 v1）。
@@ -204,14 +204,22 @@ export async function adminEmailHashes(admins: string[]): Promise<string[]> {
 	return await Promise.all(admins.map((email) => sha256Hex(email)));
 }
 
-/** 从数据库读取并解析管理员配置 */
-export async function getAdminConfig(env: Bindings): Promise<AdminConfig> {
-	const [storedAdmins, legacy, notify] = await Promise.all([
-		getSetting(env, ADMIN_EMAILS_KEY),
-		getSetting(env, ADMIN_EMAIL_KEY),
-		getSetting(env, NOTIFY_EMAIL_KEY),
-	]);
-	return resolveAdminConfig(storedAdmins, legacy, notify);
+/**
+ * 从数据库读取并解析管理员配置。
+ *
+ * `snapshot` 用于请求内共享的设置快照（一次 `getAllSettings`）：公开评论列表原本
+ * 逐键查 3 次，传入快照后不再产生额外往返。
+ */
+export async function getAdminConfig(
+	env: Bindings,
+	snapshot?: Record<string, string>
+): Promise<AdminConfig> {
+	const settings = snapshot ?? (await getAllSettings(env));
+	return resolveAdminConfig(
+		settings[ADMIN_EMAILS_KEY] ?? null,
+		settings[ADMIN_EMAIL_KEY] ?? null,
+		settings[NOTIFY_EMAIL_KEY] ?? null
+	);
 }
 
 /** 只读取解析后的通知收件人（列表为空时为空串） */

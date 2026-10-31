@@ -102,6 +102,8 @@ func (h *CommentHandler) GetSettings(c *gin.Context) {
 		"account":  {"admin_name"},
 		// 表情设置：是否启用 + OwO 来源地址数组（外加兼容用的旧单地址键，见 doc/emoji.md）
 		"emoji": {"emoji_enabled", "emoji_cdn_urls", "emoji_cdn_url"},
+		// 头像设置：开关 + 来源 + 自定义 URL 模板（见 doc/avatar.md）
+		"avatar": {"avatar_enabled", "avatar_source", "avatar_custom_url"},
 		// 链接安全审查：休眠链接 + 历史链接批量更新 + 休眠提醒邮件（见 doc/link_security.md）
 		"link": {"link_security_enabled", "link_dormant_days", "link_sync_enabled", "link_dormant_notice_enabled"},
 	}
@@ -360,6 +362,10 @@ func (h *CommentHandler) ListAllComments(c *gin.Context) {
 	}
 
 	// 4. 构造响应数据 (处理时间格式及字段映射)
+	// 后台列表的头像**不受 avatar_enabled 影响**：开关只约束访客可见结果，管理面板用它识别评论者；
+	// 关闭头像时也不该把同一段 340 字符的内联 SVG 塞进每一行。来源配置与公开列表同一套。
+	settings := utils.GetAllSettings()
+	avatarConfig := utils.ResolveAvatarConfig(settings[utils.AvatarSourceKey], settings[utils.AvatarCustomURLKey])
 	respComments := make([]model.AdminCommentResponse, 0)
 	for _, comm := range comments {
 		respComments = append(respComments, model.AdminCommentResponse{
@@ -369,6 +375,7 @@ func (h *CommentHandler) ListAllComments(c *gin.Context) {
 			Author:      comm.Author,
 			Email:       comm.Email,
 			URL:         comm.URL,
+			Avatar:      utils.BuildAvatarURL(avatarConfig, comm.Email, comm.Author),
 			IPAddress:   comm.IPAddress,
 			OS:          comm.OS,
 			Browser:     comm.Browser,
@@ -879,6 +886,13 @@ func (h *CommentHandler) GetUserComments(c *gin.Context) {
 		totalPage = 0
 	}
 
+	// 后台头像不受 avatar_enabled 影响（开关只约束访客可见结果），来源配置与公开列表同一套
+	settings := utils.GetAllSettings()
+	avatarConfig := utils.ResolveAvatarConfig(settings[utils.AvatarSourceKey], settings[utils.AvatarCustomURLKey])
+	for _, comm := range comments {
+		comm.Avatar = utils.BuildAvatarURL(avatarConfig, comm.Email, comm.Author)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"code":    200,
 		"message": "User comments fetched successfully",
@@ -956,6 +970,37 @@ func normalizeSettingsWrite(body map[string]string) (map[string]string, string) 
 		normalized["emoji_cdn_urls"] = value
 	}
 
+	// 头像来源（doc/avatar.md 第 6 节）：来源取值 + 模板协议/长度/占位符 +
+	// 「custom 必须有模板」跨键约束；三端错误文案一致
+	avatarInput := utils.AvatarSettingsInput{}
+	if raw, ok := body[utils.AvatarEnabledKey]; ok {
+		avatarInput.Enabled = &raw
+	}
+	if raw, ok := body[utils.AvatarSourceKey]; ok {
+		avatarInput.Source = &raw
+	}
+	if raw, ok := body[utils.AvatarCustomURLKey]; ok {
+		avatarInput.CustomURL = &raw
+	}
+	if avatarInput.Enabled != nil || avatarInput.Source != nil || avatarInput.CustomURL != nil {
+		if msg := utils.ValidateAvatarSettings(
+			avatarInput,
+			utils.GetSetting(utils.AvatarSourceKey),
+			utils.GetSetting(utils.AvatarCustomURLKey),
+		); msg != "" {
+			return nil, msg
+		}
+	}
+	if avatarInput.Enabled != nil {
+		normalized[utils.AvatarEnabledKey] = utils.NormalizeAvatarEnabled(*avatarInput.Enabled)
+	}
+	if avatarInput.Source != nil {
+		normalized[utils.AvatarSourceKey] = utils.NormalizeAvatarSource(*avatarInput.Source)
+	}
+	if avatarInput.CustomURL != nil {
+		normalized[utils.AvatarCustomURLKey] = utils.NormalizeAvatarCustomURL(*avatarInput.CustomURL)
+	}
+
 	// 管理员邮箱：同一次请求里若同时提交了 admin_emails，notify_email 必须用**新列表**判定
 	admins := utils.ResolveAdminEmails(utils.GetSetting(utils.AdminEmailsKey), utils.GetSetting(utils.AdminEmailKey))
 	if raw, ok := body[utils.AdminEmailsKey]; ok {
@@ -1025,7 +1070,7 @@ func normalizeSettingsWrite(body map[string]string) (map[string]string, string) 
 
 // ExportSettings 导出系统设置（含 admin_name 与置空后的 email_password/admin_comment_key，不含 admin_password）
 //
-// 导出的是**完整快照**：全部 47 个可写设置键都会出现，库里没有的键按生效默认值补全
+// 导出的是**完整快照**：全部 50 个可写设置键都会出现，库里没有的键按生效默认值补全
 // （口径见 utils/settings_export.go 与 doc/vectors/settings-export-v1.json）。
 func (h *CommentHandler) ExportSettings(c *gin.Context) {
 	// 完整快照：先铺全部键的生效默认值，再用库里的值覆盖，最后置空敏感键
@@ -1206,21 +1251,21 @@ func (h *CommentHandler) ImportSettings(c *gin.Context) {
 	allowList := map[string]bool{
 		"site_name": true, "admin_email": true, "admin_emails": true, "notify_email": true, "admin_name": true,
 		"smtp_host": true, "smtp_port": true, "email_user": true, "email_password": true, "email_secure": true,
-		"admin_comment_key":              true,
-		"ip_blacklist":                   true,
-		"email_blacklist":                true,
-		"blogger_badge_enabled":          true,
-		"blogger_badge_text":             true,
-		"placeholder_name":               true,
-		"placeholder_email":              true,
-		"placeholder_content":            true,
-		"placeholder_url":                true,
-		"email_verify_enabled":           true,
-		"verify_base_url":                true,
+		"admin_comment_key":     true,
+		"ip_blacklist":          true,
+		"email_blacklist":       true,
+		"blogger_badge_enabled": true,
+		"blogger_badge_text":    true,
+		"placeholder_name":      true,
+		"placeholder_email":     true,
+		"placeholder_content":   true,
+		"placeholder_url":       true,
+		"email_verify_enabled":  true,
+		"verify_base_url":       true,
 		// 外发邮件日志保留天数（非敏感）：0 = 永久保留
-		"mail_log_retention_days": true,
-		"comment_auto_approve":    true,
-		"comment_spam_keywords":   true,
+		"mail_log_retention_days":        true,
+		"comment_auto_approve":           true,
+		"comment_spam_keywords":          true,
 		"comment_spam_max_links":         true,
 		"comment_spam_min_length":        true,
 		"comment_spam_duplicate_window":  true,
@@ -1237,6 +1282,8 @@ func (h *CommentHandler) ImportSettings(c *gin.Context) {
 		"reply_template": true, "notification_template": true,
 		// 表情设置：是否启用 + 来源地址数组（+ 兼容用的旧单地址键），非敏感，正常导入
 		"emoji_cdn_urls": true, "emoji_cdn_url": true, "emoji_enabled": true,
+		// 评论区头像来源：开关 + 两个非敏感键（见 doc/avatar.md）
+		"avatar_enabled": true, "avatar_source": true, "avatar_custom_url": true,
 		// 链接安全审查：四个非敏感开关/阈值
 		"link_security_enabled": true, "link_dormant_days": true, "link_sync_enabled": true,
 		"link_dormant_notice_enabled": true,

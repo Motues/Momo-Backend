@@ -17,7 +17,7 @@ function checkAuth(c: Context): boolean {
 
 // 导出系统设置（含 admin_name；不含 admin_password/comment_verify_secret；敏感字段置空）
 //
-// 导出的是**完整快照**：全部 47 个可写设置键都会出现，库里没有的键按生效默认值补全
+// 导出的是**完整快照**：全部 50 个可写设置键都会出现，库里没有的键按生效默认值补全
 // （口径见 utils/settingsExport.ts 与 doc/vectors/settings-export-v1.json）。
 // 这样备份能看出「没改过的设置」实际是什么（例如表情是否启用、来源是什么）。
 export async function exportSettings(c: Context): Promise<Response> {

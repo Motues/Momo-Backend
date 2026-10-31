@@ -9,7 +9,7 @@ import {
 /**
  * 系统设置导出的跨语言固定向量验收（与 Node / Go 读同一份 fixture）。
  *
- * 导出是「完整快照」：47 个可写设置键全都要出现，缺的键按生效默认值补全。
+ * 导出是「完整快照」：50 个可写设置键全都要出现，缺的键按生效默认值补全。
  * 用 import 而不是 node:fs —— 测试跑在 workerd 里，vitest 会把 JSON 打包进来。
  */
 
@@ -18,7 +18,7 @@ const DEFAULT_EMOJI_URLS = JSON.stringify(['https://open.motues.top/emoji/owo.js
 describe('vectors/settings-export-v1 — 默认值表', () => {
 	it('默认值表与 fixture 逐键一致（不多不少）', () => {
 		expect(SETTINGS_EXPORT_DEFAULTS).toEqual(fixture.defaults);
-		expect(Object.keys(SETTINGS_EXPORT_DEFAULTS).length).toBe(47);
+		expect(Object.keys(SETTINGS_EXPORT_DEFAULTS).length).toBe(50);
 	});
 
 	it('敏感键与 fixture 一致', () => {
@@ -27,11 +27,13 @@ describe('vectors/settings-export-v1 — 默认值表', () => {
 });
 
 describe('vectors/settings-export-v1 — 完整快照合成', () => {
-	it('空库导出全部 47 个键，值等于默认值表（表情也能看到）', () => {
+	it('空库导出全部 50 个键，值等于默认值表（表情也能看到）', () => {
 		const { settings, sensitiveOmitted } = buildExportedSettings({});
-		expect(Object.keys(settings).length).toBe(47);
+		expect(Object.keys(settings).length).toBe(50);
 		expect(settings).toEqual(fixture.defaults);
 		expect(settings.emoji_enabled).toBe('true');
+		expect(settings.avatar_enabled).toBe('true');
+		expect(settings.avatar_source).toBe('default');
 		expect(settings.emoji_cdn_urls).toBe(DEFAULT_EMOJI_URLS);
 		expect(sensitiveOmitted).toEqual([]);
 	});
@@ -46,7 +48,7 @@ describe('vectors/settings-export-v1 — 完整快照合成', () => {
 		expect(settings.emoji_enabled).toBe('false');
 		expect(settings.emoji_cdn_urls).toBe('["https://cdn.example.com/owo.json"]');
 		expect(settings.smtp_port).toBe('465');
-		expect(Object.keys(settings).length).toBe(47);
+		expect(Object.keys(settings).length).toBe(50);
 	});
 
 	it('表情：缺 emoji_cdn_urls 时导出旧单地址键解析后的列表（不能被默认源覆盖）', () => {

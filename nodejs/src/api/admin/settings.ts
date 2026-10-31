@@ -1,5 +1,14 @@
 import type { Context } from "hono";
-import { getAllSettings, setSetting } from "../../utils/settings";
+import { getAllSettings, getSetting, setSetting } from "../../utils/settings";
+import {
+  AVATAR_CUSTOM_URL_KEY,
+  AVATAR_ENABLED_KEY,
+  AVATAR_SOURCE_KEY,
+  normalizeAvatarCustomUrl,
+  normalizeAvatarEnabled,
+  normalizeAvatarSource,
+  validateAvatarSettings,
+} from "../../utils/avatar";
 import { sendTestEmail } from "../../utils/email";
 import { checkKey, extractToken, isValidIpBlacklistJson } from "../../utils/security";
 import { validateSpamSettings } from "../../utils/spam";
@@ -83,6 +92,10 @@ const ALLOWED_SETTINGS = [
   "emoji_enabled",
   "emoji_cdn_url",
   "emoji_cdn_urls",
+  // 评论区头像来源：开关 + 预设 / 自定义 URL 模板（见 doc/avatar.md）
+  "avatar_enabled",
+  "avatar_source",
+  "avatar_custom_url",
   // 链接安全审查：休眠链接 + 历史链接批量更新 + 休眠提醒邮件（见 doc/link_security.md）
   "link_security_enabled",
   "link_dormant_days",
@@ -98,6 +111,8 @@ const SETTINGS_GROUPS: Record<string, string[]> = {
   account: ["admin_name"],
   // 表情设置：启用开关 + 表情来源列表（外加兼容用的单地址键）
   emoji: ["emoji_enabled", "emoji_cdn_urls", "emoji_cdn_url"],
+  // 头像设置：开关 + 来源 + 自定义 URL 模板
+  avatar: ["avatar_enabled", "avatar_source", "avatar_custom_url"],
   // 链接安全审查：休眠链接 + 历史链接批量更新 + 休眠提醒邮件
   link: ["link_security_enabled", "link_dormant_days", "link_sync_enabled", "link_dormant_notice_enabled"],
 };
@@ -199,6 +214,25 @@ export async function updateSettings(c: Context): Promise<Response> {
     }
   }
 
+  // 头像来源：开关取值 + 来源取值 + 模板协议/长度/占位符 + 「custom 必须有模板」跨键约束
+  // （口径见 doc/avatar.md 第 6 节，三端错误文案一致）
+  if (AVATAR_ENABLED_KEY in body || AVATAR_SOURCE_KEY in body || AVATAR_CUSTOM_URL_KEY in body) {
+    const avatarError = validateAvatarSettings(
+      {
+        enabled: AVATAR_ENABLED_KEY in body ? body[AVATAR_ENABLED_KEY] : undefined,
+        source: AVATAR_SOURCE_KEY in body ? body[AVATAR_SOURCE_KEY] : undefined,
+        customUrl: AVATAR_CUSTOM_URL_KEY in body ? body[AVATAR_CUSTOM_URL_KEY] : undefined,
+      },
+      {
+        source: await getSetting(AVATAR_SOURCE_KEY),
+        customUrl: await getSetting(AVATAR_CUSTOM_URL_KEY),
+      }
+    );
+    if (avatarError) {
+      return c.json({ code: 400, message: avatarError }, 400);
+    }
+  }
+
   // 多管理员邮箱：列表严格校验；通知邮箱必须命中列表
   // （同一次请求里带了 admin_emails 就用新列表判定，否则用库里的当前列表）
   if ("admin_emails" in body) {
@@ -284,6 +318,19 @@ export async function updateSettings(c: Context): Promise<Response> {
       // 表情来源列表：存归一化后的 JSON 数组（trim + 去空）
       if (key === "emoji_cdn_urls") {
         await setSetting(key, normalizeEmojiCdnUrls(value));
+        continue;
+      }
+      // 头像来源：存归一化后的来源值（空串 → default）与 trim 后的模板
+      if (key === AVATAR_ENABLED_KEY) {
+        await setSetting(key, normalizeAvatarEnabled(value));
+        continue;
+      }
+      if (key === AVATAR_SOURCE_KEY) {
+        await setSetting(key, normalizeAvatarSource(value));
+        continue;
+      }
+      if (key === AVATAR_CUSTOM_URL_KEY) {
+        await setSetting(key, normalizeAvatarCustomUrl(value));
         continue;
       }
       // 管理员邮箱列表：存归一化（trim + 小写 + 去重）后的 JSON 数组

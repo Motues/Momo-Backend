@@ -42,21 +42,21 @@ type commentsPayload struct {
 			Limit     int   `json:"limit"`
 			TotalPage int64 `json:"totalPage"`
 		} `json:"pagination"`
-		BloggerBadgeEnabled        string   `json:"blogger_badge_enabled"`
-		BloggerBadgeText           string   `json:"blogger_badge_text"`
-		PlaceholderName            string   `json:"placeholder_name"`
-		PlaceholderEmail           string   `json:"placeholder_email"`
-		PlaceholderContent         string   `json:"placeholder_content"`
-		PlaceholderURL             string   `json:"placeholder_url"`
-		AdminCommentKeyConfigured  string   `json:"admin_comment_key_configured"`
-		AdminEmailHash             string   `json:"admin_email_hash"`
-		AdminEmailHashes           []string `json:"admin_email_hashes"`
-		VerifyEnabled              string   `json:"verify_enabled"`
-		VerifyHoneypot             string   `json:"verify_honeypot"`
-		VerifyVersion              string   `json:"verify_version"`
-		EmojiCdnURL                string   `json:"emoji_cdn_url"`
-		EmojiCdnURLs               []string `json:"emoji_cdn_urls"`
-		EmojiEnabled               string   `json:"emoji_enabled"`
+		BloggerBadgeEnabled       string   `json:"blogger_badge_enabled"`
+		BloggerBadgeText          string   `json:"blogger_badge_text"`
+		PlaceholderName           string   `json:"placeholder_name"`
+		PlaceholderEmail          string   `json:"placeholder_email"`
+		PlaceholderContent        string   `json:"placeholder_content"`
+		PlaceholderURL            string   `json:"placeholder_url"`
+		AdminCommentKeyConfigured string   `json:"admin_comment_key_configured"`
+		AdminEmailHash            string   `json:"admin_email_hash"`
+		AdminEmailHashes          []string `json:"admin_email_hashes"`
+		VerifyEnabled             string   `json:"verify_enabled"`
+		VerifyHoneypot            string   `json:"verify_honeypot"`
+		VerifyVersion             string   `json:"verify_version"`
+		EmojiCdnURL               string   `json:"emoji_cdn_url"`
+		EmojiCdnURLs              []string `json:"emoji_cdn_urls"`
+		EmojiEnabled              string   `json:"emoji_enabled"`
 	} `json:"data"`
 }
 
@@ -1782,5 +1782,75 @@ func TestPostCommentSourceCheck(t *testing.T) {
 		throttled := call(t, "POST", "/api/comments", postCommentBody("/posts/origin-throttle", "a", "a@b.com", "内容"),
 			map[string]string{"Origin": "https://blog.example.com"}, addr)
 		requireStatus(t, throttled, 429)
+	})
+}
+
+func TestGetCommentsAvatarSource(t *testing.T) {
+	t.Run("custom 模板", func(t *testing.T) {
+		resetState(t)
+		setSetting(t, "avatar_source", "custom")
+		setSetting(t, "avatar_custom_url", "https://cdn.example.com/avatar/{hash}.png?email={email}&name={author}")
+		seedComment(t, &model.Comment{PostSlug: "/p", Author: "张三", Email: "张三@example.com", ContentText: "t", ContentHTML: "<p>t</p>", Status: "approved", PubDate: 1000})
+
+		w := callJSON(t, "GET", "/api/comments?post_slug=/p", "")
+		requireStatus(t, w, 200)
+		var payload commentsPayload
+		decodeInto(t, w, &payload)
+		if len(payload.Data.Comments) != 1 {
+			t.Fatalf("期望 1 条评论，实际 %d 条", len(payload.Data.Comments))
+		}
+		want := "https://cdn.example.com/avatar/3f848e3f116808796c3e9bc7a7e2cc44.png?email=%E5%BC%A0%E4%B8%89%40example.com&name=%E5%BC%A0%E4%B8%89"
+		if got := payload.Data.Comments[0].Avatar; got != want {
+			t.Errorf("avatar 期望 %q，实际 %q", want, got)
+		}
+	})
+
+	t.Run("qq 预设与非 QQ 回落", func(t *testing.T) {
+		resetState(t)
+		setSetting(t, "avatar_source", "qq")
+		seedComment(t, &model.Comment{PostSlug: "/p", Author: "QQ", Email: "12345@qq.com", ContentText: "q", ContentHTML: "<p>q</p>", Status: "approved", PubDate: 1000})
+		seedComment(t, &model.Comment{PostSlug: "/p", Author: "普通", Email: "a@b.c", ContentText: "a", ContentHTML: "<p>a</p>", Status: "approved", PubDate: 2000})
+
+		w := callJSON(t, "GET", "/api/comments?post_slug=/p", "")
+		requireStatus(t, w, 200)
+		var payload commentsPayload
+		decodeInto(t, w, &payload)
+		for _, c := range payload.Data.Comments {
+			switch c.Author {
+			case "QQ":
+				if c.Avatar != "https://q1.qlogo.cn/g?b=qq&nk=12345&s=100" {
+					t.Errorf("QQ 头像不符: %q", c.Avatar)
+				}
+			case "普通":
+				if !strings.HasPrefix(c.Avatar, "https://open.motues.top/avatar?name=") {
+					t.Errorf("非 QQ 邮箱应回落默认源: %q", c.Avatar)
+				}
+			}
+		}
+	})
+
+	t.Run("关闭头像统一下发默认头像（保留来源配置）", func(t *testing.T) {
+		resetState(t)
+		setSetting(t, "avatar_enabled", "false")
+		setSetting(t, "avatar_source", "custom")
+		setSetting(t, "avatar_custom_url", "https://cdn.example.com/{hash}")
+		seedComment(t, &model.Comment{PostSlug: "/p", Author: "张三", Email: "张三@example.com", ContentText: "t", ContentHTML: "<p>t</p>", Status: "approved", PubDate: 1000})
+		seedComment(t, &model.Comment{PostSlug: "/p", Author: "QQ", Email: "12345@qq.com", ContentText: "q", ContentHTML: "<p>q</p>", Status: "approved", PubDate: 2000})
+
+		w := callJSON(t, "GET", "/api/comments?post_slug=/p", "")
+		requireStatus(t, w, 200)
+		var payload commentsPayload
+		decodeInto(t, w, &payload)
+		if len(payload.Data.Comments) != 2 {
+			t.Fatalf("期望 2 条评论，实际 %d 条", len(payload.Data.Comments))
+		}
+		for _, c := range payload.Data.Comments {
+			if c.Avatar != utils.DefaultAvatarURL {
+				t.Errorf("关闭头像后应统一下发默认头像，实际 %q", c.Avatar)
+			}
+		}
+		if got := utils.GetSetting("avatar_source"); got != "custom" {
+			t.Errorf("关闭头像不应清空来源配置，实际 %q", got)
+		}
 	})
 }

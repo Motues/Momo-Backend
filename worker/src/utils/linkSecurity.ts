@@ -1,5 +1,5 @@
 import { Bindings } from '../bindings';
-import { getSetting } from './settings';
+import { getAllSettings } from './settings';
 import { toMillis } from './time';
 
 /**
@@ -238,17 +238,20 @@ export interface LinkSecurityConfig {
 	syncEnabled: boolean;
 }
 
-/** 从数据库读取并归一化链接安全设置（开关 fail-closed） */
-export async function resolveLinkSecurityConfig(env: Bindings): Promise<LinkSecurityConfig> {
-	const [securityEnabled, dormantDays, syncEnabled] = await Promise.all([
-		getSetting(env, LINK_SECURITY_ENABLED_KEY),
-		getSetting(env, LINK_DORMANT_DAYS_KEY),
-		getSetting(env, LINK_SYNC_ENABLED_KEY),
-	]);
+/** 从数据库读取并归一化链接安全设置（开关 fail-closed）
+ *
+ * `snapshot` 用于请求内共享的设置快照（一次 `getAllSettings`）：公开评论列表原本
+ * 逐键查 3 次，传入快照后不再产生额外往返。
+ */
+export async function resolveLinkSecurityConfig(
+	env: Bindings,
+	snapshot?: Record<string, string>
+): Promise<LinkSecurityConfig> {
+	const settings = snapshot ?? (await getAllSettings(env));
 	return {
-		securityEnabled: normalizeSwitch(securityEnabled) === 'true',
-		dormantDays: parseDormantDays(dormantDays),
-		syncEnabled: normalizeSwitch(syncEnabled) === 'true',
+		securityEnabled: normalizeSwitch(settings[LINK_SECURITY_ENABLED_KEY] ?? null) === 'true',
+		dormantDays: parseDormantDays(settings[LINK_DORMANT_DAYS_KEY] ?? null),
+		syncEnabled: normalizeSwitch(settings[LINK_SYNC_ENABLED_KEY] ?? null) === 'true',
 	};
 }
 

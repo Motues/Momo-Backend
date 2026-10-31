@@ -266,6 +266,34 @@ describe("utils/content — getResponseCommentAdmin", () => {
     expect(comment.browser).toBe("");
   });
 
+  it("后台头像按来源配置生成，且不受 avatar_enabled 影响", async () => {
+    await setSetting("avatar_enabled", "false");
+    await setSetting("avatar_source", "gravatar");
+    try {
+      const res = await getResponseCommentAdmin(
+        [makeComment({ email: "a@example.com", author: "A" })],
+        1
+      );
+      expect((res.data.comments[0] as any).avatar).toBe(
+        "https://gravatar.com/avatar/b418773a2c51fb9777a1648346fa7394?s=200&d=identicon"
+      );
+    } finally {
+      // 复位，避免影响同文件后面的公开列表用例
+      await setSetting("avatar_enabled", "true");
+      await setSetting("avatar_source", "default");
+    }
+  });
+
+  it("后台头像默认走内置默认源", async () => {
+    const res = await getResponseCommentAdmin(
+      [makeComment({ email: "test@example.com", author: "张三" })],
+      1
+    );
+    expect((res.data.comments[0] as any).avatar).toBe(
+      "https://open.motues.top/avatar?name=55502f40dc8b7c769880b10874abc9d0&mode=cravatar&variant=beam"
+    );
+  });
+
   it("分页：25 条数据 → 3 页，第 3 页 5 条", async () => {
     const comments = makeMany(25);
     const page2 = await getResponseCommentAdmin(comments, 2);

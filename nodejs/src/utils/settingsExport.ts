@@ -7,7 +7,7 @@
  * 再用库里的值覆盖，最后把敏感键置空。
  *
  * 口径的唯一事实来源是 `doc/vectors/settings-export-v1.json`（三端读同一份）：
- *  - `defaults`：47 个键各自的生效默认值（= 各端读取该键时的实际默认行为，
+ *  - `defaults`：50 个键各自的生效默认值（= 各端读取该键时的实际默认行为，
  *    **不是**面板输入框的初值，例如 `email_secure` 缺省时后端视为 `"false"`）；
  *  - `sensitiveBlanked`：导出时统一置空、并登记进 `sensitiveOmitted` 的键。
  *
@@ -81,6 +81,10 @@ export const SETTINGS_EXPORT_DEFAULTS: Readonly<Record<string, string>> = {
   emoji_enabled: "true",
   emoji_cdn_url: "",
   emoji_cdn_urls: JSON.stringify([DEFAULT_EMOJI_CDN_URL]),
+  // 评论区头像来源（见 doc/avatar.md）：缺省走内置默认源
+  avatar_enabled: "true",
+  avatar_source: "default",
+  avatar_custom_url: "",
   // 链接安全审查（见 doc/link_security.md）
   link_security_enabled: "false",
   link_dormant_days: "30",
@@ -89,7 +93,7 @@ export const SETTINGS_EXPORT_DEFAULTS: Readonly<Record<string, string>> = {
 };
 
 export interface ExportedSettings {
-  /** 完整快照：全部 47 个键，敏感键为空串 */
+  /** 完整快照：全部 50 个键，敏感键为空串 */
   settings: Record<string, string>;
   /** 库里确实存过、且会被置空的敏感键 */
   sensitiveOmitted: string[];

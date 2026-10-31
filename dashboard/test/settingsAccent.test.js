@@ -32,6 +32,7 @@ import SecuritySettings from '../src/views/SecuritySettings.vue';
 import LinkSecuritySettings from '../src/views/LinkSecuritySettings.vue';
 import VerifySettings from '../src/views/VerifySettings.vue';
 import EmojiSettings from '../src/views/EmojiSettings.vue';
+import AvatarSettings from '../src/views/AvatarSettings.vue';
 import DataManagement from '../src/views/DataManagement.vue';
 import { createTestRouter, AdminLayoutStub } from './support/harness.js';
 
@@ -96,6 +97,13 @@ const PAGES = [
 		path: '/settings/emoji',
 		hue: 'violet',
 		forbidden: ['text-emerald-500', 'text-blue-500', 'focus:ring-blue-500', 'peer-checked:bg-blue-600'],
+	},
+	{
+		name: '头像设置',
+		component: AvatarSettings,
+		path: '/settings/avatar',
+		hue: 'rose',
+		forbidden: ['text-violet-500', 'text-blue-500', 'focus:ring-blue-500', 'peer-checked:bg-blue-600'],
 	},
 	{
 		name: '数据管理',

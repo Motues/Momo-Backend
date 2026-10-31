@@ -148,7 +148,7 @@ Worker `worker/test/unit/vectors.emoji-v2.test.ts`；接口层（设置写入校
 - `email.valid` / `email.invalid`：邮箱判定（先 `trim` 再匹配，长度 ≤254）；
 - `parse`：读取路径的宽容解析（坏值→`[]`、非字符串与非法邮箱丢弃、去重保序、截断到 10 个）；
 - `resolve`：管理员列表（为空时回落旧键 `admin_email`）与通知收件人（必须命中列表，否则回落第一个）；
-- `errors`：六条写入错误文案（含 `notify_email` 的两条）。
+- `errors`：七条写入错误文案（含 `notify_email` 的两条）。
 
 ### `link-security-v1.json`
 
@@ -206,6 +206,25 @@ Worker `worker/test/unit/vectors.stats-distribution-v1.test.ts`；接口层（�
 动态流的条数与排序）由 `nodejs/test/api.admin.stats.test.ts`、
 `go/internal/handler/http/admin_users_test.go`、`worker/test/api/admin.stats.test.ts` 各自验证。
 
+### `avatar-v1.json`
+
+评论区头像来源契约 v1（见 [`doc/avatar.md`](../avatar.md)）。由 `scripts/gen-avatar-v1-vectors.js` 生成。
+
+- `defaults` / `sources` / `templates` / `placeholders` / `limits`：三个设置键的默认值、五个来源取值、
+  四个预设模板、四个占位符与 500 码点上限；
+- `defaultAvatarUrl`：关闭头像后统一下发的内联 SVG 默认头像（三端常量逐字一致）；
+- `enabled`：`avatar_enabled` 的归一化、生效值（只有 `"false"` 关闭）与非法输入；
+- `errors`：八条写入错误文案（`notString` / `badSource` / `badScheme` / `tooLong` / `controlChar` /
+  `badPlaceholder` / `emptyCustom` / `badEnabled`，其中占位符错误会拼接具体的 `{foo}`）；
+- `validateSource` / `validateCustomUrl`：写入校验的合法输入（含归一化结果）与非法输入；
+- `resolve`：读取路径的 fail-open 归一化（未知来源 / 空或非法模板 → 内置默认源）；
+- `build`：给定来源、模板、邮箱与昵称时生成的最终地址（覆盖哈希、percent-encode、QQ 回落、
+  固定头像与关闭开关时的默认头像）。
+
+三端各自复算：Node `nodejs/test/vectors.avatar-v1.test.ts`、
+Go `go/internal/pkg/utils/avatar_vectors_test.go`、
+Worker `worker/test/unit/vectors.avatar-v1.test.ts`；接口层由公开评论列表测试覆盖。
+
 ### `settings-export-v1.json`
 
 系统设置导出的**完整快照**口径。
@@ -213,7 +232,7 @@ Worker `worker/test/unit/vectors.stats-distribution-v1.test.ts`；接口层（�
 背景：导出过去只输出数据库里真实存在的键，于是从没在面板保存过的设置（典型是表情：
 `emoji_*` 一直走默认值）在备份文件里完全看不到 —— 看不出表情到底开没开、来源是什么。
 
-现在导出会先铺一遍全部 **47 个可写设置键**的生效默认值，再用库里的值覆盖，最后把敏感键置空：
+现在导出会先铺一遍全部 **50 个可写设置键**的生效默认值，再用库里的值覆盖，最后把敏感键置空：
 
 - `defaults`：每个键的**生效默认值**（后端读取时的实际行为，不是面板输入框的初值。
   例如 `email_secure` 缺省是 `"false"`，`email_enabled` / `comment_auto_approve` 缺省是 `"true"`）；
@@ -231,7 +250,7 @@ Worker `worker/test/unit/vectors.stats-distribution-v1.test.ts`；接口层（�
 Go `go/internal/pkg/utils/settings_export_vectors_test.go`、
 Worker `worker/test/unit/vectors.settings-export-v1.test.ts`；接口层由
 `nodejs/test/api.data.test.ts`、`go/internal/handler/http/data_transfer_test.go`、
-`worker/test/api/admin.data.test.ts` 验证「空库导出也是 47 个键」。
+`worker/test/api/admin.data.test.ts` 验证「空库导出也是 50 个键」。
 
 ## 重新生成
 
@@ -252,6 +271,7 @@ node scripts/gen-emoji-v3-vectors.js
 node scripts/gen-admin-emails-vectors.js
 node scripts/gen-link-security-vectors.js
 node scripts/gen-stats-distribution-vectors.js
+node scripts/gen-avatar-v1-vectors.js
 ```
 脚本会打印全部生成值，便于人工核对。生成口径刻意在脚本里**独立复算**（而不是调用实现内部的私有函数），
 这样 fixture 同时也是一次对实现口径的独立复核。

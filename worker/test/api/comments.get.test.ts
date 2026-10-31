@@ -6,6 +6,7 @@ import { api } from '../helpers/http';
 import { createSchema, seedComment, seedSettings, seedTrustedLink, testEnv } from '../helpers/db';
 import { allowRequest } from '../../src/utils/rateLimit';
 import { DEFAULT_LINK_DORMANT_DAYS, DAY_MS } from '../../src/utils/linkSecurity';
+import { DEFAULT_AVATAR_URL } from '../../src/utils/avatar';
 
 const SLUG = '/posts/demo';
 const ADMIN_EMAIL = 'admin@example.com';
@@ -164,6 +165,47 @@ describe('GET /api/comments —— 响应体契约', () => {
 		expect(res.body.data.comments[0].avatar).toBe(
 			'https://open.motues.top/avatar?name=5d60d4e28066df254d5452f92c910092&mode=cravatar&variant=beam'
 		);
+	});
+
+	it('avatar_source=custom：按模板生成（占位符 + percent-encode）', async () => {
+		await seedComment({ post_slug: SLUG, author: '张三', email: '张三@example.com' });
+		await seedSettings({
+			avatar_source: 'custom',
+			avatar_custom_url: 'https://cdn.example.com/avatar/{hash}.png?email={email}&name={author}',
+		});
+		const res = await getComments(`?post_slug=${SLUG}`);
+		expect(res.body.data.comments[0].avatar).toBe(
+			'https://cdn.example.com/avatar/3f848e3f116808796c3e9bc7a7e2cc44.png?email=%E5%BC%A0%E4%B8%89%40example.com&name=%E5%BC%A0%E4%B8%89'
+		);
+	});
+
+	it('avatar_source=qq：QQ 邮箱走 qlogo，其余回落默认源', async () => {
+		await seedComment({ post_slug: SLUG, author: 'QQ', email: '12345@qq.com' });
+		await seedComment({ post_slug: SLUG, author: '普通', email: 'a@b.c' });
+		await seedSettings({ avatar_source: 'qq' });
+		const res = await getComments(`?post_slug=${SLUG}`);
+		const byAuthor = Object.fromEntries(
+			res.body.data.comments.map((comment: any) => [comment.author, comment.avatar])
+		);
+		expect(byAuthor['QQ']).toBe('https://q1.qlogo.cn/g?b=qq&nk=12345&s=100');
+		expect(byAuthor['普通']).toBe(
+			'https://open.motues.top/avatar?name=5d60d4e28066df254d5452f92c910092&mode=cravatar&variant=beam'
+		);
+	});
+
+	it('avatar_enabled=false：所有评论统一下发内置默认头像（不丢已存配置）', async () => {
+		await seedComment({ post_slug: SLUG, author: '张三', email: '张三@example.com' });
+		await seedComment({ post_slug: SLUG, author: 'QQ', email: '12345@qq.com' });
+		await seedSettings({
+			avatar_enabled: 'false',
+			avatar_source: 'custom',
+			avatar_custom_url: 'https://cdn.example.com/{hash}',
+		});
+		const res = await getComments(`?post_slug=${SLUG}`);
+		expect(res.body.data.comments).toHaveLength(2);
+		for (const comment of res.body.data.comments) {
+			expect(comment.avatar).toBe(DEFAULT_AVATAR_URL);
+		}
 	});
 });
 

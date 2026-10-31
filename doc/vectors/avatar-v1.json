@@ -1,0 +1,438 @@
+{
+  "version": 1,
+  "note": "评论区头像来源契约 v1。三个设置键：avatar_enabled（默认开启）、avatar_source（default/gravatar/cravatar/qq/custom）与 avatar_custom_url。预设模板、四个占位符（{hash}/{email}/{author}/{qq}）、八条写入错误文案、读取 fail-open 回落（未知来源/空或非法模板/qq 来源下非 QQ 邮箱 → 内置默认源）、以及关闭头像时统一下发的 defaultAvatarUrl。三端必须逐条一致。由 scripts/gen-avatar-v1-vectors.js 生成，请勿手改。",
+  "defaults": {
+    "enabled": "true",
+    "source": "default",
+    "customUrl": ""
+  },
+  "defaultAvatarUrl": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0Ij48cmVjdCB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHJ4PSIzMiIgZmlsbD0iI2U1ZTdlYiIvPjxjaXJjbGUgY3g9IjMyIiBjeT0iMjQiIHI9IjExIiBmaWxsPSIjOWNhM2FmIi8+PHBhdGggZD0iTTEzIDU3YzAtMTAuNSA4LjUtMTkgMTktMTlzMTkgOC41IDE5IDE5IiBmaWxsPSIjOWNhM2FmIi8+PC9zdmc+",
+  "enabled": {
+    "normalize": [
+      {
+        "value": null,
+        "expect": ""
+      },
+      {
+        "value": "",
+        "expect": ""
+      },
+      {
+        "value": "  TRUE  ",
+        "expect": "true"
+      },
+      {
+        "value": " FALSE ",
+        "expect": "false"
+      },
+      {
+        "value": "garbage",
+        "expect": "garbage"
+      }
+    ],
+    "effective": [
+      {
+        "value": null,
+        "expect": true
+      },
+      {
+        "value": "",
+        "expect": true
+      },
+      {
+        "value": "true",
+        "expect": true
+      },
+      {
+        "value": "false",
+        "expect": false
+      },
+      {
+        "value": "  FALSE  ",
+        "expect": false
+      },
+      {
+        "value": "garbage",
+        "expect": true
+      }
+    ],
+    "invalid": [
+      {
+        "value": "yes",
+        "error": "avatar_enabled 只能是 true 或 false"
+      },
+      {
+        "value": "1",
+        "error": "avatar_enabled 只能是 true 或 false"
+      }
+    ]
+  },
+  "limits": {
+    "maxUrlLen": 500
+  },
+  "sources": [
+    "default",
+    "gravatar",
+    "cravatar",
+    "qq",
+    "custom"
+  ],
+  "templates": {
+    "default": "https://open.motues.top/avatar?name={hash}&mode=cravatar&variant=beam",
+    "gravatar": "https://gravatar.com/avatar/{hash}?s=200&d=identicon",
+    "cravatar": "https://cravatar.cn/avatar/{hash}?s=200&d=identicon",
+    "qq": "https://q1.qlogo.cn/g?b=qq&nk={qq}&s=100"
+  },
+  "placeholders": [
+    "{hash}",
+    "{email}",
+    "{author}",
+    "{qq}"
+  ],
+  "errors": {
+    "notString": "avatar_custom_url 必须是字符串",
+    "badSource": "avatar_source 只能是 default / gravatar / cravatar / qq / custom",
+    "badScheme": "avatar_custom_url 只允许 http/https 地址",
+    "tooLong": "avatar_custom_url 不能超过 500 个字符",
+    "controlChar": "avatar_custom_url 不能包含控制字符",
+    "badPlaceholder": "avatar_custom_url 包含不支持的占位符：{foo}",
+    "emptyCustom": "选择自定义头像来源时必须填写头像地址",
+    "badEnabled": "avatar_enabled 只能是 true 或 false"
+  },
+  "validateSource": {
+    "valid": [
+      {
+        "value": null,
+        "expect": "default"
+      },
+      {
+        "value": "",
+        "expect": "default"
+      },
+      {
+        "value": "   ",
+        "expect": "default"
+      },
+      {
+        "value": "  GRAVATAR  ",
+        "expect": "gravatar"
+      },
+      {
+        "value": "Custom",
+        "expect": "custom"
+      },
+      {
+        "value": " qq ",
+        "expect": "qq"
+      }
+    ],
+    "invalid": [
+      {
+        "value": "github",
+        "error": "avatar_source 只能是 default / gravatar / cravatar / qq / custom"
+      },
+      {
+        "value": "gravatar2",
+        "error": "avatar_source 只能是 default / gravatar / cravatar / qq / custom"
+      },
+      {
+        "value": "默认",
+        "error": "avatar_source 只能是 default / gravatar / cravatar / qq / custom"
+      }
+    ]
+  },
+  "validateCustomUrl": {
+    "valid": [
+      {
+        "value": null,
+        "expect": ""
+      },
+      {
+        "value": "",
+        "expect": ""
+      },
+      {
+        "value": "   ",
+        "expect": ""
+      },
+      {
+        "value": "  https://cdn.example.com/{hash}  ",
+        "expect": "https://cdn.example.com/{hash}"
+      },
+      {
+        "value": "http://x/{email}?a=1&b=2",
+        "expect": "http://x/{email}?a=1&b=2"
+      },
+      {
+        "value": "https://x/static.png",
+        "expect": "https://x/static.png"
+      }
+    ],
+    "invalid": [
+      {
+        "value": "javascript:alert(1)",
+        "error": "avatar_custom_url 只允许 http/https 地址"
+      },
+      {
+        "value": "data:text/html,{hash}",
+        "error": "avatar_custom_url 只允许 http/https 地址"
+      },
+      {
+        "value": "ftp://x/{hash}",
+        "error": "avatar_custom_url 只允许 http/https 地址"
+      },
+      {
+        "value": "https://x/{foo}",
+        "error": "avatar_custom_url 包含不支持的占位符：{foo}"
+      },
+      {
+        "value": "https://x/\n{hash}",
+        "error": "avatar_custom_url 不能包含控制字符"
+      },
+      {
+        "value": "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "error": "avatar_custom_url 不能超过 500 个字符"
+      }
+    ]
+  },
+  "resolve": [
+    {
+      "name": "未配置 → 内置默认源",
+      "source": null,
+      "customUrl": null,
+      "expect": {
+        "source": "default",
+        "template": "https://open.motues.top/avatar?name={hash}&mode=cravatar&variant=beam"
+      }
+    },
+    {
+      "name": "空串 → 内置默认源",
+      "source": "",
+      "customUrl": "",
+      "expect": {
+        "source": "default",
+        "template": "https://open.motues.top/avatar?name={hash}&mode=cravatar&variant=beam"
+      }
+    },
+    {
+      "name": "大小写/空格归一化",
+      "source": "  GRAVATAR  ",
+      "customUrl": "",
+      "expect": {
+        "source": "gravatar",
+        "template": "https://gravatar.com/avatar/{hash}?s=200&d=identicon"
+      }
+    },
+    {
+      "name": "非 custom 时忽略自定义地址",
+      "source": "cravatar",
+      "customUrl": "https://x/{hash}",
+      "expect": {
+        "source": "cravatar",
+        "template": "https://cravatar.cn/avatar/{hash}?s=200&d=identicon"
+      }
+    },
+    {
+      "name": "qq 预设",
+      "source": "qq",
+      "customUrl": "",
+      "expect": {
+        "source": "qq",
+        "template": "https://q1.qlogo.cn/g?b=qq&nk={qq}&s=100"
+      }
+    },
+    {
+      "name": "合法自定义模板",
+      "source": "custom",
+      "customUrl": "  https://cdn.example.com/{hash}  ",
+      "expect": {
+        "source": "custom",
+        "template": "https://cdn.example.com/{hash}"
+      }
+    },
+    {
+      "name": "custom 但地址为空 → 默认",
+      "source": "custom",
+      "customUrl": "",
+      "expect": {
+        "source": "default",
+        "template": "https://open.motues.top/avatar?name={hash}&mode=cravatar&variant=beam"
+      }
+    },
+    {
+      "name": "custom 但地址非法 → 默认",
+      "source": "custom",
+      "customUrl": "javascript:alert(1)",
+      "expect": {
+        "source": "default",
+        "template": "https://open.motues.top/avatar?name={hash}&mode=cravatar&variant=beam"
+      }
+    },
+    {
+      "name": "未知来源 → 默认",
+      "source": "github",
+      "customUrl": "https://x/{hash}",
+      "expect": {
+        "source": "default",
+        "template": "https://open.motues.top/avatar?name={hash}&mode=cravatar&variant=beam"
+      }
+    },
+    {
+      "name": "custom 地址含非 ASCII 原样保留",
+      "source": "custom",
+      "customUrl": "https://x/头像/{hash}",
+      "expect": {
+        "source": "custom",
+        "template": "https://x/头像/{hash}"
+      }
+    }
+  ],
+  "build": [
+    {
+      "name": "默认源：邮箱归一化（去空格 + 小写）",
+      "source": null,
+      "customUrl": null,
+      "email": "test@example.com",
+      "author": "张三",
+      "expect": "https://open.motues.top/avatar?name=55502f40dc8b7c769880b10874abc9d0&mode=cravatar&variant=beam"
+    },
+    {
+      "name": "默认源：大小写与空格不影响哈希",
+      "source": "default",
+      "customUrl": "",
+      "email": "  Test@Example.COM  ",
+      "author": "任意",
+      "expect": "https://open.motues.top/avatar?name=55502f40dc8b7c769880b10874abc9d0&mode=cravatar&variant=beam"
+    },
+    {
+      "name": "默认源：空邮箱",
+      "source": "default",
+      "customUrl": "",
+      "email": "",
+      "author": "匿名",
+      "expect": "https://open.motues.top/avatar?name=d41d8cd98f00b204e9800998ecf8427e&mode=cravatar&variant=beam"
+    },
+    {
+      "name": "Gravatar",
+      "source": "gravatar",
+      "customUrl": "",
+      "email": "a@b.c",
+      "author": "x",
+      "expect": "https://gravatar.com/avatar/5d60d4e28066df254d5452f92c910092?s=200&d=identicon"
+    },
+    {
+      "name": "Cravatar",
+      "source": "cravatar",
+      "customUrl": "",
+      "email": "a@b.c",
+      "author": "x",
+      "expect": "https://cravatar.cn/avatar/5d60d4e28066df254d5452f92c910092?s=200&d=identicon"
+    },
+    {
+      "name": "QQ 头像",
+      "source": "qq",
+      "customUrl": "",
+      "email": "12345@qq.com",
+      "author": "QQ 用户",
+      "expect": "https://q1.qlogo.cn/g?b=qq&nk=12345&s=100"
+    },
+    {
+      "name": "QQ 头像：邮箱大小写归一化",
+      "source": "qq",
+      "customUrl": "",
+      "email": "12345@QQ.com",
+      "author": "QQ 用户",
+      "expect": "https://q1.qlogo.cn/g?b=qq&nk=12345&s=100"
+    },
+    {
+      "name": "QQ 来源下非 QQ 邮箱回落默认源",
+      "source": "qq",
+      "customUrl": "",
+      "email": "a@b.c",
+      "author": "x",
+      "expect": "https://open.motues.top/avatar?name=5d60d4e28066df254d5452f92c910092&mode=cravatar&variant=beam"
+    },
+    {
+      "name": "自定义模板：四个占位符（含中文与空格）",
+      "source": "custom",
+      "customUrl": "https://cdn.example.com/avatar/{hash}.png?email={email}&name={author}&qq={qq}",
+      "email": "12345@qq.com",
+      "author": "张 三",
+      "expect": "https://cdn.example.com/avatar/dc7b50de81883385a28ec3d2b0e62fd7.png?email=12345%40qq.com&name=%E5%BC%A0%20%E4%B8%89&qq=12345"
+    },
+    {
+      "name": "自定义模板：非 QQ 邮箱不含 {qq}",
+      "source": "custom",
+      "customUrl": "https://cdn.example.com/avatar/{hash}.png?email={email}&name={author}",
+      "email": "张三@example.com",
+      "author": "张 三",
+      "expect": "https://cdn.example.com/avatar/3f848e3f116808796c3e9bc7a7e2cc44.png?email=%E5%BC%A0%E4%B8%89%40example.com&name=%E5%BC%A0%20%E4%B8%89"
+    },
+    {
+      "name": "自定义模板：QQ 邮箱填 {qq}",
+      "source": "custom",
+      "customUrl": "https://cdn.example.com/avatar/{hash}.png?email={email}&name={author}&qq={qq}",
+      "email": "12345@qq.com",
+      "author": "Alice",
+      "expect": "https://cdn.example.com/avatar/dc7b50de81883385a28ec3d2b0e62fd7.png?email=12345%40qq.com&name=Alice&qq=12345"
+    },
+    {
+      "name": "自定义模板：percent-encode 特殊字符",
+      "source": "custom",
+      "customUrl": "https://cdn.example.com/a?email={email}&name={author}",
+      "email": "a+b@example.com",
+      "author": "A&B",
+      "expect": "https://cdn.example.com/a?email=a%2Bb%40example.com&name=A%26B"
+    },
+    {
+      "name": "模板含 {qq} 但非 QQ 邮箱 → 默认源",
+      "source": "custom",
+      "customUrl": "https://cdn.example.com/qq/{qq}",
+      "email": "a@b.c",
+      "author": "x",
+      "expect": "https://open.motues.top/avatar?name=5d60d4e28066df254d5452f92c910092&mode=cravatar&variant=beam"
+    },
+    {
+      "name": "不含占位符的固定头像",
+      "source": "custom",
+      "customUrl": "https://cdn.example.com/static.png",
+      "email": "a@b.c",
+      "author": "x",
+      "expect": "https://cdn.example.com/static.png"
+    },
+    {
+      "name": "非法自定义模板 → 默认源",
+      "source": "custom",
+      "customUrl": "javascript:alert(1)",
+      "email": "a@b.c",
+      "author": "x",
+      "expect": "https://open.motues.top/avatar?name=5d60d4e28066df254d5452f92c910092&mode=cravatar&variant=beam"
+    },
+    {
+      "name": "未知来源 → 默认源",
+      "source": "github",
+      "customUrl": "https://x/{hash}",
+      "email": "a@b.c",
+      "author": "x",
+      "expect": "https://open.motues.top/avatar?name=5d60d4e28066df254d5452f92c910092&mode=cravatar&variant=beam"
+    },
+    {
+      "name": "关闭头像：忽略来源，统一返回内置默认头像",
+      "enabled": false,
+      "source": "custom",
+      "customUrl": "https://cdn.example.com/avatar/{hash}.png?email={email}&name={author}&qq={qq}",
+      "email": "12345@qq.com",
+      "author": "张三",
+      "expect": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0Ij48cmVjdCB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHJ4PSIzMiIgZmlsbD0iI2U1ZTdlYiIvPjxjaXJjbGUgY3g9IjMyIiBjeT0iMjQiIHI9IjExIiBmaWxsPSIjOWNhM2FmIi8+PHBhdGggZD0iTTEzIDU3YzAtMTAuNSA4LjUtMTkgMTktMTlzMTkgOC41IDE5IDE5IiBmaWxsPSIjOWNhM2FmIi8+PC9zdmc+"
+    },
+    {
+      "name": "关闭头像：未知来源同样返回内置默认头像",
+      "enabled": false,
+      "source": "github",
+      "customUrl": "",
+      "email": "a@b.c",
+      "author": "x",
+      "expect": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCIgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0Ij48cmVjdCB3aWR0aD0iNjQiIGhlaWdodD0iNjQiIHJ4PSIzMiIgZmlsbD0iI2U1ZTdlYiIvPjxjaXJjbGUgY3g9IjMyIiBjeT0iMjQiIHI9IjExIiBmaWxsPSIjOWNhM2FmIi8+PHBhdGggZD0iTTEzIDU3YzAtMTAuNSA4LjUtMTkgMTktMTlzMTkgOC41IDE5IDE5IiBmaWxsPSIjOWNhM2FmIi8+PC9zdmc+"
+    }
+  ]
+}

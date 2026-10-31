@@ -2,7 +2,13 @@ import { db, schema } from "./client";
 import { eq, and, inArray, desc, gte, lt, asc, count, sql } from "drizzle-orm";
 import type { AnySQLiteColumn } from "drizzle-orm/sqlite-core";
 import { Comment, CreateCommentInput, rowToComment, rowsToComments, CommentRow } from "../type/prisma";
-import { getSetting } from "../utils/settings";
+import { getAllSettings, getSetting } from "../utils/settings";
+import {
+  AVATAR_CUSTOM_URL_KEY,
+  AVATAR_SOURCE_KEY,
+  buildAvatarUrl,
+  resolveAvatarConfig,
+} from "../utils/avatar";
 import { normalizeEmail } from "../utils/adminEmails";
 import {
   LINK_DORMANT_DAYS_KEY,
@@ -917,6 +923,13 @@ class CommentService {
       .offset(offset)
       .all() as unknown as CommentRow[];
 
+    // 一次取回设置快照解析头像来源（后台列表不受 avatar_enabled 影响）
+    const settings = await getAllSettings();
+    const avatarConfig = resolveAvatarConfig(
+      settings[AVATAR_SOURCE_KEY],
+      settings[AVATAR_CUSTOM_URL_KEY]
+    );
+
     const formattedComments = rows.map((c) => ({
       id: c.id,
       pubDate: new Date(c.pub_date).toISOString(),
@@ -924,6 +937,8 @@ class CommentService {
       author: c.author,
       email: c.email,
       url: c.url || undefined,
+      // 后台头像不受 avatar_enabled 影响（开关只约束访客可见结果），来源配置与公开列表同一套
+      avatar: buildAvatarUrl(avatarConfig, c.email, c.author),
       ipAddress: c.ip_address || "",
       os: c.os || "",
       browser: c.browser || "",

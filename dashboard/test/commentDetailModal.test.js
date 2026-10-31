@@ -175,6 +175,30 @@ describe('CommentDetailModal - 作者链接安全校验', () => {
 	});
 });
 
+describe('CommentDetailModal - 昵称跳转用户评论页', () => {
+	it('有邮箱时昵称是按钮，点击 emit view-user', async () => {
+		const wrapper = mountModal({ comment: makeComment({ author: '李四', email: 'lisi@example.com' }) });
+		const link = wrapper.get('[data-test="detail-author-link"]');
+		expect(link.text()).toBe('李四');
+		await link.trigger('click');
+		expect(wrapper.emitted('view-user')).toEqual([
+			[{ author: '李四', email: 'lisi@example.com' }],
+		]);
+	});
+
+	it('没有邮箱时昵称不是按钮（无法定位用户）', () => {
+		const wrapper = mountModal({ comment: makeComment({ email: '' }) });
+		expect(wrapper.find('[data-test="detail-author-link"]').exists()).toBe(false);
+		expect(wrapper.text()).toContain('无邮箱');
+	});
+
+	it('编辑态不渲染昵称按钮', async () => {
+		const wrapper = mountModal({ comment: makeComment({ email: 'lisi@example.com' }) });
+		await startEditing(wrapper);
+		expect(wrapper.find('[data-test="detail-author-link"]').exists()).toBe(false);
+	});
+});
+
 describe('CommentDetailModal - 编辑流程', () => {
 	it('初始不在编辑态，没有编辑输入框', () => {
 		const wrapper = mountModal();

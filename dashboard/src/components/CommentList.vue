@@ -15,7 +15,13 @@
               data-test="comment-select" @click.stop @change="toggleRow(item.id)"
               class="mt-0.5 h-4 w-4 shrink-0 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
             <div class="flex-1 min-w-0 space-y-1">
-              <span class="font-bold text-sm block truncate text-gray-800">{{ item.author }}</span>
+              <a v-if="item.email" :href="userCommentsHref(item)" data-test="comment-author-link"
+                :title="`查看 ${item.author} 的全部评论`"
+                class="font-bold text-sm block truncate text-gray-800 hover:text-blue-600 hover:underline"
+                @click.prevent.stop="$emit('view-user', { author: item.author, email: item.email })">
+                {{ item.author }}
+              </a>
+              <span v-else class="font-bold text-sm block truncate text-gray-800">{{ item.author }}</span>
               <span class="text-xs block truncate text-gray-400">{{ item.email }}</span>
               <span class="text-[10px] font-mono block text-gray-400">{{ item.ipAddress }}</span>
             </div>
@@ -93,7 +99,13 @@
             </td>
             <td class="px-6 py-4">
               <div class="flex flex-col items-start">
-                <span class="font-bold text-sm max-w-[180px] truncate text-gray-800">{{ item.author }}</span>
+                <a v-if="item.email" :href="userCommentsHref(item)" data-test="comment-author-link"
+                  :title="`查看 ${item.author} 的全部评论`"
+                  class="font-bold text-sm max-w-[180px] truncate text-gray-800 hover:text-blue-600 hover:underline"
+                  @click.prevent.stop="$emit('view-user', { author: item.author, email: item.email })">
+                  {{ item.author }}
+                </a>
+                <span v-else class="font-bold text-sm max-w-[180px] truncate text-gray-800">{{ item.author }}</span>
                 <span class="text-xs max-w-[180px] truncate text-gray-400">{{ item.email }}</span>
                 <span class="text-[10px] mt-1 font-mono text-gray-400">{{ item.ipAddress }}</span>
               </div>
@@ -168,6 +180,7 @@
       @update="(id, status) => $emit('update', id, status)"
       @delete="(id) => $emit('update', id, 'deleted')"
       @edit="(payload) => $emit('edit', payload)"
+      @view-user="(payload) => $emit('view-user', payload)"
     />
   </div>
 </template>
@@ -184,7 +197,7 @@ const props = defineProps({
   /** 批量操作进行中：禁用工具栏按钮 */
   batchLoading: { type: Boolean, default: false },
 });
-const emit = defineEmits(['update', 'page-change', 'edit', 'batch-update', 'filter-slug']);
+const emit = defineEmits(['update', 'page-change', 'edit', 'batch-update', 'filter-slug', 'view-user']);
 
 const showModal = ref(false)
 const selectedComment = ref({})
@@ -240,6 +253,10 @@ const closeModal = () => {
 }
 
 const formatDate = (str) => new Date(str).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+/** 昵称链接：与用户列表「查看评论」共用 /user-comments 页面 */
+const userCommentsHref = (item) =>
+  `/user-comments?author=${encodeURIComponent(item.author || '')}&email=${encodeURIComponent(item.email || '')}`;
 
 const statusStyle = (status) => {
   const map = {

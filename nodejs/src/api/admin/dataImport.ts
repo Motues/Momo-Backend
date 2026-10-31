@@ -1,6 +1,15 @@
 import type { Context } from "hono";
 import { db, schema } from "../../orm/client";
-import { getAllSettings, setSetting } from "../../utils/settings";
+import { getAllSettings, getSetting, setSetting } from "../../utils/settings";
+import {
+  AVATAR_CUSTOM_URL_KEY,
+  AVATAR_ENABLED_KEY,
+  AVATAR_SOURCE_KEY,
+  normalizeAvatarCustomUrl,
+  normalizeAvatarEnabled,
+  normalizeAvatarSource,
+  validateAvatarSettings,
+} from "../../utils/avatar";
 import { checkKey, extractToken, checkContent, sanitizeUrl, sanitizeHtml, isValidIpBlacklistJson } from "../../utils/security";
 import { validateSpamSettings } from "../../utils/spam";
 import { normalizeEmojiCdnUrls, normalizeEmojiEnabled, validateEmojiCdnUrl, validateEmojiCdnUrls, validateEmojiEnabled } from "../../utils/emoji";
@@ -220,6 +229,9 @@ export async function importSettings(c: Context): Promise<Response> {
     "emoji_enabled",
     "emoji_cdn_url",
     "emoji_cdn_urls",
+    "avatar_enabled",
+    "avatar_source",
+    "avatar_custom_url",
     "admin_emails",
     "notify_email",
     "link_security_enabled",
@@ -258,6 +270,31 @@ export async function importSettings(c: Context): Promise<Response> {
     const cdnError = validateEmojiCdnUrls((body as Record<string, unknown>).emoji_cdn_urls);
     if (cdnError) {
       return c.json({ code: 400, message: cdnError }, 400);
+    }
+  }
+
+  // 头像来源：与 PUT /admin/settings 同一套校验（口径见 doc/avatar.md 第 6 节）
+  {
+    const bodyRecord = body as Record<string, unknown>;
+    if (
+      AVATAR_ENABLED_KEY in bodyRecord ||
+      AVATAR_SOURCE_KEY in bodyRecord ||
+      AVATAR_CUSTOM_URL_KEY in bodyRecord
+    ) {
+      const avatarError = validateAvatarSettings(
+        {
+          enabled: AVATAR_ENABLED_KEY in bodyRecord ? bodyRecord[AVATAR_ENABLED_KEY] : undefined,
+          source: AVATAR_SOURCE_KEY in bodyRecord ? bodyRecord[AVATAR_SOURCE_KEY] : undefined,
+          customUrl: AVATAR_CUSTOM_URL_KEY in bodyRecord ? bodyRecord[AVATAR_CUSTOM_URL_KEY] : undefined,
+        },
+        {
+          source: await getSetting(AVATAR_SOURCE_KEY),
+          customUrl: await getSetting(AVATAR_CUSTOM_URL_KEY),
+        }
+      );
+      if (avatarError) {
+        return c.json({ code: 400, message: avatarError }, 400);
+      }
     }
   }
 
@@ -351,6 +388,21 @@ export async function importSettings(c: Context): Promise<Response> {
     // 与 PUT /admin/settings 一致：数组键归一化后落库
     if (key === "emoji_cdn_urls") {
       await setSetting(key, normalizeEmojiCdnUrls(value));
+      updated.push(key);
+      continue;
+    }
+    if (key === AVATAR_ENABLED_KEY) {
+      await setSetting(key, normalizeAvatarEnabled(value));
+      updated.push(key);
+      continue;
+    }
+    if (key === AVATAR_SOURCE_KEY) {
+      await setSetting(key, normalizeAvatarSource(String(value)));
+      updated.push(key);
+      continue;
+    }
+    if (key === AVATAR_CUSTOM_URL_KEY) {
+      await setSetting(key, normalizeAvatarCustomUrl(value));
       updated.push(key);
       continue;
     }

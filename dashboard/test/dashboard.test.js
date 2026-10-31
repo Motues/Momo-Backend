@@ -101,8 +101,24 @@ describe('Dashboard - 批量审核', () => {
 	});
 });
 
-describe('Dashboard - 按文章筛选', () => {
-	it('点击来源文章：请求带 postSlug、地址栏带 slug，并显示可清除的筛选 chip', async () => {
+describe('Dashboard - 昵称跳转用户评论页', () => {
+	it('点击评论昵称跳到 /user-comments 并携带 author + email', async () => {
+		const wrapper = await mountDashboard([
+			makeComment({ id: 1, author: '李四', email: 'lisi@example.com' }),
+		]);
+
+		await wrapper.get('tbody [data-test="comment-author-link"]').trigger('click');
+		await flushPromises();
+
+		const route = wrapper.vm.$router.currentRoute.value;
+		expect(route.path).toBe('/user-comments');
+		expect(route.query).toEqual({ author: '李四', email: 'lisi@example.com' });
+		// 点击昵称不应顺带打开详情弹窗
+		expect(wrapper.findComponent({ name: 'CommentDetailModal' }).props('visible')).toBe(false);
+	});
+});
+
+describe('Dashboard - 按文章筛选', () => {	it('点击来源文章：请求带 postSlug、地址栏带 slug，并显示可清除的筛选 chip', async () => {
 		const wrapper = await mountDashboard();
 
 		await wrapper.get('tbody [data-test="comment-post-slug"]').trigger('click');

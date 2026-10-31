@@ -90,6 +90,13 @@ const routes = [
     meta: { requiresAuth: true }
   },
   {
+    // 头像来源：预设 / 自定义 URL 模板（见 doc/avatar.md）
+    path: '/settings/avatar',
+    name: 'AvatarSettings',
+    component: () => import('../views/AvatarSettings.vue'),
+    meta: { requiresAuth: true }
+  },
+  {
     path: '/settings/link',
     name: 'LinkSecuritySettings',
     component: () => import('../views/LinkSecuritySettings.vue'),

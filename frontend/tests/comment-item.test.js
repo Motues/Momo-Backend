@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeAll } from 'vitest';
 import { render, fireEvent, waitFor, cleanup } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import CommentItem from '../src/comment/CommentItem.svelte';
+import { DEFAULT_AVATAR_URL } from '../src/utils/avatar';
 import { makeComment, stubMatchMedia, stubAlert, findButton, sha256HexOf, patchHappyDomAnimation } from './helpers';
 
 // 回复框使用 transition:slide，销毁时的 animation.cancel() 会产生 happy-dom 的
@@ -262,6 +263,26 @@ describe('CommentItem —— 头像', () => {
 	it('img 始终带 alt="avatar"', () => {
 		const { container } = renderItem();
 		expect(container.querySelector('img').getAttribute('alt')).toBe('avatar');
+	});
+
+	it('头像 img 带懒加载 / 异步解码 / no-referrer（不向第三方泄露文章 URL）', () => {
+		const { container } = renderItem();
+		const img = container.querySelector('img');
+		expect(img.getAttribute('loading')).toBe('lazy');
+		expect(img.getAttribute('decoding')).toBe('async');
+		expect(img.getAttribute('referrerpolicy')).toBe('no-referrer');
+	});
+
+	it('头像加载失败时回退到内置默认头像（data URI，且只兜底一次）', async () => {
+		const { container } = renderItem({
+			c: makeComment({ avatar: 'https://broken.example.com/a.png' }),
+		});
+		const img = container.querySelector('img');
+		await fireEvent.error(img);
+		expect(img.getAttribute('src')).toBe(DEFAULT_AVATAR_URL);
+		// 默认头像是 data URI，本身不会再失败；再次触发也不会改写 src（防死循环）
+		await fireEvent.error(img);
+		expect(img.getAttribute('src')).toBe(DEFAULT_AVATAR_URL);
 	});
 });
 

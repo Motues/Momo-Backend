@@ -654,6 +654,8 @@ describe('GET /admin/stats/users/comments', () => {	it('缺少 author 或 email 
 			postSlug: '/posts/demo',
 			author: 'A',
 			email: 'a@example.com',
+			// 后台头像按来源配置生成，不受 avatar_enabled 影响
+			avatar: 'https://open.motues.top/avatar?name=b418773a2c51fb9777a1648346fa7394&mode=cravatar&variant=beam',
 			status: 'approved',
 			pubDate: new Date(1750000000000).toISOString(),
 		});

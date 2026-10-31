@@ -115,3 +115,53 @@ func TestGetCravatarHandlesUntrustedInput(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildAvatarURLPresets(t *testing.T) {
+	cases := []struct {
+		source   string
+		email    string
+		expected string
+	}{
+		{
+			source:   "gravatar",
+			email:    "test@example.com",
+			expected: "https://gravatar.com/avatar/55502f40dc8b7c769880b10874abc9d0?s=200&d=identicon",
+		},
+		{
+			source:   "cravatar",
+			email:    "test@example.com",
+			expected: "https://cravatar.cn/avatar/55502f40dc8b7c769880b10874abc9d0?s=200&d=identicon",
+		},
+		{
+			source:   "qq",
+			email:    "12345@qq.com",
+			expected: "https://q1.qlogo.cn/g?b=qq&nk=12345&s=100",
+		},
+	}
+	for _, tc := range cases {
+		if got := BuildAvatarURL(ResolveAvatarConfig(tc.source, ""), tc.email, "张三"); got != tc.expected {
+			t.Errorf("source=%s 期望 %q，实际 %q", tc.source, tc.expected, got)
+		}
+	}
+}
+
+func TestBuildAvatarURLCustomTemplate(t *testing.T) {
+	config := ResolveAvatarConfig("custom", "https://cdn.example.com/{hash}/{author}?mail={email}")
+	expected := "https://cdn.example.com/4709dfd443b6cca9b5a01b3324124203/%E5%BC%A0%20%E4%B8%89?mail=a%2Bb%40example.com"
+	if got := BuildAvatarURL(config, "a+b@example.com", "张 三"); got != expected {
+		t.Errorf("期望 %q，实际 %q", expected, got)
+	}
+}
+
+func TestBuildAvatarURLQQFallback(t *testing.T) {
+	// qq 来源下非 QQ 邮箱回落默认源
+	got := BuildAvatarURL(ResolveAvatarConfig("qq", ""), "a@b.c", "x")
+	if got != GetCravatar("a@b.c") {
+		t.Errorf("非 QQ 邮箱应回落默认源，实际 %q", got)
+	}
+	// 模板含 {qq} 但邮箱不是 QQ 时同样回落
+	custom := BuildAvatarURL(ResolveAvatarConfig("custom", "https://x/{qq}"), "a@b.c", "x")
+	if custom != GetCravatar("a@b.c") {
+		t.Errorf("含 {qq} 的非 QQ 邮箱应回落默认源，实际 %q", custom)
+	}
+}

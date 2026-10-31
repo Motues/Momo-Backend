@@ -52,11 +52,11 @@ describe('GET /admin/data/export/settings', () => {
 		expect(res.body.data.settings.email_enabled).toBe('true');
 	});
 
-	it('空库导出是完整快照：47 个键全部出现，表情按生效默认值补全', async () => {
+	it('空库导出是完整快照：50 个键全部出现，表情按生效默认值补全', async () => {
 		const res = await api('/admin/data/export/settings', { headers: authed() });
 		const settings = res.body.data.settings as Record<string, string>;
 
-		expect(Object.keys(settings)).toHaveLength(47);
+		expect(Object.keys(settings)).toHaveLength(50);
 		// 从没在面板里保存过表情设置 —— 过去这里完全没有 emoji_*
 		expect(settings.emoji_enabled).toBe('true');
 		expect(JSON.parse(settings.emoji_cdn_urls)).toEqual([
@@ -72,7 +72,7 @@ describe('GET /admin/data/export/settings', () => {
 		const res = await api('/admin/data/export/settings', { headers: authed() });
 		expect(res.body.data.settings.emoji_enabled).toBe('false');
 		expect(res.body.data.settings.emoji_cdn_urls).toBe('["https://cdn.example.com/owo.json"]');
-		expect(Object.keys(res.body.data.settings)).toHaveLength(47);
+		expect(Object.keys(res.body.data.settings)).toHaveLength(50);
 	});
 
 	it('comment_verify_domain_enabled 在导出白名单内（导出 → 导入往返一致）', async () => {
@@ -379,6 +379,36 @@ describe('POST /admin/data/import/settings', () => {
 		const off = await importSettings({ comment_verify_domain_enabled: 'false' });
 		expect(off.body.data.updated).toEqual(['comment_verify_domain_enabled']);
 		expect((await rawSettings()).comment_verify_domain_enabled).toBe('false');
+	});
+
+	it('头像来源：导入白名单内、归一化写入，非法值整批拒绝', async () => {
+		const good = await importSettings({
+			avatar_enabled: ' FALSE ',
+			avatar_source: ' CUSTOM ',
+			avatar_custom_url: '  https://cdn.example.com/{hash}  ',
+		});
+		expect(good.status).toBe(200);
+		expect(good.body.data.updated.sort()).toEqual([
+			'avatar_custom_url',
+			'avatar_enabled',
+			'avatar_source',
+		]);
+		expect(await rawSettings()).toMatchObject({
+			avatar_enabled: 'false',
+			avatar_source: 'custom',
+			avatar_custom_url: 'https://cdn.example.com/{hash}',
+		});
+
+		const bad = await importSettings({ site_name: '不应写入', avatar_source: 'github' });
+		expect(bad.status).toBe(400);
+		expect(bad.body.message).toBe('avatar_source 只能是 default / gravatar / cravatar / qq / custom');
+		expect(await rawSettings()).not.toHaveProperty('site_name');
+	});
+
+	it('头像来源：导入 custom 但模板为空返回 400', async () => {
+		const res = await importSettings({ avatar_source: 'custom', avatar_custom_url: '' });
+		expect(res.status).toBe(400);
+		expect(res.body.message).toBe('选择自定义头像来源时必须填写头像地址');
 	});
 
 	it('敏感字段为空串时表示「不修改」，不覆盖已有值', async () => {

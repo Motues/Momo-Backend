@@ -40,12 +40,14 @@ type CommentResponse struct {
 }
 
 type AdminCommentResponse struct {
-	ID          int64   `json:"id"`
-	PubDate     string  `json:"pubDate"`
-	PostSlug    string  `json:"postSlug"`
-	Author      string  `json:"author"`
-	Email       string  `json:"email"`
-	URL         *string `json:"url"`
+	ID       int64   `json:"id"`
+	PubDate  string  `json:"pubDate"`
+	PostSlug string  `json:"postSlug"`
+	Author   string  `json:"author"`
+	Email    string  `json:"email"`
+	URL      *string `json:"url"`
+	// Avatar 按头像来源配置生成；后台列表**不受** avatar_enabled 影响（开关只约束访客可见结果）
+	Avatar      string  `json:"avatar"`
 	IPAddress   *string `json:"ipAddress"`
 	OS          *string `json:"os"`
 	Browser     *string `json:"browser"`
@@ -80,12 +82,12 @@ type StatsOverview struct {
 	PrevWindowComments int64 `json:"prevWindowComments"`
 	// CommentsDelta 环比百分比，Math.round((cur-prev)/prev*100)；
 	// 上一窗口为 0 时是 null（不是 0 也不是 100）
-	CommentsDelta      *int64 `json:"commentsDelta"`
-	WindowUsers        int64  `json:"windowUsers"`
-	PrevWindowUsers    int64  `json:"prevWindowUsers"`
-	UsersDelta         *int64 `json:"usersDelta"`
-	TodayComments      int64  `json:"todayComments"`
-	Last7DaysComments  int64  `json:"last7DaysComments"`
+	CommentsDelta     *int64 `json:"commentsDelta"`
+	WindowUsers       int64  `json:"windowUsers"`
+	PrevWindowUsers   int64  `json:"prevWindowUsers"`
+	UsersDelta        *int64 `json:"usersDelta"`
+	TodayComments     int64  `json:"todayComments"`
+	Last7DaysComments int64  `json:"last7DaysComments"`
 
 	// —— 热门文章 Top 5（COUNT DESC, post_slug ASC）——
 	TopPosts []TopPost `json:"topPosts"`
@@ -185,7 +187,7 @@ type UserListData struct {
 // UserCommentsData 用户评论列表响应数据
 type UserCommentsData struct {
 	Comments   []AdminCommentResponse `json:"comments"`
-	Pagination Pagination              `json:"pagination"`
+	Pagination Pagination             `json:"pagination"`
 }
 
 // MailLogQuery 管理端邮件列表（GET /admin/mails）的查询条件。

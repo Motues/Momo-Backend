@@ -7,7 +7,7 @@ import pkg from '../../../package.json';
 
 export const exportSettings = async (c: Context<{ Bindings: Bindings }>) => {
   const all = await getAllSettings(c.env);
-  // 完整快照：全部 47 个可写设置键，库里没有的键按生效默认值补全
+  // 完整快照：全部 50 个可写设置键，库里没有的键按生效默认值补全
   // （口径见 utils/settingsExport.ts 与 doc/vectors/settings-export-v1.json）
   const { settings, sensitiveOmitted } = buildExportedSettings(all);
 
