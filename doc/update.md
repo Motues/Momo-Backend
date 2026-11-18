@@ -4,6 +4,20 @@
 
 数据库变化情况可以查看 [数据库更新记录](#数据库更新记录)
 
+## 一键更新脚本
+
+仓库 `scripts/` 目录提供 `update.sh`（Linux / Git Bash）与 `update.ps1`（Windows PowerShell），可在部署根目录自动识别 Node.js / Worker / Go / Docker 并更新到最新 Release。支持指定版本、国内镜像、备份与回滚，详见 [update-script.md](./update-script.md)。
+
+```bash
+# Linux
+./scripts/update.sh --dry-run      # 先看计划
+./scripts/update.sh                # 更新到最新 Release
+
+# Windows PowerShell
+powershell -ExecutionPolicy Bypass -File .\scripts\update.ps1 -DryRun
+powershell -ExecutionPolicy Bypass -File .\scripts\update.ps1
+```
+
 ## 面板内的更新提示
 
 管理面板侧边栏底部的版本号会定期检查新版本。发现新版本后，版本号旁会出现 🎉，

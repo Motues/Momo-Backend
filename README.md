@@ -68,6 +68,8 @@ API 应用基于 SQLite 数据库，对外提供 RESTful API，目前提供四�
 
 具体部署方式请参考对应文档：[Docker](#docker-部署) · [Node.js](./nodejs/README.md) · [Go](./go/README.md) · [Cloudflare Worker](./worker/README.md)
 
+> 已部署的站点可在项目根目录运行 `./scripts/update.sh`（Linux）或 `powershell -ExecutionPolicy Bypass -File .\scripts\update.ps1`（Windows）一键更新到最新 Release，支持自动识别部署方式、国内镜像、备份与回滚，详见 [更新脚本说明](./doc/update-script.md)。
+
 #### Docker 部署
 
 Go 版本支持 Docker 一键部署，镜像同时发布在 GitHub Container Registry 与 Docker Hub。
