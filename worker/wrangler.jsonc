@@ -14,8 +14,10 @@
 	"assets": {
 		"directory": "./public", // 指向 Vue 编译后的文件夹
 		"not_found_handling": "single-page-application", // 关键：开启 SPA 路由支持
-		// 关键：/api/*、/admin/* 必须先交给 Worker，不能让 SPA fallback 抢走。
-		"run_worker_first": ["/api/*", "/admin/*"]
+		// 关键：/api/*、/admin/*、/health 必须先交给 Worker，不能让 SPA fallback 抢走。
+		// /health 不在 /api 或 /admin 下，一旦漏在这里，线上 GET /health 会被回退成
+		// index.html（200 + HTML），容器 HEALTHCHECK / 外部探针全部失效。
+		"run_worker_first": ["/api/*", "/admin/*", "/health"]
 	}
 	// 注意英文逗号
 	//

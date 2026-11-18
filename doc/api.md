@@ -540,7 +540,8 @@ block             = nonce / n                        // 整数除法
 | `tm` | 字体度量：同一探测串在 17 个字体栈下的宽度（**原始浮点值，不要取整**，否则会虚增下面的整数量化计数） |
 | `lw` / `lh` | 布局探针的宽高（离屏元素，32px 字号） |
 | `iw` `ih` `ow` `oh` | 视口与窗口尺寸 |
-| `sw` `sh` `ex` | 屏幕宽高与 `screen.isExtended` |
+| `sw` `sh` | 屏幕宽高 |
+| `ex` | `screen.isExtended`：`1`=是，`0`=否，`-1`=浏览器不支持该 API（Gecko / WebKit / 老 Chromium）。字段缺失按 `0` 处理 |
 | `mob` | 是否移动端 |
 | `nt` | 原生方法被改写的位掩码：`1`=canvas，`2`=webgl，`4`=permissions |
 
@@ -553,14 +554,18 @@ block             = nonce / n                        // 整数除法
 | `headless_token` | UA 或 brands 含 `HeadlessChrome` | 消费级浏览器不含该 token |
 | `layout_zero` | `lw <= 0` 或 `lh <= 0` | 真实渲染引擎必然给出正的几何尺寸（jsdom 类环境恒为 0） |
 | `gecko_contradiction` | Gecko 引擎却暴露 `deviceMemory` 或 `userAgentData` | Firefox 从未实现这两个 API |
-| `window_exceeds_screen` | `ow > sw + 4` 或 `oh > sh + 4`（`ex === 1` 时跳过） | 第二显示器/扩展屏场景被排除 |
+| `window_exceeds_screen` | **仅 Blink 引擎**：`ow > sw + 4` 或 `oh > sh + 4`（`ex === 1` 或 `ex === -1` 时跳过） | 这条规则针对 CDP 的 `Emulation.setDeviceMetricsOverride`，而 CDP 与 `screen.isExtended` 都只在 Chromium 存在；Gecko / WebKit / 未知引擎拿不到扩展屏信号，跨屏与混合 DPI 下必然误伤，因此只记风险标记、不拦截 |
 | `geometry_quantized` | 17 条字宽中至少 5 条为整数且至少有 2 个不同整数 | 单一字体系统不会命中；真实引擎返回小数 |
-| `viewport_override` | 非移动端且视口与屏幕完全相等 | 移动端全屏是正常的，已跳过 |
+| `viewport_override` | 非移动端、视口与屏幕完全相等、且 `oh > ih`（存在浏览器 UI） | F11 / Fullscreen API 全屏时 `outer === inner`，此时视口占满屏幕是正常的，已跳过；移动端全屏同样跳过 |
 
-只记录、**永不拦截**的风险标记：`native_tamper`（`nt !== 0`）、`few_font_metrics`（字宽采样不足 5 条）、`ua_missing`。
+只记录、**永不拦截**的风险标记：`native_tamper`（`nt !== 0`）、`few_font_metrics`（字宽采样不足 5 条）、`ua_missing`（UA 为空）、`window_exceeds_screen_unverified`（窗口超出屏幕，但当前引擎无法判断扩展屏，规则不拦截、只记录）。
+
+> `ex` 的三态由新版评论组件下发；更早的组件在 Gecko / WebKit 上仍会发 `0`，
+> 但服务端按引擎（`ge`）豁免，因此 Firefox 不会再被这条规则误拦。
 
 > 隐私扩展（Canvas Blocker / Chameleon / Trace 等）会改写 `nt` 涉及的同一批原生方法，
-> 所以它只能作为风险标记。已知误报风险：Tor Browser 的字体整数量化、混合 DPI 多显示器环境。
+> 所以它只能作为风险标记。已知误报风险：Tor Browser 的字体整数量化仍可能误伤；
+> 混合 DPI 多显示器在 Gecko / WebKit 上只记风险标记，不再拦截。
 
 #### 四、签发挑战（POST `/api/verify/challenge`）
 

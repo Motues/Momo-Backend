@@ -472,6 +472,7 @@ type EnvVector struct {
 	// Sw/Sh/Ex 屏幕
 	Sw float64
 	Sh float64
+	// Ex screen.isExtended：1=是，0=否，-1=浏览器不支持该 API（Gecko / WebKit / 老 Chromium）
 	Ex float64
 	// Mob 是否移动端
 	Mob float64
@@ -583,7 +584,7 @@ EvaluateEnvVector 判定环境向量。
 func EvaluateEnvVector(raw map[string]any) EnvVerdict {
 	env := NormalizeEnvVector(raw)
 	blockedBy := make([]string, 0, 4)
-	riskFlags := make([]string, 0, 3)
+	riskFlags := make([]string, 0, 4)
 
 	isBlink := env.Ge == 1
 	isGecko := env.Ge == 2
@@ -616,9 +617,18 @@ func EvaluateEnvVector(raw map[string]any) EnvVerdict {
 	}
 
 	// 6. CDP 的 Emulation.setDeviceMetricsOverride 会把 screen 缩到视口大小，
-	//    导致窗口高于屏幕。第二显示器（screen.isExtended）时跳过。
-	if env.Ex != 1 && (env.Ow > env.Sw+windowScreenTolerance || env.Oh > env.Sh+windowScreenTolerance) {
-		blockedBy = append(blockedBy, "window_exceeds_screen")
+	//    导致窗口高于屏幕。但扩展屏豁免依赖 screen.isExtended —— 这是 Chromium 独有的
+	//    API，CDP 也只见于 Chromium：Gecko / WebKit / 未知引擎拿不到这个信号，
+	//    跨屏或混合 DPI 下 outer 与 screen 天然可能对不上，在这类引擎上拦截只会稳定误伤
+	//    真人（Firefox 多显示器 / 页面缩放场景就是这么被误杀的）。
+	//    因此只在能自证的 Blink 上拦截：ex == 1（扩展屏）与 ex == -1（老 Chromium 没有
+	//    该 API，无法判断是否扩展屏）时跳过，改记风险标记。
+	if env.Ow > env.Sw+windowScreenTolerance || env.Oh > env.Sh+windowScreenTolerance {
+		if isBlink && env.Ex != 1 && env.Ex != -1 {
+			blockedBy = append(blockedBy, "window_exceeds_screen")
+		} else {
+			riskFlags = append(riskFlags, "window_exceeds_screen_unverified")
+		}
 	}
 
 	// 7. 字体度量整数量化：Camoufox 之类会把字宽吸附到整像素。
@@ -636,8 +646,10 @@ func EvaluateEnvVector(raw map[string]any) EnvVerdict {
 		blockedBy = append(blockedBy, "geometry_quantized")
 	}
 
-	// 8. 视口与屏幕完全相等且浏览器 UI 存在：移动端全屏是正常的，因此跳过移动端。
-	if !isMobile && env.Iw == env.Sw && env.Ih == env.Sh && env.Iw > 0 && env.Ih > 0 {
+	// 8. 视口与屏幕完全相等：正常窗口有标题栏 / 地址栏，outer 必然大于 inner；
+	//    按 F11 或用 Fullscreen API 进入全屏时 outer 与 inner 相等，此时视口占满屏幕
+	//    是正常现象，不能再当作自动化信号。移动端全屏同理，一并跳过。
+	if !isMobile && env.Iw == env.Sw && env.Ih == env.Sh && env.Iw > 0 && env.Ih > 0 && env.Oh > env.Ih {
 		blockedBy = append(blockedBy, "viewport_override")
 	}
 

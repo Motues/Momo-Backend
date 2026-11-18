@@ -408,6 +408,23 @@ describe("instrumentation —— 自动化检测规则", () => {
     expect(evaluateEnvVector({ ...OK_ENV, oh: 2000, ex: 1 }).blockedBy).not.toContain("window_exceeds_screen");
   });
 
+  it("window_exceeds_screen：拿不到 screen.isExtended 的浏览器只记录、不拦截", () => {
+    // ex=-1：老 Chromium 没有该 API，无法判断是否扩展屏
+    const legacy = evaluateEnvVector({ ...OK_ENV, oh: 2000, ex: -1 });
+    expect(legacy.blockedBy).not.toContain("window_exceeds_screen");
+    expect(legacy.riskFlags).toContain("window_exceeds_screen_unverified");
+    // Gecko / WebKit / 未知引擎：扩展屏信号缺失，拦截会稳定误伤多显示器与混合 DPI 用户
+    for (const [ge, dm, br] of [
+      [2, -1, ""],
+      [3, 8, ""],
+      [0, 8, ""],
+    ] as const) {
+      const verdict = evaluateEnvVector({ ...OK_ENV, ge, dm, br, oh: 2000 });
+      expect(verdict.blockedBy).not.toContain("window_exceeds_screen");
+      expect(verdict.riskFlags).toContain("window_exceeds_screen_unverified");
+    }
+  });
+
   it("geometry_quantized：字宽被吸附到整像素", () => {
     expect(evaluateEnvVector({ ...OK_ENV, tm: [10, 11, 12, 13, 14] }).blockedBy).toContain("geometry_quantized");
     // 只有单一整数值（单一字体系统）不命中
@@ -418,10 +435,19 @@ describe("instrumentation —— 自动化检测规则", () => {
     expect(evaluateEnvVector({ ...OK_ENV, tm: [10.5, 11.25, 12.75] }).blockedBy).not.toContain("geometry_quantized");
   });
 
-  it("viewport_override：视口与屏幕完全相等且非移动端", () => {
-    expect(evaluateEnvVector({ ...OK_ENV, iw: 1920, ih: 1080 }).blockedBy).toContain("viewport_override");
+  it("viewport_override：视口与屏幕完全相等且存在浏览器 UI", () => {
+    // ex=1 只关掉窗口超屏规则，避免干扰：outer 比 inner 高（有标题栏/地址栏）才是自动化信号
+    expect(
+      evaluateEnvVector({ ...OK_ENV, ex: 1, iw: 1920, ih: 1080, ow: 1920, oh: 1120 }).blockedBy
+    ).toContain("viewport_override");
     // 移动端全屏是正常的
-    expect(evaluateEnvVector({ ...OK_ENV, iw: 1920, ih: 1080, mob: 1 }).blockedBy).not.toContain("viewport_override");
+    expect(
+      evaluateEnvVector({ ...OK_ENV, mob: 1, ex: 1, iw: 1920, ih: 1080, ow: 1920, oh: 1120 }).blockedBy
+    ).not.toContain("viewport_override");
+    // F11 / Fullscreen API：没有浏览器 UI，outer === inner，视口占满屏幕属正常
+    expect(
+      evaluateEnvVector({ ...OK_ENV, iw: 1920, ih: 1080, ow: 1920, oh: 1080 }).blockedBy
+    ).not.toContain("viewport_override");
   });
 
   it("风险标记：原生方法被改写 / 字体采样不足 / UA 缺失", () => {

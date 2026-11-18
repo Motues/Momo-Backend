@@ -462,6 +462,10 @@ export interface EnvVector {
   /** 屏幕 */
   sw: number;
   sh: number;
+  /**
+   * screen.isExtended：1=是，0=否，-1=浏览器不支持该 API（Gecko / WebKit / 老 Chromium）。
+   * 只在能自证扩展屏的引擎（Blink）上按「窗口超出屏幕」拦截，其余引擎只记风险标记。
+   */
   ex: number;
   /** 是否移动端 */
   mob: number;
@@ -479,7 +483,11 @@ export type EnvBlockReason =
   | "geometry_quantized"
   | "viewport_override";
 
-export type EnvRiskFlag = "native_tamper" | "few_font_metrics" | "ua_missing";
+export type EnvRiskFlag =
+  | "native_tamper"
+  | "few_font_metrics"
+  | "ua_missing"
+  | "window_exceeds_screen_unverified";
 
 export interface EnvVerdict {
   /** 命中即判定为自动化浏览器（是否拒绝由调用方按设置决定） */
@@ -560,10 +568,18 @@ export function evaluateEnvVector(raw: any): EnvVerdict {
   // 5. Gecko 从未实现过 deviceMemory 或 userAgentData，两者同时出现即伪装。
   if (isGecko && (env.dm >= 0 || env.br.length > 0)) blockedBy.push("gecko_contradiction");
 
-  // 6. CDP 的 Emulation.setDeviceMetricsOverride 会把 screen 缩到视口大小，
-  //    导致窗口高于屏幕。第二显示器（screen.isExtended）时跳过。
-  if (env.ex !== 1 && (env.ow > env.sw + WINDOW_SCREEN_TOLERANCE || env.oh > env.sh + WINDOW_SCREEN_TOLERANCE)) {
-    blockedBy.push("window_exceeds_screen");
+  // 6. CDP 的 Emulation.setDeviceMetricsOverride 会把 screen 缩到视口大小，导致窗口高于屏幕。
+  //    但扩展屏豁免依赖 screen.isExtended —— 这是 Chromium 独有的 API，CDP 也只见于 Chromium：
+  //    Gecko / WebKit / 未知引擎拿不到这个信号，跨屏或混合 DPI 下 outer 与 screen 天然可能对不上，
+  //    在这类引擎上拦截只会稳定误伤真人（Firefox 多显示器 / 页面缩放场景就是这么被误杀的）。
+  //    因此只在能自证的 Blink 上拦截：ex=1（扩展屏）与 ex=-1（老 Chromium 没有该 API，
+  //    无法判断是否扩展屏）时跳过，改记风险标记。
+  if (env.ow > env.sw + WINDOW_SCREEN_TOLERANCE || env.oh > env.sh + WINDOW_SCREEN_TOLERANCE) {
+    if (isBlink && env.ex !== 1 && env.ex !== -1) {
+      blockedBy.push("window_exceeds_screen");
+    } else {
+      riskFlags.push("window_exceeds_screen_unverified");
+    }
   }
 
   // 7. 字体度量整数量化：Camoufox 之类会把字宽吸附到整像素。
@@ -573,8 +589,10 @@ export function evaluateEnvVector(raw: any): EnvVerdict {
   const distinctIntegers = new Set(integerMetrics);
   if (integerMetrics.length >= 5 && distinctIntegers.size >= 2) blockedBy.push("geometry_quantized");
 
-  // 8. 视口与屏幕完全相等且浏览器 UI 存在：移动端全屏是正常的，因此跳过移动端。
-  if (!isMobile && env.iw === env.sw && env.ih === env.sh && env.iw > 0 && env.ih > 0) {
+  // 8. 视口与屏幕完全相等：正常窗口有标题栏 / 地址栏，outer 必然大于 inner；
+  //    按 F11 或用 Fullscreen API 进入全屏时 outer 与 inner 相等，此时视口占满屏幕
+  //    是正常现象，不能再当作自动化信号。移动端全屏同理，一并跳过。
+  if (!isMobile && env.iw === env.sw && env.ih === env.sh && env.iw > 0 && env.ih > 0 && env.oh > env.ih) {
     blockedBy.push("viewport_override");
   }
 

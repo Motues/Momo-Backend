@@ -340,9 +340,14 @@ func TestEvaluateEnvVectorBlockRules(t *testing.T) {
 		{"字体宽度整数量化", func(env map[string]any) {
 			env["tm"] = []any{float64(10), float64(10), float64(11), float64(11), float64(12), float64(12)}
 		}, "geometry_quantized"},
-		{"视口与屏幕完全相等", func(env map[string]any) {
+		{"视口与屏幕完全相等且存在浏览器 UI", func(env map[string]any) {
+			// ex=1 先关掉「窗口超屏」规则，单独验证 viewport_override：
+			// outer 比 inner 高（有标题栏/地址栏）才是自动化信号
+			env["ex"] = float64(1)
 			env["iw"] = float64(1920)
 			env["ih"] = float64(1080)
+			env["ow"] = float64(1920)
+			env["oh"] = float64(1120)
 		}, "viewport_override"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -367,6 +372,48 @@ func TestEvaluateEnvVectorSkipConditions(t *testing.T) {
 		}
 	})
 
+	t.Run("ex 为 -1（浏览器没有 isExtended）时不拦截，只记风险标记", func(t *testing.T) {
+		env := baseEnv()
+		env["ex"] = float64(-1)
+		env["ow"] = float64(3000)
+		verdict := EvaluateEnvVector(env)
+		if blockedBySet(verdict)["window_exceeds_screen"] {
+			t.Error("拿不到 screen.isExtended 的浏览器不应命中 window_exceeds_screen")
+		}
+		if !riskFlagSet(verdict)["window_exceeds_screen_unverified"] {
+			t.Errorf("应记录 window_exceeds_screen_unverified，实际 %v", verdict.RiskFlags)
+		}
+	})
+
+	t.Run("Gecko / WebKit / 未知引擎不按窗口超屏拦截（只记风险标记）", func(t *testing.T) {
+		for _, engine := range []struct {
+			name string
+			ge   float64
+		}{{"Gecko", 2}, {"WebKit", 3}, {"未知", 0}} {
+			env := baseEnv()
+			env["ge"] = engine.ge
+			// 避免 ge=2 时顺带命中 gecko_contradiction，干扰断言
+			env["dm"] = float64(-1)
+			env["br"] = ""
+			env["oh"] = float64(1200)
+			verdict := EvaluateEnvVector(env)
+			if blockedBySet(verdict)["window_exceeds_screen"] {
+				t.Errorf("%s 不应命中 window_exceeds_screen（会稳定误伤多显示器/混合 DPI 用户）", engine.name)
+			}
+			if !riskFlagSet(verdict)["window_exceeds_screen_unverified"] {
+				t.Errorf("%s 应记录 window_exceeds_screen_unverified，实际 %v", engine.name, verdict.RiskFlags)
+			}
+		}
+	})
+
+	t.Run("Blink + ex=0 仍然拦截窗口超屏", func(t *testing.T) {
+		env := baseEnv()
+		env["oh"] = float64(1200)
+		if !blockedBySet(EvaluateEnvVector(env))["window_exceeds_screen"] {
+			t.Error("Blink 上窗口超过屏幕应命中 window_exceeds_screen")
+		}
+	})
+
 	t.Run("容差 4 像素内不触发", func(t *testing.T) {
 		env := baseEnv()
 		env["sw"] = float64(1920)
@@ -383,10 +430,27 @@ func TestEvaluateEnvVectorSkipConditions(t *testing.T) {
 	t.Run("移动端跳过视口等于屏幕的判定", func(t *testing.T) {
 		env := baseEnv()
 		env["mob"] = float64(1)
+		// ex=1 只关掉窗口超屏规则；viewport_override 的触发条件在这里是齐的，
+		// 之所以不命中，只可能因为 mob=1
+		env["ex"] = float64(1)
 		env["iw"] = float64(1920)
 		env["ih"] = float64(1080)
+		env["ow"] = float64(1920)
+		env["oh"] = float64(1120)
 		if blocked := blockedBySet(EvaluateEnvVector(env)); blocked["viewport_override"] {
 			t.Errorf("移动端全屏不应命中 viewport_override")
+		}
+	})
+
+	t.Run("全屏（outer 与 inner 相等）不触发 viewport_override", func(t *testing.T) {
+		// F11 / Fullscreen API：没有标题栏与地址栏，outer === inner，视口占满屏幕是正常的
+		env := baseEnv()
+		env["iw"] = float64(1920)
+		env["ih"] = float64(1080)
+		env["ow"] = float64(1920)
+		env["oh"] = float64(1080)
+		if blocked := blockedBySet(EvaluateEnvVector(env)); blocked["viewport_override"] {
+			t.Errorf("F11/全屏不应命中 viewport_override，实际 %v", blocked)
 		}
 	})
 

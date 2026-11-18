@@ -26,6 +26,24 @@ const schemaStatements = readFileSync(
 	.map((s) => s.trim())
 	.filter((s) => s.length > 0);
 
+// wrangler.jsonc 的 assets.run_worker_first 是「先交给 Worker、不交给静态资源层」的路由白名单。
+// 漏掉 /health 时，线上 GET /health 会被 not_found_handling 的 SPA 回退吞成 index.html
+// （200 + HTML），探针失效；而 vitest-pool-workers 根本不经过 assets 层，单元测试发现不了，
+// 所以在这里（Node 侧、加载配置时）直接把白名单钉住，避免再漏。
+const wranglerSource = readFileSync(new URL('./wrangler.jsonc', import.meta.url), 'utf-8');
+const runWorkerFirstMatch = wranglerSource.match(/"run_worker_first"\s*:\s*\[([^\]]*)\]/);
+const runWorkerFirst = runWorkerFirstMatch
+	? [...runWorkerFirstMatch[1].matchAll(/"([^"]+)"/g)].map((m) => m[1])
+	: [];
+for (const required of ['/api/*', '/admin/*', '/health']) {
+	if (!runWorkerFirst.includes(required)) {
+		throw new Error(
+			`wrangler.jsonc 的 assets.run_worker_first 缺少 ${required}：` +
+				'不在该列表的路由会先被静态资源层处理（SPA 回退成 index.html），Worker 里的同名路由不会执行'
+		);
+	}
+}
+
 export default defineWorkersConfig({
 	resolve: {
 		alias: {
