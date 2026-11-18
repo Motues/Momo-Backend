@@ -52,9 +52,12 @@
     --momo-button-border-color: #e5e5e5;   /* 按钮边框颜色 */
     --momo-button-hover-bg-color: #f5f5f5; /* 按钮背景颜色（hover 状态）*/
     --momo-link-color: #003b6e;            /* 链接颜色 */
-    /* 无感验证「验证成功」的绿色（文字 / 边框），可选 */
-    --momo-verify-success-color: #15803d;
-    --momo-verify-success-border-color: rgba(22, 163, 74, 0.5);
+    /* 无感验证「验证成功」的绿色（文字 / 边框），可选；默认与博主徽章同色 */
+    --momo-verify-success-color: #047857;
+    --momo-verify-success-border-color: rgba(4, 120, 87, 0.45);
+    /* 无感验证「验证失败」的红色（文字 / 边框），可选；默认低饱和的灰玫瑰红 */
+    --momo-verify-error-color: #a85757;
+    --momo-verify-error-border-color: rgba(168, 87, 87, 0.55);
 }
 /* 暗色模式 */
 [data-theme="dark"] { 
@@ -62,15 +65,19 @@
     --momo-button-border-color: #2e2e2e;
     --momo-button-hover-bg-color: #3c3c3c;
     --momo-link-color: #fff;
-    --momo-verify-success-color: #4ade80;
-    --momo-verify-success-border-color: rgba(74, 222, 128, 0.45);
+    --momo-verify-success-color: #33da98;
+    --momo-verify-success-border-color: rgba(51, 218, 152, 0.45);
+    --momo-verify-error-color: #e09a9a;
+    --momo-verify-error-border-color: rgba(224, 154, 154, 0.45);
 }
 ```
 
-> **无感验证的绿色跟随主题**：默认浅色用深绿、深色用亮绿，两者都通过 `--momo-verify-success-color` /
-> `--momo-verify-success-border-color` 覆盖。没有挂 `data-theme` 的页面会跟随系统的
+> **无感验证的配色跟随主题**：验证成功的绿色与博主徽章（`.blogger-badge`）使用同一个颜色口径
+> （浅色 `#047857`、深色 `#33da98`）；验证失败的红色是刻意降低饱和度的灰玫瑰红，与绿色视觉重量一致。
+> 四组颜色都可以通过 `--momo-verify-success-color` / `--momo-verify-success-border-color` /
+> `--momo-verify-error-color` / `--momo-verify-error-border-color` 覆盖。没有挂 `data-theme` 的页面会跟随系统的
 > `prefers-color-scheme`；如果站点本身只有浅色、而访客系统是深色，请显式挂 `data-theme="light"`
-> 锁定浅色，否则会用到深色主题的亮绿。
+> 锁定浅色，否则会用到深色主题的亮色。
 
 ## 表情
 

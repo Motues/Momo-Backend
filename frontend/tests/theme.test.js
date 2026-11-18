@@ -36,34 +36,57 @@ describe('主题样式 —— 深色模式', () => {
 	});
 });
 
-describe('主题样式 —— 无感验证成功态（绿色跟随浅色 / 深色）', () => {
-	it('浅色与深色各给一套绿色，宿主可用 --momo-verify-success-* 覆盖', () => {
-		expect(css).toContain('--verify-success-color: var(--momo-verify-success-color, #15803d)');
+describe('主题样式 —— 无感验证配色（成功=博主徽章绿，失败=低饱和灰玫瑰红）', () => {
+	it('浅色与深色各给一套颜色，宿主可用 --momo-verify-* 覆盖', () => {
+		expect(css).toContain('--verify-success-color: var(--momo-verify-success-color, #047857)');
 		expect(css).toContain(
-			'--verify-success-border-color: var(--momo-verify-success-border-color, rgba(22, 163, 74, 0.5))',
+			'--verify-success-border-color: var(--momo-verify-success-border-color, rgba(4, 120, 87, 0.45))',
+		);
+		expect(css).toContain('--verify-error-color: var(--momo-verify-error-color, #a85757)');
+		expect(css).toContain(
+			'--verify-error-border-color: var(--momo-verify-error-border-color, rgba(168, 87, 87, 0.55))',
 		);
 		const dark = css.slice(css.indexOf('[data-theme="dark"]'));
-		expect(dark).toContain('--verify-success-color: var(--momo-verify-success-color, #4ade80)');
+		expect(dark).toContain('--verify-success-color: var(--momo-verify-success-color, #33da98)');
 		expect(dark).toContain(
-			'--verify-success-border-color: var(--momo-verify-success-border-color, rgba(74, 222, 128, 0.45))',
+			'--verify-success-border-color: var(--momo-verify-success-border-color, rgba(51, 218, 152, 0.45))',
 		);
+		expect(dark).toContain('--verify-error-color: var(--momo-verify-error-color, #e09a9a)');
+		expect(dark).toContain(
+			'--verify-error-border-color: var(--momo-verify-error-border-color, rgba(224, 154, 154, 0.45))',
+		);
+	});
+
+	it('成功绿与博主徽章同色（浅色 #047857 / 深色 #33da98）', () => {
+		const item = read('../src/comment/CommentItem.svelte');
+		expect(item).toContain('color: #047857');
+		expect(item).toContain('color: #33da98');
+		expect(css).toContain('#047857');
+		expect(css).toContain('#33da98');
 	});
 
 	it('没有主题标记时跟随系统深色，且 data-theme="light" 能锁回浅色', () => {
 		const media = css.slice(css.indexOf('@media (prefers-color-scheme: dark)'));
 		expect(media).not.toBe('');
 		expect(media).toMatch(/\.comment-container\s*\{[\s\S]*?--verify-success-color/);
+		expect(media).toMatch(/\.comment-container\s*\{[\s\S]*?--verify-error-color/);
 		expect(media).toContain('[data-theme="light"] .comment-container');
 	});
 
-	it('组件改用主题变量上色，不再写死单一 tailwind 绿', () => {
+	it('组件改用主题变量上色，不再写死单一 tailwind 红/绿', () => {
 		const verify = read('../src/verify/SilentVerify.svelte');
 		expect(verify).toContain('.verify-success');
-		expect(verify).toContain('color: var(--verify-success-color, #15803d)');
-		expect(verify).toContain('border-color: var(--verify-success-border-color, rgba(22, 163, 74, 0.5))');
-		// 用正则而不是字面量：Tailwind 会扫描源码里的类名候选，字面量会把废弃的绿色类打进产物
+		expect(verify).toContain('color: var(--verify-success-color, #047857)');
+		expect(verify).toContain('border-color: var(--verify-success-border-color, rgba(4, 120, 87, 0.45))');
+		expect(verify).toContain('.verify-error');
+		expect(verify).toContain('color: var(--verify-error-color, #a85757)');
+		expect(verify).toContain('border-color: var(--verify-error-border-color, rgba(168, 87, 87, 0.55))');
+		// 用正则而不是字面量：Tailwind 会扫描源码里的类名候选，字面量会把废弃的颜色类打进产物
 		expect(verify).not.toMatch(/text-green-6\d\d/);
 		expect(verify).not.toMatch(/dark:text-green-4\d\d/);
+		expect(verify).not.toMatch(/border-red-400/);
+		expect(verify).not.toMatch(/text-red-500/);
+		expect(verify).not.toMatch(/hover:bg-red-500/);
 	});
 });
 

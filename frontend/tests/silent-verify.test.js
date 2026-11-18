@@ -387,6 +387,42 @@ describe('SilentVerify —— 失败态文案（协议 v2 分三种）', () => {
 		expect(container.querySelector('button.verify-box')).toBeNull();
 		expect(onTicket).toHaveBeenLastCalledWith(null);
 	});
+
+	it('失败态挂 verify-error（颜色走 --verify-error-* 主题变量），不再写死 tailwind 红', async () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		powMock.solvePow.mockImplementation(async () => {
+			throw new Error('solver exploded');
+		});
+		fetchMock(async (url) => {
+			if (url.includes('/api/verify/challenge')) return challengeBody();
+			return jsonResponse({ data: { ticket: 'x' } });
+		});
+		const { container } = renderVerify();
+
+		await waitFor(() => expect(container.querySelector('button.verify-box')).toBeTruthy());
+		const button = container.querySelector('button.verify-box');
+		expect(button.classList.contains('verify-error')).toBe(true);
+		// 可重试的失败才挂 verify-retryable（唯一会显示 hover 底色的分支）
+		expect(button.classList.contains('verify-retryable')).toBe(true);
+		for (const name of [...button.classList]) {
+			expect(name).not.toMatch(/^text-red/);
+			expect(name).not.toMatch(/^border-red/);
+			expect(name).not.toMatch(/^hover:bg-red/);
+		}
+		warn.mockRestore();
+	});
+
+	it('不可重试的失败态挂 verify-error 但不挂 verify-retryable', async () => {
+		// v1 挑战响应：没有 pow → backendOutdated（重试无用，按钮 disabled）
+		fetchMock(async () => jsonResponse({ data: { enabled: true, prefix: 'p', sig: 's', difficulty: 1 } }));
+		const { container } = renderVerify();
+
+		await waitFor(() => expect(container.querySelector('button.verify-box')).toBeTruthy());
+		const button = container.querySelector('button.verify-box');
+		expect(button.classList.contains('verify-error')).toBe(true);
+		expect(button.classList.contains('verify-retryable')).toBe(false);
+		expect(button.disabled).toBe(true);
+	});
 });
 
 describe('SilentVerify —— 失败与重试', () => {

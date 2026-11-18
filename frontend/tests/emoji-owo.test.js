@@ -6,6 +6,7 @@ import {
 	buildEmojiSet,
 	codePointLength,
 	containsShortcode,
+	decodeHtmlEntities,
 	emojiCacheNeedsRevalidation,
 	findShortcodes,
 	fnv1aHex,
@@ -396,6 +397,62 @@ describe('emoji/owo —— buildEmojiSet 标签与短代码', () => {
 		expect(set.tabs[1].items[0]).toEqual({ insert: '😂', preview: '😂', title: '😂' });
 		expect(set.images.size).toBe(0);
 		expect(set.stale).toBe(false);
+	});
+
+	it('文本表情里的 HTML 实体先解码再插入（官方源的「颜文字」带 &quot;）', () => {
+		// 回归：open.motues.top 的 owo.json 里这三条就是从网页抄来的带实体文本，
+		// 原样插入后评论正文会显示成字面量 &quot;
+		const set = buildEmojiSet(
+			owo({
+				颜文字: {
+					type: 'emoticon',
+					container: [
+						{ icon: 'ヾ(´･ ･｀｡)ノ&quot;', text: '咦咦咦' },
+						{ icon: '( ,,´･ω･)ﾉ&quot;(´っω･｀｡)', text: '摸摸头' },
+						{ icon: '( ๑´•ω•) &quot;(ㆆᴗㆆ)' },
+					],
+				},
+			})
+		);
+		expect(set.tabs[0].items.map((item) => item.insert)).toEqual([
+			'ヾ(´･ ･｀｡)ノ"',
+			'( ,,´･ω･)ﾉ"(´っω･｀｡)',
+			'( ๑´•ω•) "(ㆆᴗㆆ)',
+		]);
+		expect(set.tabs[0].items[0].preview).toBe('ヾ(´･ ･｀｡)ノ"');
+		// text 为空时悬停提示回落到解码后的正文
+		expect(set.tabs[0].items[2].title).toBe('( ๑´•ω•) "(ㆆᴗㆆ)');
+	});
+
+	it('解码后还原出尖括号的文本项仍然被丢弃（尖括号过滤不能绕过）', () => {
+		const set = buildEmojiSet(
+			owo({
+				颜文字: {
+					type: 'emoticon',
+					container: [
+						{ icon: '&lt;script&gt;' },
+						{ icon: '&amp;' },
+						{ icon: '&unknown;' },
+						{ icon: '&#128512;' },
+					],
+				},
+			})
+		);
+		// &lt;script&gt; 解码成 <script> → 被尖括号过滤；&amp; / &unknown; 原样保留实体
+		expect(set.tabs[0].items.map((item) => item.insert)).toEqual(['&', '&unknown;', '😀']);
+	});
+
+	it('decodeHtmlEntities 只解一层、数字实体会拒绝非法码点', () => {
+		expect(decodeHtmlEntities('&amp;quot;')).toBe('&quot;');
+		expect(decodeHtmlEntities('&quot;')).toBe('"');
+		expect(decodeHtmlEntities('&#39;')).toBe("'");
+		expect(decodeHtmlEntities('&#x1F600;')).toBe('😀');
+		// 0 / 代理项 / 超出 Unicode 上限：原样保留，不产出非法字符
+		expect(decodeHtmlEntities('&#0;')).toBe('&#0;');
+		expect(decodeHtmlEntities('&#xD800;')).toBe('&#xD800;');
+		expect(decodeHtmlEntities('&#x110000;')).toBe('&#x110000;');
+		expect(decodeHtmlEntities('普通文本')).toBe('普通文本');
+		expect(decodeHtmlEntities('')).toBe('');
 	});
 
 	it('type 缺省按 image 处理；enabled=false 的标签整体跳过', () => {
